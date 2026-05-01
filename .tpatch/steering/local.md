@@ -6,6 +6,15 @@ After commiting the changes, we can move onto 'record' phase with the --from HEA
 That will generate a patch-recipe.json for the feature, the agent can extend the "description" to showcase what each change means, then we can verify the recipe with "apply".
 After that we can do a chore(tpatch) commit, with just the metadata of tpatch to have a clean separation of commits.
 
+## Dependency Validation
+
+After completing the analyze, define, and explore phases for any feature,
+validate the dependency graph before proceeding to implementation.
+New links or ordering constraints often surface during exploration —
+register them immediately with `tpatch feature deps <slug> add <parent>`.
+Run `tpatch feature deps --validate-all` to confirm the DAG is still acyclic
+and free of dangling refs before moving on.
+
 ## Phase Ordering
 
 ```

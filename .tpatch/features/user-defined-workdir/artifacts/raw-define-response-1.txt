@@ -1,0 +1,38 @@
+## Acceptance Criteria
+
+1. `TsRoot()` resolves the workspace directory following the priority chain: (1) `TS_ROOT` env var, (2) per-repo entry in `~/.config/ts/config.yaml`, (3) repo-relative sibling `../<repo-name>.ts/`, (4) fallback `~/ts`
+2. Setting `TS_ROOT` env var overrides all other resolution methods
+3. Users can define per-repo workspace paths in `~/.config/ts/config.yaml` under a `workspaces` map keyed by repo absolute path
+4. When no config or env var exists and the CWD is inside a git repo, the workspace defaults to `../<repo-name>.ts/`
+5. When not inside a git repo and no config/env is set, falls back to `~/ts`
+6. All commands (add, new, open, sync) use the resolved root with no behavioral regressions
+7. Config directory follows XDG (`~/.config/ts/`) and is created on demand if needed
+8. Existing users with data under `~/ts` experience no breakage (fallback preserved)
+
+## Implementation Plan
+
+1. **Create `internal/config.go`**
+   - Define a `Config` struct with `Workspaces map[string]string`
+   - Implement `LoadConfig()` that reads `~/.config/ts/config.yaml` (return zero-value if missing)
+   - Use `gopkg.in/yaml.v3` (or `sigs.k8s.io/yaml`) for parsing
+
+2. **Add repo detection helper in `internal/git.go`** (or existing git util)
+   - `RepoRoot() (string, error)` — runs `git rev-parse --show-toplevel` to get the current repo's absolute path and name
+
+3. **Refactor `internal/paths.go`**
+   - Change `TsRoot()` signature to accept an optional repo path (or auto-detect via `RepoRoot()`)
+   - Implement the 4-step resolution:
+     1. Check `os.Getenv("TS_ROOT")` — return if non-empty
+     2. Call `LoadConfig()`, look up repo path in `Workspaces` map — return if found
+     3. If inside a repo, compute `filepath.Join(filepath.Dir(repoRoot), repoName+".ts")`
+     4. Fall back to `~/ts`
+   - Update `FeaturePath` and `WorktreePath` to pass through the resolved root
+
+4. **Update all call sites** in `cmd/ts/` (add, new, open, sync) — should be transparent if they already call `TsRoot()`, but verify no hardcoded `~/ts` references remain
+
+5. **Tests**
+   - Unit test `TsRoot()` resolution with mocked env, config file, and git repo detection
+   - Test priority ordering (env wins over config, config wins over sibling default)
+   - Test fallback when not in a git repo
+
+6. **Documentation** — Update README with workspace configuration instructions and examples

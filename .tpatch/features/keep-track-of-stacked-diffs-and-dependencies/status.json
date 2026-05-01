@@ -8,5 +8,11 @@
   "updated_at": "2026-05-01T06:01:49Z",
   "last_command": "add",
   "apply": {},
-  "reconcile": {}
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "lightweight-worktree-handler",
+      "kind": "hard"
+    }
+  ]
 }

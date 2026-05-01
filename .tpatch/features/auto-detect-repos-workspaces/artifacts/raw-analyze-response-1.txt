@@ -1,0 +1,26 @@
+```json
+{
+  "summary": "Auto-detect if the current working directory is inside a git repository (or git worktree) and automatically configure the working directory accordingly, so users don't need to manually specify paths and the tool works seamlessly across worktree directories.",
+  "compatibility": {
+    "status": "compatible",
+    "reasoning": "This is an enhancement to path resolution logic, primarily affecting internal/paths.go"
+  },
+  "affected_areas": ["internal/paths.go", "cmd/ts/main.go", "internal/cli/new.go", "internal/cli/open.go", "internal/cli/sync.go"],
+  "acceptance_criteria": [
+    "Running ts inside a git repo uses that repo's root as the working directory",
+    "Running ts inside a git worktree resolves to the main repo and works identically across all worktree directories",
+    "Running ts outside any git repo falls back to the default workdir",
+    "Nested git repos (submodules) are handled correctly"
+  ],
+  "implementation_notes": [
+    "Use `git rev-parse --show-toplevel` to detect repo root",
+    "Use `git rev-parse --git-common-dir` or `git worktree list` to detect worktree scenarios and find the main working tree",
+    "Path detection logic likely lives in internal/paths.go already"
+  ],
+  "unresolved_questions": [
+    "What exactly is the 'default workdir' and where is it currently configured?",
+    "Should worktrees share a single tessera data directory or maintain separate ones?",
+    "How should submodules be treated - as independent repos or part of the parent?"
+  ]
+}
+```

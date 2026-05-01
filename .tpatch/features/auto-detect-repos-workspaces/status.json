@@ -2,11 +2,18 @@
   "id": "auto-detect-repos-workspaces",
   "slug": "auto-detect-repos-workspaces",
   "title": "We should try and see if we are already in a git repo to define if we should use the default workdir or a custom one for the current repo, and in case we are inside of a worktree we can work backwards and make ts work the same in every of the workspaces folders",
-  "state": "requested",
+  "state": "analyzed",
   "compatibility": "unknown",
   "requested_at": "2026-05-01T05:59:48Z",
-  "updated_at": "2026-05-01T05:59:48Z",
-  "last_command": "add",
+  "updated_at": "2026-05-01T07:20:27Z",
+  "last_command": "analyze",
+  "notes": "Heuristic analysis for feature 'auto-detect-repos-workspaces'. Manual review recommended.",
   "apply": {},
-  "reconcile": {}
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "user-defined-workdir",
+      "kind": "hard"
+    }
+  ]
 }

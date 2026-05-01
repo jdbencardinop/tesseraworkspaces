@@ -8,5 +8,11 @@
   "updated_at": "2026-05-01T05:55:47Z",
   "last_command": "add",
   "apply": {},
-  "reconcile": {}
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "auto-detect-repos-workspaces",
+      "kind": "hard"
+    }
+  ]
 }

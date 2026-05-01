@@ -1,0 +1,24 @@
+{
+  "summary": "Heuristic analysis for feature 'user-defined-workdir'. Manual review recommended.",
+  "compatibility": {
+    "status": "unknown",
+    "reasoning": "Heuristic mode — no LLM available for compatibility assessment"
+  },
+  "affected_areas": [
+    "(manual identification needed)"
+  ],
+  "acceptance_criteria": [
+    "Feature works as described in request",
+    "Existing tests pass",
+    "No regressions introduced",
+    "Changes documented"
+  ],
+  "implementation_notes": [
+    "Analysis generated in heuristic mode — connect a provider for detailed analysis"
+  ],
+  "unresolved_questions": [
+    "Detailed compatibility assessment pending provider connection",
+    "Provider error: generation returned 500: {\"error\":{\"message\":\"This operation was aborted\",\"type\":\"error\"}}"
+  ],
+  "heuristic_mode": true
+}

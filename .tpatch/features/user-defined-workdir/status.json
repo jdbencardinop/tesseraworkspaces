@@ -2,11 +2,15 @@
   "id": "user-defined-workdir",
   "slug": "user-defined-workdir",
   "title": "Currently we use a default working dir for everythin under /Users/jbencardino/ts, but we should have a workspace per repo and let the user configure where to set it up",
-  "state": "requested",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-05-01T05:57:45Z",
-  "updated_at": "2026-05-01T05:57:45Z",
-  "last_command": "add",
-  "apply": {},
+  "updated_at": "2026-05-01T07:29:30Z",
+  "last_command": "record",
+  "notes": "Patch recorded",
+  "apply": {
+    "base_commit": "ea7c0d1550fe58b9dc0b02fe5a3f958cc05797ef",
+    "has_patch": true
+  },
   "reconcile": {}
 }
