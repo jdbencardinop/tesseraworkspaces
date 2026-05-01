@@ -1,0 +1,530 @@
+diff --git a/Makefile b/Makefile
+index 52183d7..9e0f741 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ .PHONY: build test fmt install clean lint all
+ 
+-BINARY=bin/ts
+-BUILD_DIR=./cmd/ts
++BINARY=bin/tws
++BUILD_DIR=./cmd/tws
+ 
+ build:
+ 	@mkdir -p bin
+diff --git a/README.md b/README.md
+index b5d1f5d..501441d 100644
+--- a/README.md
++++ b/README.md
+@@ -1,4 +1,4 @@
+-# tesseraspaces
++# tesseraworkspaces
+ 
+ A CLI tool for creating feature-scoped workspaces with multiple git worktrees. Work on parallel branches or stacked diffs within a single feature, each in its own tmux session with your coding agent ready to go.
+ 
+@@ -7,25 +7,26 @@ A CLI tool for creating feature-scoped workspaces with multiple git worktrees. W
+ 1. **Add a feature** — creates a feature directory with shared context files
+ 2. **Create worktrees** — spin up isolated branches under that feature using `git worktree`
+ 3. **Open a worktree** — launches a tmux session with your editor and Claude Code attached
+-4. **Sync** — rebases all worktrees in a feature against `origin/main`
++4. **Sync** — rebases all worktrees in a feature in dependency order
+ 
+ ## Requirements
+ 
+ - [Go](https://go.dev/dl/) 1.26+
+ - [git](https://git-scm.com/)
+-- [tmux](https://github.com/tmux/tmux) (for `ts open`)
++- [tmux](https://github.com/tmux/tmux) (for `tws open`)
++- [Claude Code](https://claude.ai/claude-code) (for `tws open`, configurable in a future release)
+ 
+ ## Install
+ 
+ ```sh
+-go install github.com/jdbencardinop/tesseraspaces/cmd/ts@latest
++go install github.com/jdbencardinop/tesseraworkspaces/cmd/tws@latest
+ ```
+ 
+ Or build from source:
+ 
+ ```sh
+-git clone https://github.com/jdbencardinop/tesseraspaces.git
+-cd tesseraspaces
++git clone https://github.com/jdbencardinop/tesseraworkspaces.git
++cd tesseraworkspaces
+ make install
+ ```
+ 
+@@ -33,24 +34,24 @@ make install
+ 
+ ```sh
+ # Register a new feature workspace
+-ts add <feature>
++tws add <feature>
+ 
+ # Create a worktree branch under a feature
+-ts new <feature> <branch> [--base <parent>]
++tws new <feature> <branch> [--base <parent>]
+ 
+ # Open a worktree in a tmux session
+-ts open <feature> <branch>
++tws open <feature> <branch>
+ 
+ # Rebase all worktrees in a feature (respects dependency order)
+-ts sync <feature>
++tws sync <feature>
+ 
+ # Show the branch dependency tree for a feature
+-ts stack <feature>
++tws stack <feature>
+ ```
+ 
+ ## Configuration
+ 
+-By default, tesseraspaces creates workspaces in a sibling directory next to your repo (e.g., `../myapp.ts/`). This can be customized via environment variable or config file.
++By default, tesseraworkspaces creates workspaces in a sibling directory next to your repo (e.g., `../myapp.tws/`). This can be customized via environment variable or config file.
+ 
+ See [docs/configuration.md](docs/configuration.md) for details.
+ 
+diff --git a/cmd/ts/main.go b/cmd/tws/main.go
+similarity index 81%
+rename from cmd/ts/main.go
+rename to cmd/tws/main.go
+index 51c939f..11b5c4e 100644
+--- a/cmd/ts/main.go
++++ b/cmd/tws/main.go
+@@ -4,12 +4,12 @@ import (
+ 	"fmt"
+ 	"os"
+ 
+-	"github.com/jdbencardinop/tesseraspaces/internal/cli"
++	"github.com/jdbencardinop/tesseraworkspaces/internal/cli"
+ )
+ 
+ func main() {
+ 	if len(os.Args) < 2 {
+-		fmt.Println("Usage: ts <command>")
++		fmt.Println("Usage: tws <command>")
+ 		return
+ 	}
+ 
+diff --git a/docs/configuration.md b/docs/configuration.md
+index 4f57f6f..c1279a0 100644
+--- a/docs/configuration.md
++++ b/docs/configuration.md
+@@ -1,17 +1,17 @@
+ # Configuration
+ 
+-tesseraspaces resolves the workspace root directory using the following priority chain:
++tesseraworkspaces resolves the workspace root directory using the following priority chain:
+ 
+ | Priority | Source | Example |
+ |----------|--------|---------|
+-| 1 | `TS_ROOT` environment variable | `export TS_ROOT=/data/workspaces` |
+-| 2 | Global config (`~/.config/ts/config.yaml`) keyed by repo path | See below |
+-| 3 | Repo-relative sibling directory | `../myapp.ts/` |
+-| 4 | Global fallback | `~/ts` |
++| 1 | `TWS_ROOT` environment variable | `export TWS_ROOT=/data/workspaces` |
++| 2 | Global config (`~/.config/tws/config.yaml`) keyed by repo path | See below |
++| 3 | Repo-relative sibling directory | `../myapp.tws/` |
++| 4 | Global fallback | `~/tws` |
+ 
+ ## Global config file
+ 
+-Location: `~/.config/ts/config.yaml`
++Location: `~/.config/tws/config.yaml`
+ 
+ ```yaml
+ workspaces:
+@@ -21,22 +21,22 @@ workspaces:
+ 
+ Each key is the absolute path to a git repository. The value is the workspace root where features and worktrees are stored for that repo.
+ 
+-If no entry exists for the current repo, tesseraspaces defaults to a sibling directory named `<repo>.ts/` next to the repo.
++If no entry exists for the current repo, tesseraworkspaces defaults to a sibling directory named `<repo>.tws/` next to the repo.
+ 
+ ## Environment variable
+ 
+-Set `TS_ROOT` to override all config resolution for the current session:
++Set `TWS_ROOT` to override all config resolution for the current session:
+ 
+ ```sh
+-TS_ROOT=/tmp/scratch ts add my-feature
++TWS_ROOT=/tmp/scratch tws add my-feature
+ ```
+ 
+ ## Default behavior
+ 
+ When no config exists and no env var is set:
+ 
+-- **Inside a git repo** (`/Users/you/projects/myapp`): workspace root is `../myapp.ts/`
+-- **Outside a git repo**: workspace root falls back to `~/ts`
++- **Inside a git repo** (`/Users/you/projects/myapp`): workspace root is `../myapp.tws/`
++- **Outside a git repo**: workspace root falls back to `~/tws`
+ 
+ ## Workspace layout
+ 
+@@ -65,19 +65,19 @@ branches:
+ ```
+ 
+ - **name**: the branch name (matches the worktree folder name)
+-- **base**: the parent branch to rebase against during `ts sync`
++- **base**: the parent branch to rebase against during `tws sync`
+ 
+-`stack.yaml` is created automatically when you use `ts new`. The `--base` flag sets the parent:
++`stack.yaml` is created automatically when you use `tws new`. The `--base` flag sets the parent:
+ 
+ ```sh
+-ts new auth auth-models                    # base defaults to main
+-ts new auth auth-middleware --base auth-models
+-ts new auth auth-routes --base auth-middleware
++tws new auth auth-models                    # base defaults to main
++tws new auth auth-middleware --base auth-models
++tws new auth auth-routes --base auth-middleware
+ ```
+ 
+-`ts sync <feature>` rebases branches in topological order (parents first). If a rebase fails, all dependent branches are skipped.
++`tws sync <feature>` rebases branches in topological order (parents first). If a rebase fails, all dependent branches are skipped.
+ 
+-`ts stack <feature>` prints the dependency tree:
++`tws stack <feature>` prints the dependency tree:
+ 
+ ```
+ (main)
+diff --git a/go.mod b/go.mod
+index 9adf282..27ebfe6 100644
+--- a/go.mod
++++ b/go.mod
+@@ -1,4 +1,4 @@
+-module github.com/jdbencardinop/tesseraspaces
++module github.com/jdbencardinop/tesseraworkspaces
+ 
+ go 1.26.1
+ 
+diff --git a/internal/cli/add.go b/internal/cli/add.go
+index eef0ac8..58d1f9d 100644
+--- a/internal/cli/add.go
++++ b/internal/cli/add.go
+@@ -5,21 +5,21 @@ import (
+ 	"os"
+ 	"path/filepath"
+ 
+-	"github.com/jdbencardinop/tesseraspaces/internal"
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
+ )
+ 
+ func Add(args []string) {
+ 	if len(args) < 1 {
+-		println("Usage: ts add <feature>")
++		println("Usage: tws add <feature>")
+ 		return
+ 	}
+ 
+ 	feature := args[0]
+ 	root := internal.FeaturePath(feature)
+ 
+-	// Ensure .ts-workspace marker exists in workspace root
+-	wsRoot := internal.TsRoot()
+-	internal.Must(os.MkdirAll(filepath.Join(wsRoot, ".ts-workspace"), 0755))
++	// Ensure .tws-workspace marker exists in workspace root
++	wsRoot := internal.TwsRoot()
++	internal.Must(os.MkdirAll(filepath.Join(wsRoot, ".tws-workspace"), 0755))
+ 
+ 	// TODO: make worktress a constant in internal package
+ 	internal.Must(os.MkdirAll(filepath.Join(root, "worktrees"), 0755))
+diff --git a/internal/cli/new.go b/internal/cli/new.go
+index 2ea3c89..b783072 100644
+--- a/internal/cli/new.go
++++ b/internal/cli/new.go
+@@ -4,12 +4,12 @@ import (
+ 	"fmt"
+ 	"os"
+ 
+-	"github.com/jdbencardinop/tesseraspaces/internal"
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
+ )
+ 
+ func New(args []string) {
+ 	if len(args) < 2 {
+-		println("Usage: ts new <feature> <branch> [--base <parent>]")
++		println("Usage: tws new <feature> <branch> [--base <parent>]")
+ 		return
+ 	}
+ 
+diff --git a/internal/cli/open.go b/internal/cli/open.go
+index eda556e..65eabf3 100644
+--- a/internal/cli/open.go
++++ b/internal/cli/open.go
+@@ -1,10 +1,10 @@
+ package cli
+ 
+-import "github.com/jdbencardinop/tesseraspaces/internal"
++import "github.com/jdbencardinop/tesseraworkspaces/internal"
+ 
+ func Open(args []string) {
+ 	if len(args) < 2 {
+-		println("Usage: ts open <feature> <branch>")
++		println("Usage: tws open <feature> <branch>")
+ 		return
+ 	}
+ 
+diff --git a/internal/cli/stack.go b/internal/cli/stack.go
+index 37c57ea..a9aa153 100644
+--- a/internal/cli/stack.go
++++ b/internal/cli/stack.go
+@@ -4,12 +4,12 @@ import (
+ 	"fmt"
+ 	"os"
+ 
+-	"github.com/jdbencardinop/tesseraspaces/internal"
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
+ )
+ 
+ func StackCmd(args []string) {
+ 	if len(args) < 1 {
+-		println("Usage: ts stack <feature>")
++		println("Usage: tws stack <feature>")
+ 		return
+ 	}
+ 
+diff --git a/internal/cli/sync.go b/internal/cli/sync.go
+index ce009f5..86f2782 100644
+--- a/internal/cli/sync.go
++++ b/internal/cli/sync.go
+@@ -5,12 +5,12 @@ import (
+ 	"os"
+ 	"path/filepath"
+ 
+-	"github.com/jdbencardinop/tesseraspaces/internal"
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
+ )
+ 
+ func Sync(args []string) {
+ 	if len(args) < 1 {
+-		println("Usage: ts sync <feature>")
++		println("Usage: tws sync <feature>")
+ 		return
+ 	}
+ 
+diff --git a/internal/config.go b/internal/config.go
+index e61f0af..19c04eb 100644
+--- a/internal/config.go
++++ b/internal/config.go
+@@ -13,7 +13,7 @@ type Config struct {
+ 
+ func ConfigPath() string {
+ 	home, _ := os.UserHomeDir()
+-	return filepath.Join(home, ".config", "ts", "config.yaml")
++	return filepath.Join(home, ".config", "tws", "config.yaml")
+ }
+ 
+ func LoadConfig() Config {
+diff --git a/internal/paths.go b/internal/paths.go
+index 43bac03..e8bbf12 100644
+--- a/internal/paths.go
++++ b/internal/paths.go
+@@ -6,12 +6,12 @@ import (
+ 	"strings"
+ )
+ 
+-const workspaceMarker = ".ts-workspace"
++const workspaceMarker = ".tws-workspace"
+ 
+ // DetectWorkspaceRoot checks if cwd is inside an existing workspace.
+ // Returns the workspace root or empty string.
+ func DetectWorkspaceRoot(cwd string, cfg Config) string {
+-	// Tier 1: Walk up looking for .ts-workspace marker
++	// Tier 1: Walk up looking for .tws-workspace marker
+ 	dir := cwd
+ 	for {
+ 		if _, err := os.Stat(filepath.Join(dir, workspaceMarker)); err == nil {
+@@ -39,9 +39,9 @@ func DetectWorkspaceRoot(cwd string, cfg Config) string {
+ 		}
+ 	}
+ 
+-	// Tier 3: Check if cwd is inside ~/ts
++	// Tier 3: Check if cwd is inside ~/tws
+ 	home, _ := os.UserHomeDir()
+-	globalDefault := filepath.Join(home, "ts")
++	globalDefault := filepath.Join(home, "tws")
+ 	absCwd, _ := filepath.Abs(cwd)
+ 	if strings.HasPrefix(absCwd, globalDefault+string(filepath.Separator)) || absCwd == globalDefault {
+ 		return globalDefault
+@@ -50,9 +50,9 @@ func DetectWorkspaceRoot(cwd string, cfg Config) string {
+ 	return ""
+ }
+ 
+-// resolveTsRoot contains the resolution logic with injectable dependencies.
+-func resolveTsRoot(envRoot string, cwd string, repoRoot string, repoErr error, cfg Config) string {
+-	// 0. TS_ROOT env var — always wins
++// resolveTwsRoot contains the resolution logic with injectable dependencies.
++func resolveTwsRoot(envRoot string, cwd string, repoRoot string, repoErr error, cfg Config) string {
++	// 0. TWS_ROOT env var — always wins
+ 	if envRoot != "" {
+ 		return envRoot
+ 	}
+@@ -68,25 +68,25 @@ func resolveTsRoot(envRoot string, cwd string, repoRoot string, repoErr error, c
+ 			return ws
+ 		}
+ 
+-		// 3. Repo-relative sibling: ../<repo-name>.ts/
++		// 3. Repo-relative sibling: ../<repo-name>.tws/
+ 		repoName := filepath.Base(repoRoot)
+-		return filepath.Join(filepath.Dir(repoRoot), repoName+".ts")
++		return filepath.Join(filepath.Dir(repoRoot), repoName+".tws")
+ 	}
+ 
+ 	// 4. Global fallback
+ 	home, _ := os.UserHomeDir()
+-	return filepath.Join(home, "ts")
++	return filepath.Join(home, "tws")
+ }
+ 
+-func TsRoot() string {
++func TwsRoot() string {
+ 	repoRoot, repoErr := MainRepoRoot()
+ 	cfg := LoadConfig()
+ 	cwd, _ := os.Getwd()
+-	return resolveTsRoot(os.Getenv("TS_ROOT"), cwd, repoRoot, repoErr, cfg)
++	return resolveTwsRoot(os.Getenv("TWS_ROOT"), cwd, repoRoot, repoErr, cfg)
+ }
+ 
+ func FeaturePath(feature string) string {
+-	return filepath.Join(TsRoot(), feature)
++	return filepath.Join(TwsRoot(), feature)
+ }
+ 
+ func WorktreePath(feature, branch string) string {
+diff --git a/internal/paths_test.go b/internal/paths_test.go
+index 57789c3..1e325f4 100644
+--- a/internal/paths_test.go
++++ b/internal/paths_test.go
+@@ -7,62 +7,62 @@ import (
+ 	"testing"
+ )
+ 
+-func TestResolveTsRoot_EnvVar(t *testing.T) {
+-	got := resolveTsRoot("/custom/root", "/somewhere", "/some/repo", nil, Config{})
++func TestResolveTwsRoot_EnvVar(t *testing.T) {
++	got := resolveTwsRoot("/custom/root", "/somewhere", "/some/repo", nil, Config{})
+ 	if got != "/custom/root" {
+ 		t.Errorf("expected /custom/root, got %s", got)
+ 	}
+ }
+ 
+-func TestResolveTsRoot_ConfigEntry(t *testing.T) {
++func TestResolveTwsRoot_ConfigEntry(t *testing.T) {
+ 	cfg := Config{Workspaces: map[string]string{
+ 		"/Users/me/projects/myapp": "/data/workspaces/myapp",
+ 	}}
+-	got := resolveTsRoot("", "/somewhere", "/Users/me/projects/myapp", nil, cfg)
++	got := resolveTwsRoot("", "/somewhere", "/Users/me/projects/myapp", nil, cfg)
+ 	if got != "/data/workspaces/myapp" {
+ 		t.Errorf("expected /data/workspaces/myapp, got %s", got)
+ 	}
+ }
+ 
+-func TestResolveTsRoot_RepoSibling(t *testing.T) {
+-	got := resolveTsRoot("", "/somewhere", "/Users/me/projects/myapp", nil, Config{})
+-	want := "/Users/me/projects/myapp.ts"
++func TestResolveTwsRoot_RepoSibling(t *testing.T) {
++	got := resolveTwsRoot("", "/somewhere", "/Users/me/projects/myapp", nil, Config{})
++	want := "/Users/me/projects/myapp.tws"
+ 	if got != want {
+ 		t.Errorf("expected %s, got %s", want, got)
+ 	}
+ }
+ 
+-func TestResolveTsRoot_Fallback(t *testing.T) {
+-	got := resolveTsRoot("", "/somewhere", "", errors.New("not a repo"), Config{})
++func TestResolveTwsRoot_Fallback(t *testing.T) {
++	got := resolveTwsRoot("", "/somewhere", "", errors.New("not a repo"), Config{})
+ 	home, _ := os.UserHomeDir()
+-	want := filepath.Join(home, "ts")
++	want := filepath.Join(home, "tws")
+ 	if got != want {
+ 		t.Errorf("expected %s, got %s", want, got)
+ 	}
+ }
+ 
+-func TestResolveTsRoot_EnvWinsOverConfig(t *testing.T) {
++func TestResolveTwsRoot_EnvWinsOverConfig(t *testing.T) {
+ 	cfg := Config{Workspaces: map[string]string{
+ 		"/some/repo": "/configured/path",
+ 	}}
+-	got := resolveTsRoot("/env/override", "/somewhere", "/some/repo", nil, cfg)
++	got := resolveTwsRoot("/env/override", "/somewhere", "/some/repo", nil, cfg)
+ 	if got != "/env/override" {
+ 		t.Errorf("env should win, got %s", got)
+ 	}
+ }
+ 
+-func TestResolveTsRoot_ConfigWinsOverSibling(t *testing.T) {
++func TestResolveTwsRoot_ConfigWinsOverSibling(t *testing.T) {
+ 	cfg := Config{Workspaces: map[string]string{
+ 		"/Users/me/projects/myapp": "/explicit/path",
+ 	}}
+-	got := resolveTsRoot("", "/somewhere", "/Users/me/projects/myapp", nil, cfg)
++	got := resolveTwsRoot("", "/somewhere", "/Users/me/projects/myapp", nil, cfg)
+ 	if got != "/explicit/path" {
+ 		t.Errorf("config should win over sibling, got %s", got)
+ 	}
+ }
+ 
+ func TestFeaturePath(t *testing.T) {
+-	root := resolveTsRoot("/ws", "/somewhere", "", errors.New("no repo"), Config{})
++	root := resolveTwsRoot("/ws", "/somewhere", "", errors.New("no repo"), Config{})
+ 	want := "/ws/auth"
+ 	got := filepath.Join(root, "auth")
+ 	if got != want {
+@@ -71,7 +71,7 @@ func TestFeaturePath(t *testing.T) {
+ }
+ 
+ func TestWorktreePath(t *testing.T) {
+-	root := resolveTsRoot("/ws", "/somewhere", "", errors.New("no repo"), Config{})
++	root := resolveTwsRoot("/ws", "/somewhere", "", errors.New("no repo"), Config{})
+ 	want := "/ws/auth/worktrees/login-fix"
+ 	got := filepath.Join(root, "auth", "worktrees", "login-fix")
+ 	if got != want {
+@@ -83,9 +83,9 @@ func TestWorktreePath(t *testing.T) {
+ 
+ func TestDetectWorkspaceRoot_MarkerFile(t *testing.T) {
+ 	tmp := t.TempDir()
+-	wsRoot := filepath.Join(tmp, "myapp.ts")
++	wsRoot := filepath.Join(tmp, "myapp.tws")
+ 	nested := filepath.Join(wsRoot, "auth", "worktrees", "branch-a")
+-	os.MkdirAll(filepath.Join(wsRoot, ".ts-workspace"), 0755)
++	os.MkdirAll(filepath.Join(wsRoot, ".tws-workspace"), 0755)
+ 	os.MkdirAll(nested, 0755)
+ 
+ 	got := DetectWorkspaceRoot(nested, Config{})
+@@ -111,9 +111,8 @@ func TestDetectWorkspaceRoot_ConfigMatch(t *testing.T) {
+ 
+ func TestDetectWorkspaceRoot_GlobalDefault(t *testing.T) {
+ 	home, _ := os.UserHomeDir()
+-	globalDefault := filepath.Join(home, "ts")
++	globalDefault := filepath.Join(home, "tws")
+ 
+-	// Only test if ~/ts exists or we can create it temporarily
+ 	nested := filepath.Join(globalDefault, "some-feature")
+ 	if _, err := os.Stat(globalDefault); os.IsNotExist(err) {
+ 		os.MkdirAll(nested, 0755)
+@@ -136,15 +135,14 @@ func TestDetectWorkspaceRoot_NoMatch(t *testing.T) {
+ 	}
+ }
+ 
+-func TestResolveTsRoot_WorkspaceDetectionWins(t *testing.T) {
++func TestResolveTwsRoot_WorkspaceDetectionWins(t *testing.T) {
+ 	tmp := t.TempDir()
+-	wsRoot := filepath.Join(tmp, "myapp.ts")
++	wsRoot := filepath.Join(tmp, "myapp.tws")
+ 	cwd := filepath.Join(wsRoot, "auth", "worktrees", "branch-a")
+-	os.MkdirAll(filepath.Join(wsRoot, ".ts-workspace"), 0755)
++	os.MkdirAll(filepath.Join(wsRoot, ".tws-workspace"), 0755)
+ 	os.MkdirAll(cwd, 0755)
+ 
+-	// Even with a repo configured, workspace detection should win (after env)
+-	got := resolveTsRoot("", cwd, "/some/repo", nil, Config{})
++	got := resolveTwsRoot("", cwd, "/some/repo", nil, Config{})
+ 	if got != wsRoot {
+ 		t.Errorf("workspace detection should win, expected %s, got %s", wsRoot, got)
+ 	}

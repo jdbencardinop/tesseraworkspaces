@@ -1,0 +1,16 @@
+{
+  "id": "rebrand-to-tesseraworkspaces",
+  "slug": "rebrand-to-tesseraworkspaces",
+  "title": "Rename the project from tesseraspaces/ts to tesseraworkspaces/tws to avoid collision with the TypeScript compiler (ts). Update module path, binary name, all imports, Makefile, README, docs, and CI workflow.",
+  "state": "applied",
+  "compatibility": "unknown",
+  "requested_at": "2026-05-01T09:46:36Z",
+  "updated_at": "2026-05-01T09:50:48Z",
+  "last_command": "record",
+  "notes": "Patch recorded",
+  "apply": {
+    "base_commit": "e31e517753d3eb24d28070d3f25e5f7c75781337",
+    "has_patch": true
+  },
+  "reconcile": {}
+}
