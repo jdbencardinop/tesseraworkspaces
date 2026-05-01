@@ -5,15 +5,15 @@ A CLI tool for creating feature-scoped workspaces with multiple git worktrees. W
 ## How it works
 
 1. **Add a feature** — creates a feature directory with shared context files
-2. **Create worktrees** — spin up isolated branches under that feature using [worktrunk](https://github.com/max-sixty/worktrunk)
+2. **Create worktrees** — spin up isolated branches under that feature using `git worktree`
 3. **Open a worktree** — launches a tmux session with your editor and Claude Code attached
 4. **Sync** — rebases all worktrees in a feature against `origin/main`
 
 ## Requirements
 
 - [Go](https://go.dev/dl/) 1.26+
-- [tmux](https://github.com/tmux/tmux)
-- [worktrunk](https://github.com/max-sixty/worktrunk) (`wt` must be available on PATH)
+- [git](https://git-scm.com/)
+- [tmux](https://github.com/tmux/tmux) (for `ts open`)
 
 ## Install
 

@@ -8,6 +8,8 @@ func Open(args []string) {
 		return
 	}
 
+	internal.RequireTool("tmux")
+
 	feature := args[0]
 	branch := args[1]
 

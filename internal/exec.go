@@ -8,6 +8,13 @@ import (
 	"strings"
 )
 
+func RequireTool(name string) {
+	if _, err := exec.LookPath(name); err != nil {
+		fmt.Printf("Error: required tool %q not found in PATH\n", name)
+		os.Exit(1)
+	}
+}
+
 func MainRepoRoot() (string, error) {
 	// git-common-dir returns the .git dir of the main repo even from a worktree.
 	// In a non-worktree checkout it returns ".git" (relative).

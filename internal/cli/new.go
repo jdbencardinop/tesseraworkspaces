@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/jdbencardinop/tesseraspaces/internal"
 )
@@ -14,21 +13,24 @@ func New(args []string) {
 		return
 	}
 
+	internal.RequireTool("git")
+
 	feature := args[0]
 	branch := args[1]
 
 	path := internal.WorktreePath(feature, branch)
 
-	// Create the worktree directory if it doesn't exist
-	// TODO: we should validate if Worktruink is installed and available in PATH
-	// we should consider making this an interface and allowing users to choose between different git worktree implementations
-	// we could probably do one of our own that is more lightweight and doesn't require git, but for now we can just use worktrunk
-	// https://github.com/max-sixty/worktrunk
-	internal.Must(internal.Run("wt", "switch", "-c", branch))
+	// Ensure parent directory exists
+	internal.Must(os.MkdirAll(internal.FeaturePath(feature), 0755))
 
-	// TODO: we should probably move this to a template file and copy it over instead of creating it from scratch
-	// also figure out what does .cl stand for and if we need it or if we can just use the CLAUDE.local.md file we created in the add command
-	internal.Must(os.MkdirAll(filepath.Join(path, ".cl"), 0755))
+	// Create the worktree at the feature-scoped path
+	repoRoot, err := internal.MainRepoRoot()
+	if err != nil {
+		fmt.Println("Error: must be run from inside a git repository")
+		os.Exit(1)
+	}
 
-	fmt.Println("Worktree created for feature:", feature, "branch:", branch)
+	internal.Must(internal.RunDir(repoRoot, "git", "worktree", "add", path, "-b", branch))
+
+	fmt.Println("Worktree created:", path)
 }
