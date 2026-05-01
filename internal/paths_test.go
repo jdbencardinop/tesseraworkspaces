@@ -8,7 +8,7 @@ import (
 )
 
 func TestResolveTsRoot_EnvVar(t *testing.T) {
-	got := resolveTsRoot("/custom/root", "/some/repo", nil, Config{})
+	got := resolveTsRoot("/custom/root", "/somewhere", "/some/repo", nil, Config{})
 	if got != "/custom/root" {
 		t.Errorf("expected /custom/root, got %s", got)
 	}
@@ -18,14 +18,14 @@ func TestResolveTsRoot_ConfigEntry(t *testing.T) {
 	cfg := Config{Workspaces: map[string]string{
 		"/Users/me/projects/myapp": "/data/workspaces/myapp",
 	}}
-	got := resolveTsRoot("", "/Users/me/projects/myapp", nil, cfg)
+	got := resolveTsRoot("", "/somewhere", "/Users/me/projects/myapp", nil, cfg)
 	if got != "/data/workspaces/myapp" {
 		t.Errorf("expected /data/workspaces/myapp, got %s", got)
 	}
 }
 
 func TestResolveTsRoot_RepoSibling(t *testing.T) {
-	got := resolveTsRoot("", "/Users/me/projects/myapp", nil, Config{})
+	got := resolveTsRoot("", "/somewhere", "/Users/me/projects/myapp", nil, Config{})
 	want := "/Users/me/projects/myapp.ts"
 	if got != want {
 		t.Errorf("expected %s, got %s", want, got)
@@ -33,7 +33,7 @@ func TestResolveTsRoot_RepoSibling(t *testing.T) {
 }
 
 func TestResolveTsRoot_Fallback(t *testing.T) {
-	got := resolveTsRoot("", "", errors.New("not a repo"), Config{})
+	got := resolveTsRoot("", "/somewhere", "", errors.New("not a repo"), Config{})
 	home, _ := os.UserHomeDir()
 	want := filepath.Join(home, "ts")
 	if got != want {
@@ -45,7 +45,7 @@ func TestResolveTsRoot_EnvWinsOverConfig(t *testing.T) {
 	cfg := Config{Workspaces: map[string]string{
 		"/some/repo": "/configured/path",
 	}}
-	got := resolveTsRoot("/env/override", "/some/repo", nil, cfg)
+	got := resolveTsRoot("/env/override", "/somewhere", "/some/repo", nil, cfg)
 	if got != "/env/override" {
 		t.Errorf("env should win, got %s", got)
 	}
@@ -55,24 +55,14 @@ func TestResolveTsRoot_ConfigWinsOverSibling(t *testing.T) {
 	cfg := Config{Workspaces: map[string]string{
 		"/Users/me/projects/myapp": "/explicit/path",
 	}}
-	got := resolveTsRoot("", "/Users/me/projects/myapp", nil, cfg)
+	got := resolveTsRoot("", "/somewhere", "/Users/me/projects/myapp", nil, cfg)
 	if got != "/explicit/path" {
 		t.Errorf("config should win over sibling, got %s", got)
 	}
 }
 
-func TestLoadConfig_MissingFile(t *testing.T) {
-	// LoadConfig should return empty config when file doesn't exist.
-	// This relies on the default config path not existing in a test env,
-	// which is fine for CI. For a more robust test we'd inject the path.
-	cfg := Config{}
-	if len(cfg.Workspaces) != 0 {
-		t.Errorf("expected empty workspaces, got %v", cfg.Workspaces)
-	}
-}
-
 func TestFeaturePath(t *testing.T) {
-	root := resolveTsRoot("/ws", "", errors.New("no repo"), Config{})
+	root := resolveTsRoot("/ws", "/somewhere", "", errors.New("no repo"), Config{})
 	want := "/ws/auth"
 	got := filepath.Join(root, "auth")
 	if got != want {
@@ -81,10 +71,81 @@ func TestFeaturePath(t *testing.T) {
 }
 
 func TestWorktreePath(t *testing.T) {
-	root := resolveTsRoot("/ws", "", errors.New("no repo"), Config{})
+	root := resolveTsRoot("/ws", "/somewhere", "", errors.New("no repo"), Config{})
 	want := "/ws/auth/worktrees/login-fix"
 	got := filepath.Join(root, "auth", "worktrees", "login-fix")
 	if got != want {
 		t.Errorf("expected %s, got %s", want, got)
+	}
+}
+
+// --- Workspace detection tests ---
+
+func TestDetectWorkspaceRoot_MarkerFile(t *testing.T) {
+	tmp := t.TempDir()
+	wsRoot := filepath.Join(tmp, "myapp.ts")
+	nested := filepath.Join(wsRoot, "auth", "worktrees", "branch-a")
+	os.MkdirAll(filepath.Join(wsRoot, ".ts-workspace"), 0755)
+	os.MkdirAll(nested, 0755)
+
+	got := DetectWorkspaceRoot(nested, Config{})
+	if got != wsRoot {
+		t.Errorf("expected %s, got %s", wsRoot, got)
+	}
+}
+
+func TestDetectWorkspaceRoot_ConfigMatch(t *testing.T) {
+	tmp := t.TempDir()
+	wsRoot := filepath.Join(tmp, "custom-workspace")
+	nested := filepath.Join(wsRoot, "feature", "worktrees", "branch")
+	os.MkdirAll(nested, 0755)
+
+	cfg := Config{Workspaces: map[string]string{
+		"/some/repo": wsRoot,
+	}}
+	got := DetectWorkspaceRoot(nested, cfg)
+	if got != wsRoot {
+		t.Errorf("expected %s, got %s", wsRoot, got)
+	}
+}
+
+func TestDetectWorkspaceRoot_GlobalDefault(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	globalDefault := filepath.Join(home, "ts")
+
+	// Only test if ~/ts exists or we can create it temporarily
+	nested := filepath.Join(globalDefault, "some-feature")
+	if _, err := os.Stat(globalDefault); os.IsNotExist(err) {
+		os.MkdirAll(nested, 0755)
+		defer os.RemoveAll(globalDefault)
+	} else {
+		os.MkdirAll(nested, 0755)
+		defer os.Remove(nested)
+	}
+
+	got := DetectWorkspaceRoot(nested, Config{})
+	if got != globalDefault {
+		t.Errorf("expected %s, got %s", globalDefault, got)
+	}
+}
+
+func TestDetectWorkspaceRoot_NoMatch(t *testing.T) {
+	got := DetectWorkspaceRoot("/some/random/path", Config{})
+	if got != "" {
+		t.Errorf("expected empty string, got %s", got)
+	}
+}
+
+func TestResolveTsRoot_WorkspaceDetectionWins(t *testing.T) {
+	tmp := t.TempDir()
+	wsRoot := filepath.Join(tmp, "myapp.ts")
+	cwd := filepath.Join(wsRoot, "auth", "worktrees", "branch-a")
+	os.MkdirAll(filepath.Join(wsRoot, ".ts-workspace"), 0755)
+	os.MkdirAll(cwd, 0755)
+
+	// Even with a repo configured, workspace detection should win (after env)
+	got := resolveTsRoot("", cwd, "/some/repo", nil, Config{})
+	if got != wsRoot {
+		t.Errorf("workspace detection should win, expected %s, got %s", wsRoot, got)
 	}
 }

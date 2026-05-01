@@ -4,8 +4,27 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
+
+func MainRepoRoot() (string, error) {
+	// git-common-dir returns the .git dir of the main repo even from a worktree.
+	// In a non-worktree checkout it returns ".git" (relative).
+	out, err := exec.Command("git", "rev-parse", "--git-common-dir").Output()
+	if err != nil {
+		return "", err
+	}
+	gitDir := strings.TrimSpace(string(out))
+
+	if gitDir == ".git" {
+		// Not inside a worktree — fall back to normal detection.
+		return RepoRoot()
+	}
+
+	// gitDir is absolute (e.g. /path/to/repo/.git), resolve to parent.
+	return filepath.Dir(filepath.Clean(gitDir)), nil
+}
 
 func RepoRoot() (string, error) {
 	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
