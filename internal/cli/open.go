@@ -1,10 +1,10 @@
 package cli
 
-import "github.com/jdbencardinop/tesseraspaces/internal"
+import "github.com/jdbencardinop/tesseraworkspaces/internal"
 
 func Open(args []string) {
 	if len(args) < 2 {
-		println("Usage: ts open <feature> <branch>")
+		println("Usage: tws open <feature> <branch>")
 		return
 	}
 

@@ -13,7 +13,7 @@ type Config struct {
 
 func ConfigPath() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "ts", "config.yaml")
+	return filepath.Join(home, ".config", "tws", "config.yaml")
 }
 
 func LoadConfig() Config {

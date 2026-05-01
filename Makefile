@@ -1,7 +1,7 @@
 .PHONY: build test fmt install clean lint all
 
-BINARY=bin/ts
-BUILD_DIR=./cmd/ts
+BINARY=bin/tws
+BUILD_DIR=./cmd/tws
 
 build:
 	@mkdir -p bin

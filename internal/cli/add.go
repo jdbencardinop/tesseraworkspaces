@@ -5,21 +5,21 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/jdbencardinop/tesseraspaces/internal"
+	"github.com/jdbencardinop/tesseraworkspaces/internal"
 )
 
 func Add(args []string) {
 	if len(args) < 1 {
-		println("Usage: ts add <feature>")
+		println("Usage: tws add <feature>")
 		return
 	}
 
 	feature := args[0]
 	root := internal.FeaturePath(feature)
 
-	// Ensure .ts-workspace marker exists in workspace root
-	wsRoot := internal.TsRoot()
-	internal.Must(os.MkdirAll(filepath.Join(wsRoot, ".ts-workspace"), 0755))
+	// Ensure .tws-workspace marker exists in workspace root
+	wsRoot := internal.TwsRoot()
+	internal.Must(os.MkdirAll(filepath.Join(wsRoot, ".tws-workspace"), 0755))
 
 	// TODO: make worktress a constant in internal package
 	internal.Must(os.MkdirAll(filepath.Join(root, "worktrees"), 0755))

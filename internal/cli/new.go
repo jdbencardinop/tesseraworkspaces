@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/jdbencardinop/tesseraspaces/internal"
+	"github.com/jdbencardinop/tesseraworkspaces/internal"
 )
 
 func New(args []string) {
 	if len(args) < 2 {
-		println("Usage: ts new <feature> <branch> [--base <parent>]")
+		println("Usage: tws new <feature> <branch> [--base <parent>]")
 		return
 	}
 

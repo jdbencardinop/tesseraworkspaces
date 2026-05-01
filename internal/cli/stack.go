@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/jdbencardinop/tesseraspaces/internal"
+	"github.com/jdbencardinop/tesseraworkspaces/internal"
 )
 
 func StackCmd(args []string) {
 	if len(args) < 1 {
-		println("Usage: ts stack <feature>")
+		println("Usage: tws stack <feature>")
 		return
 	}
 

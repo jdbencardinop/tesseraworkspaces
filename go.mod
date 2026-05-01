@@ -1,4 +1,4 @@
-module github.com/jdbencardinop/tesseraspaces
+module github.com/jdbencardinop/tesseraworkspaces
 
 go 1.26.1
 

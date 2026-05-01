@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/jdbencardinop/tesseraspaces/internal/cli"
+	"github.com/jdbencardinop/tesseraworkspaces/internal/cli"
 )
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: ts <command>")
+		fmt.Println("Usage: tws <command>")
 		return
 	}
 

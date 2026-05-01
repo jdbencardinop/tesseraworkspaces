@@ -5,12 +5,12 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/jdbencardinop/tesseraspaces/internal"
+	"github.com/jdbencardinop/tesseraworkspaces/internal"
 )
 
 func Sync(args []string) {
 	if len(args) < 1 {
-		println("Usage: ts sync <feature>")
+		println("Usage: tws sync <feature>")
 		return
 	}
 
