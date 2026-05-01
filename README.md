@@ -45,6 +45,12 @@ ts open <feature> <branch>
 ts sync <feature>
 ```
 
+## Configuration
+
+By default, tesseraspaces creates workspaces in a sibling directory next to your repo (e.g., `../myapp.ts/`). This can be customized via environment variable or config file.
+
+See [docs/configuration.md](docs/configuration.md) for details.
+
 ## License
 
 [MIT](LICENSE)
