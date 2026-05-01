@@ -2,13 +2,16 @@
   "id": "lightweight-worktree-handler",
   "slug": "lightweight-worktree-handler",
   "title": "We should have a way to work with worktrees that suits our way of modeling our features, in which a feature folder can have many worktrees, so not all worktrees in the repo are in the same folder, worktrunk might do that out of the box, so we should also document how to do that in worktrunk",
-  "state": "analyzed",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-05-01T05:55:47Z",
-  "updated_at": "2026-05-01T07:55:11Z",
-  "last_command": "analyze",
-  "notes": "Heuristic analysis for feature 'lightweight-worktree-handler'. Manual review recommended.",
-  "apply": {},
+  "updated_at": "2026-05-01T08:17:43Z",
+  "last_command": "record",
+  "notes": "Patch recorded",
+  "apply": {
+    "base_commit": "5f243742991d33255f09f46cce4de031ba60a032",
+    "has_patch": true
+  },
   "reconcile": {},
   "depends_on": [
     {

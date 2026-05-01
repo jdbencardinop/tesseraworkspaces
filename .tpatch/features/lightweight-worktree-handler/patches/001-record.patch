@@ -1,0 +1,129 @@
+diff --git a/README.md b/README.md
+index a890088..3c61c2b 100644
+--- a/README.md
++++ b/README.md
+@@ -5,15 +5,15 @@ A CLI tool for creating feature-scoped workspaces with multiple git worktrees. W
+ ## How it works
+ 
+ 1. **Add a feature** — creates a feature directory with shared context files
+-2. **Create worktrees** — spin up isolated branches under that feature using [worktrunk](https://github.com/max-sixty/worktrunk)
++2. **Create worktrees** — spin up isolated branches under that feature using `git worktree`
+ 3. **Open a worktree** — launches a tmux session with your editor and Claude Code attached
+ 4. **Sync** — rebases all worktrees in a feature against `origin/main`
+ 
+ ## Requirements
+ 
+ - [Go](https://go.dev/dl/) 1.26+
+-- [tmux](https://github.com/tmux/tmux)
+-- [worktrunk](https://github.com/max-sixty/worktrunk) (`wt` must be available on PATH)
++- [git](https://git-scm.com/)
++- [tmux](https://github.com/tmux/tmux) (for `ts open`)
+ 
+ ## Install
+ 
+diff --git a/internal/cli/new.go b/internal/cli/new.go
+index b5b47a5..8af7c96 100644
+--- a/internal/cli/new.go
++++ b/internal/cli/new.go
+@@ -3,7 +3,6 @@ package cli
+ import (
+ 	"fmt"
+ 	"os"
+-	"path/filepath"
+ 
+ 	"github.com/jdbencardinop/tesseraspaces/internal"
+ )
+@@ -14,21 +13,24 @@ func New(args []string) {
+ 		return
+ 	}
+ 
++	internal.RequireTool("git")
++
+ 	feature := args[0]
+ 	branch := args[1]
+ 
+ 	path := internal.WorktreePath(feature, branch)
+ 
+-	// Create the worktree directory if it doesn't exist
+-	// TODO: we should validate if Worktruink is installed and available in PATH
+-	// we should consider making this an interface and allowing users to choose between different git worktree implementations
+-	// we could probably do one of our own that is more lightweight and doesn't require git, but for now we can just use worktrunk
+-	// https://github.com/max-sixty/worktrunk
+-	internal.Must(internal.Run("wt", "switch", "-c", branch))
++	// Ensure parent directory exists
++	internal.Must(os.MkdirAll(internal.FeaturePath(feature), 0755))
++
++	// Create the worktree at the feature-scoped path
++	repoRoot, err := internal.MainRepoRoot()
++	if err != nil {
++		fmt.Println("Error: must be run from inside a git repository")
++		os.Exit(1)
++	}
+ 
+-	// TODO: we should probably move this to a template file and copy it over instead of creating it from scratch
+-	// also figure out what does .cl stand for and if we need it or if we can just use the CLAUDE.local.md file we created in the add command
+-	internal.Must(os.MkdirAll(filepath.Join(path, ".cl"), 0755))
++	internal.Must(internal.RunDir(repoRoot, "git", "worktree", "add", path, "-b", branch))
+ 
+-	fmt.Println("Worktree created for feature:", feature, "branch:", branch)
++	fmt.Println("Worktree created:", path)
+ }
+diff --git a/internal/cli/open.go b/internal/cli/open.go
+index 7ddc9bf..eda556e 100644
+--- a/internal/cli/open.go
++++ b/internal/cli/open.go
+@@ -8,6 +8,8 @@ func Open(args []string) {
+ 		return
+ 	}
+ 
++	internal.RequireTool("tmux")
++
+ 	feature := args[0]
+ 	branch := args[1]
+ 
+diff --git a/internal/cli/sync.go b/internal/cli/sync.go
+index 60d121c..bb537c5 100644
+--- a/internal/cli/sync.go
++++ b/internal/cli/sync.go
+@@ -14,6 +14,8 @@ func Sync(args []string) {
+ 		return
+ 	}
+ 
++	internal.RequireTool("git")
++
+ 	feature := args[0]
+ 	root := internal.FeaturePath(feature)
+ 
+@@ -22,10 +24,11 @@ func Sync(args []string) {
+ 	internal.Must(internal.Run("git", "fetch"))
+ 
+ 	for _, e := range entries {
++		if !e.IsDir() {
++			continue
++		}
+ 		path := filepath.Join(root, "worktrees", e.Name())
+ 		fmt.Printf("Syncing worktree: %s\n", path)
+-		// TODO: verify the behaviour of this, we might not need to rebase everything everytime
+-		// TODO: configure remote and branch in case we want to change the target branch or remote
+-		internal.Must(internal.Run("git", "rebase", "--update-refs", "origin/main"))
++		internal.Must(internal.RunDir(path, "git", "rebase", "--update-refs", "origin/main"))
+ 	}
+ }
+diff --git a/internal/exec.go b/internal/exec.go
+index 6b9746a..a298904 100644
+--- a/internal/exec.go
++++ b/internal/exec.go
+@@ -8,6 +8,13 @@ import (
+ 	"strings"
+ )
+ 
++func RequireTool(name string) {
++	if _, err := exec.LookPath(name); err != nil {
++		fmt.Printf("Error: required tool %q not found in PATH\n", name)
++		os.Exit(1)
++	}
++}
++
+ func MainRepoRoot() (string, error) {
+ 	// git-common-dir returns the .git dir of the main repo even from a worktree.
+ 	// In a non-worktree checkout it returns ".git" (relative).

@@ -1,0 +1,4 @@
+ .tpatch/FEATURES.md                                |  2 +-
+ .../lightweight-worktree-handler/analysis.md       | 46 +++++++++++++---------
+ .../lightweight-worktree-handler/status.json       |  8 ++--
+ 3 files changed, 32 insertions(+), 24 deletions(-)
