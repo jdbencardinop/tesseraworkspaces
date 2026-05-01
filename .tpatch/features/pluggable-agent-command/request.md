@@ -1,0 +1,8 @@
+# Feature Request: ts open currently hardcodes "claude -c" as the agent command launched in the tmux session. We should make this configurable so users can use other agents (opencode, aider, cursor, etc) or no agent at all. Add an agent_command field to the global config (~/.config/ts/config.yaml) and support a per-feature override. Also add claude to the README requirements for now, and document how to change the agent command.
+
+**Slug**: `pluggable-agent-command`
+**Created**: 2026-05-01T09:03:41Z
+
+## Description
+
+ts open currently hardcodes "claude -c" as the agent command launched in the tmux session. We should make this configurable so users can use other agents (opencode, aider, cursor, etc) or no agent at all. Add an agent_command field to the global config (~/.config/ts/config.yaml) and support a per-feature override. Also add claude to the README requirements for now, and document how to change the agent command.

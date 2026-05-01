@@ -1,0 +1,60 @@
+{
+  "summary": "Replace the current `sync` behavior that indiscriminately rebases every branch with an active worktree with a dependency-aware sync model for stacked diffs. The new approach should track relationships between branches/features/stacks, determine which worktrees or branches actually need to advance, and allow syncing only the relevant subset of changes while preserving dependency order and avoiding unnecessary rebases.",
+  "compatibility": {
+    "status": "unclear",
+    "reasoning": "The request appears directionally compatible with the existing CLI because it refines the behavior of the existing sync command rather than introducing an unrelated workflow. However, the desired model is underspecified: it is unclear whether existing sync semantics must remain available, how stacks are represented today, whether dependency metadata already exists, and whether users expect one worktree per feature, one worktree per stack, or both modes. This could become a breaking behavioral change if `ts sync` currently rebases all known worktrees and users rely on that behavior."
+  },
+  "affected_areas": [
+    "internal/cli/sync.go",
+    "internal/cli/add.go",
+    "internal/cli/new.go",
+    "internal/cli/open.go",
+    "internal/config.go",
+    "internal/exec.go",
+    "internal/paths.go",
+    "cmd/ts/main.go",
+    "docs/configuration.md",
+    "README.md",
+    "internal/paths_test.go",
+    "new tests under internal/cli/ or internal/ for stack/dependency resolution"
+  ],
+  "acceptance_criteria": [
+    "`ts sync` no longer blindly rebases every branch that has a worktree when dependency metadata indicates only a subset needs updating.",
+    "The sync implementation can model a graph of branch or change dependencies and process dependent changes in topological order.",
+    "The tool detects and reports dependency cycles instead of attempting an invalid sync.",
+    "The tool supports syncing a single selected worktree/branch and only the required ancestors or descendants according to the chosen policy.",
+    "The tool preserves an option or mode to perform the previous full-sync behavior if backward compatibility is required.",
+    "Sync output clearly reports which branches/worktrees were selected, skipped, rebased, advanced, or failed.",
+    "If a rebase or update fails for one node in the dependency graph, dependent nodes are not processed until the conflict is resolved.",
+    "Automated tests cover linear stacks, branched dependency graphs, independent worktrees, cycle detection, missing worktrees, and partial sync behavior.",
+    "Documentation explains how dependencies are recorded, how stacks/features map to worktrees, and how users choose between full-stack and targeted sync."
+  ],
+  "implementation_notes": [
+    "Introduce an internal representation for stacked diffs, likely a graph where nodes are branches/features/worktrees and edges represent dependency or parent-child relationships.",
+    "Determine where dependency metadata should live: git config, branch naming conventions, repository-local config, files under a tool-managed directory, or existing project config handled by `internal/config.go`.",
+    "Refactor `internal/cli/sync.go` so branch selection and execution are separate phases: discover state, build dependency graph, choose sync set, validate order, then execute git operations.",
+    "Use topological sorting to order sync operations and explicit cycle detection to reject invalid stack structures.",
+    "Be careful with worktree state: dirty worktrees, detached HEADs, missing branches, deleted worktrees, and branches checked out in multiple locations should be handled explicitly.",
+    "Consider adding command flags such as `--all`, `--stack`, `--branch`, `--feature`, `--ancestors`, `--descendants`, `--dry-run`, or `--plan` depending on the intended UX.",
+    "A dry-run or planning mode would be useful for safely showing which branches would be rebased or advanced before mutating repositories.",
+    "The existing command registration in `cmd/ts/main.go` may need updates if new sync flags or subcommands are introduced.",
+    "Git command execution should remain centralized through `internal/exec.go` rather than embedding shell calls directly in the sync logic.",
+    "Path and worktree discovery should reuse or extend helpers in `internal/paths.go` and should be covered by tests.",
+    "Documentation in `README.md` and `docs/configuration.md` should be updated alongside behavior changes to avoid surprising users."
+  ],
+  "unresolved_questions": [
+    "What exactly is the current definition of a stack, feature, branch, and worktree in this project?",
+    "Should there be one worktree per stack, one worktree per feature, or should both layouts be supported?",
+    "How should dependencies be declared or inferred: explicitly by users, from branch ancestry, from naming conventions, from PR metadata, or from local config?",
+    "When syncing a selected node, should the tool advance ancestors, descendants, both, or only the selected branch?",
+    "Should `ts sync` retain the current full-rebase behavior by default, or should dependency-aware targeted sync become the default?",
+    "What should happen when a dependency branch has no local worktree?",
+    "Should the dependency graph include only local branches/worktrees or also remote tracking branches?",
+    "Should sync perform rebase, merge, fast-forward, cherry-pick, or choose the operation based on relationship type?",
+    "How should conflicts be persisted and resumed across partially completed stack syncs?",
+    "Is backward compatibility required for existing configuration and workflows?",
+    "Should the graph support multiple parents per change, or only linear stacks with optional branches?",
+    "Do we need a new user-facing command to manage dependencies, such as `ts stack add`, `ts stack link`, or `ts deps`?"
+  ],
+  "heuristic_mode": false
+}

@@ -2,12 +2,16 @@
   "id": "keep-track-of-stacked-diffs-and-dependencies",
   "slug": "keep-track-of-stacked-diffs-and-dependencies",
   "title": "Our sync method currently just rebases every single branch we have a worktree for, but this might not be what we want, we might just need to advance some of the worktrees or take just changes in one worktree, check if we need one worktree per stack or one worktree per feature, we need to implement a better approach to handling a graph of dependencies in the changes",
-  "state": "requested",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-05-01T06:01:49Z",
-  "updated_at": "2026-05-01T06:01:49Z",
-  "last_command": "add",
-  "apply": {},
+  "updated_at": "2026-05-01T09:22:07Z",
+  "last_command": "record",
+  "notes": "Patch recorded",
+  "apply": {
+    "base_commit": "88760dc4f18f849a28a1979d13f693af9e3186f6",
+    "has_patch": true
+  },
   "reconcile": {},
   "depends_on": [
     {
