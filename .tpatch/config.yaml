@@ -1,0 +1,23 @@
+# Tessera Patch configuration
+provider:
+  type: openai-compatible  # openai-compatible | anthropic
+  base_url: ""
+  model: ""
+  auth_env: ""  # env var name containing auth token (NOT the secret itself)
+
+# Merge strategy for applying patches: "3way" (default) or "rebase"
+merge_strategy: 3way
+
+# Max LLM validation retries when output fails to parse (0 disables retry)
+max_retries: 2
+
+# Max output tokens for the implement phase (default 16384). Bump higher
+# for features that emit many large file bodies inline.
+max_tokens_implement: 16384
+
+# Shell command run by `tpatch test <slug>` (e.g. "go test ./...", "bun test")
+test_command: ""
+
+# Feature dependency DAG (ADR-011). Default true from v0.6.0.
+# Set to false to opt back into v0.5.x byte-identity behaviour.
+features_dependencies: true

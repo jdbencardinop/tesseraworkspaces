@@ -1,0 +1,12 @@
+{
+  "id": "lightweight-worktree-handler",
+  "slug": "lightweight-worktree-handler",
+  "title": "We should have a way to work with worktrees that suits our way of modeling our features, in which a feature folder can have many worktrees, so not all worktrees in the repo are in the same folder, worktrunk might do that out of the box, so we should also document how to do that in worktrunk",
+  "state": "requested",
+  "compatibility": "unknown",
+  "requested_at": "2026-05-01T05:55:47Z",
+  "updated_at": "2026-05-01T05:55:47Z",
+  "last_command": "add",
+  "apply": {},
+  "reconcile": {}
+}
