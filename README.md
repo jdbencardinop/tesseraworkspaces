@@ -36,13 +36,16 @@ make install
 ts add <feature>
 
 # Create a worktree branch under a feature
-ts new <feature> <branch>
+ts new <feature> <branch> [--base <parent>]
 
 # Open a worktree in a tmux session
 ts open <feature> <branch>
 
-# Rebase all worktrees in a feature against origin/main
+# Rebase all worktrees in a feature (respects dependency order)
 ts sync <feature>
+
+# Show the branch dependency tree for a feature
+ts stack <feature>
 ```
 
 ## Configuration

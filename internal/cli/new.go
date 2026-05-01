@@ -9,7 +9,7 @@ import (
 
 func New(args []string) {
 	if len(args) < 2 {
-		println("Usage: ts new <feature> <branch>")
+		println("Usage: ts new <feature> <branch> [--base <parent>]")
 		return
 	}
 
@@ -17,11 +17,21 @@ func New(args []string) {
 
 	feature := args[0]
 	branch := args[1]
+	base := "main"
 
+	// Parse --base flag
+	for i := 2; i < len(args); i++ {
+		if args[i] == "--base" && i+1 < len(args) {
+			base = args[i+1]
+			break
+		}
+	}
+
+	featurePath := internal.FeaturePath(feature)
 	path := internal.WorktreePath(feature, branch)
 
 	// Ensure parent directory exists
-	internal.Must(os.MkdirAll(internal.FeaturePath(feature), 0755))
+	internal.Must(os.MkdirAll(featurePath, 0755))
 
 	// Create the worktree at the feature-scoped path
 	repoRoot, err := internal.MainRepoRoot()
@@ -32,5 +42,10 @@ func New(args []string) {
 
 	internal.Must(internal.RunDir(repoRoot, "git", "worktree", "add", path, "-b", branch))
 
-	fmt.Println("Worktree created:", path)
+	// Register branch in stack.yaml
+	stack, _ := internal.LoadStack(featurePath)
+	stack.Branches = append(stack.Branches, internal.StackEntry{Name: branch, Base: base})
+	internal.Must(internal.SaveStack(featurePath, stack))
+
+	fmt.Printf("Worktree created: %s (base: %s)\n", path, base)
 }

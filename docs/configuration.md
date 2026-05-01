@@ -45,6 +45,45 @@ When no config exists and no env var is set:
   <feature-name>/
     FEATURE.md
     CLAUDE.local.md
+    stack.yaml
     worktrees/
       <branch-name>/
 ```
+
+## Branch stacks (stack.yaml)
+
+Each feature can have a `stack.yaml` that tracks branch dependencies:
+
+```yaml
+branches:
+  - name: auth-models
+    base: main
+  - name: auth-middleware
+    base: auth-models
+  - name: auth-routes
+    base: auth-middleware
+```
+
+- **name**: the branch name (matches the worktree folder name)
+- **base**: the parent branch to rebase against during `ts sync`
+
+`stack.yaml` is created automatically when you use `ts new`. The `--base` flag sets the parent:
+
+```sh
+ts new auth auth-models                    # base defaults to main
+ts new auth auth-middleware --base auth-models
+ts new auth auth-routes --base auth-middleware
+```
+
+`ts sync <feature>` rebases branches in topological order (parents first). If a rebase fails, all dependent branches are skipped.
+
+`ts stack <feature>` prints the dependency tree:
+
+```
+(main)
+└── auth-models
+    └── auth-middleware
+        └── auth-routes
+```
+
+Features without a `stack.yaml` fall back to rebasing all worktrees against `origin/main`.
