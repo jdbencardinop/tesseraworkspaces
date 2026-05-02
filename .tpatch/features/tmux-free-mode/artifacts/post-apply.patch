@@ -1,0 +1,260 @@
+diff --git a/README.md b/README.md
+index 6afecf4..a616217 100644
+--- a/README.md
++++ b/README.md
+@@ -1,19 +1,19 @@
+ # tesseraworkspaces
+ 
+-A CLI tool for creating feature-scoped workspaces with multiple git worktrees. Work on parallel branches or stacked diffs within a single feature, each in its own tmux session with your coding agent ready to go.
++A CLI tool for creating feature-scoped workspaces with multiple git worktrees. Work on parallel branches or stacked diffs within a single feature, each with your coding agent ready to go.
+ 
+ ## How it works
+ 
+ 1. **Add a feature** — creates a feature directory with shared context files
+ 2. **Create worktrees** — spin up isolated branches under that feature using `git worktree`
+-3. **Open a worktree** — launches a tmux session with your coding agent attached
++3. **Open a worktree** — cd into worktree and launch your coding agent
+ 4. **Sync** — rebases all worktrees in a feature in dependency order
+ 
+ ## Requirements
+ 
+ - [Go](https://go.dev/dl/) 1.26+
+ - [git](https://git-scm.com/)
+-- [tmux](https://github.com/tmux/tmux) (for `tws open`)
++- [tmux](https://github.com/tmux/tmux) (optional, for `tws open --tmux`)
+ - A coding agent: [Claude Code](https://claude.ai/claude-code) (default), [OpenCode](https://opencode.ai), [Aider](https://aider.chat), or any CLI agent (configurable via `~/.config/tws/config.yaml`)
+ 
+ ## Install
+diff --git a/cmd/tws/main.go b/cmd/tws/main.go
+index 988957c..2af57d5 100644
+--- a/cmd/tws/main.go
++++ b/cmd/tws/main.go
+@@ -48,7 +48,7 @@ func printHelp() {
+ 	fmt.Println("Commands:")
+ 	fmt.Println("  add <feature>                        Create a feature workspace")
+ 	fmt.Println("  new <feature> <branch> [--base <b>]  Create a worktree branch")
+-	fmt.Println("  open <feature> <branch>              Open worktree in tmux session")
++	fmt.Println("  open <feature> <branch> [--tmux]    Open worktree and run agent")
+ 	fmt.Println("  sync <feature>                       Rebase worktrees in dependency order")
+ 	fmt.Println("  stack <feature>                      Show branch dependency tree")
+ 	fmt.Println("  delete <feature>                     Remove feature and worktrees")
+diff --git a/docs/cheatsheet.md b/docs/cheatsheet.md
+index 1e71114..6c88cb8 100644
+--- a/docs/cheatsheet.md
++++ b/docs/cheatsheet.md
+@@ -31,10 +31,11 @@ tws new auth main --force                         # force if already checked out
+ ## Work in a worktree
+ 
+ ```sh
+-tws open auth auth-models    # opens tmux session + claude in the worktree
+-                             # first time: runs `claude`
+-                             # subsequent: runs `claude -c` (continue)
+-                             # re-attach: just re-attaches to existing session
++tws open auth auth-models              # cd + run agent (default)
++                                       # first time: runs `claude`
++                                       # subsequent: runs `claude -c` (continue)
++tws open auth auth-models --tmux       # wrap in tmux session
++tws open auth auth-models --no-agent   # just print the path
+ ```
+ 
+ ## See what you have
+diff --git a/docs/configuration.md b/docs/configuration.md
+index 8226229..8656271 100644
+--- a/docs/configuration.md
++++ b/docs/configuration.md
+@@ -21,11 +21,15 @@ workspaces:
+ 
+ # Agent command launched by tws open (default: claude)
+ agent_command: claude
++
++# Use tmux for tws open (default: false)
++# Override per-invocation with --tmux or --no-tmux
++use_tmux: false
+ ```
+ 
+ ### Agent command
+ 
+-The `agent_command` field controls what `tws open` runs in the tmux session. Defaults to `claude`.
++The `agent_command` field controls what `tws open` runs in the worktree. Defaults to `claude`.
+ 
+ Examples:
+ 
+diff --git a/internal/cli/open.go b/internal/cli/open.go
+index fabfb99..c7a64a1 100644
+--- a/internal/cli/open.go
++++ b/internal/cli/open.go
+@@ -6,21 +6,46 @@ import (
+ 	"os/exec"
+ 	"path/filepath"
+ 	"strings"
++	"syscall"
+ 
+ 	"github.com/jdbencardinop/tesseraworkspaces/internal"
+ )
+ 
+ func Open(args []string) {
+ 	if len(args) < 2 {
+-		println("Usage: tws open <feature> <branch>")
++		println("Usage: tws open <feature> <branch> [--tmux] [--no-tmux] [--no-agent]")
+ 		return
+ 	}
+ 
+-	internal.RequireTool("tmux")
+-
+ 	feature := args[0]
+ 	branch := args[1]
+ 
++	// Parse flags
++	useTmux := false
++	tmuxFlagSet := false
++	noAgent := false
++
++	for i := 2; i < len(args); i++ {
++		switch args[i] {
++		case "--tmux":
++			useTmux = true
++			tmuxFlagSet = true
++		case "--no-tmux":
++			useTmux = false
++			tmuxFlagSet = true
++		case "--no-agent":
++			noAgent = true
++		}
++	}
++
++	// If no flag, check config
++	if !tmuxFlagSet {
++		cfg := internal.LoadConfig()
++		if cfg.UseTmux != nil {
++			useTmux = *cfg.UseTmux
++		}
++	}
++
+ 	path := internal.WorktreePath(feature, branch)
+ 
+ 	if _, err := os.Stat(path); os.IsNotExist(err) {
+@@ -28,6 +53,56 @@ func Open(args []string) {
+ 		os.Exit(1)
+ 	}
+ 
++	if noAgent {
++		fmt.Printf("cd %s\n", path)
++		fmt.Println("Run your agent manually from there.")
++		return
++	}
++
++	if useTmux {
++		openWithTmux(feature, branch, path)
++	} else {
++		openDirect(path)
++	}
++}
++
++// openDirect changes into the worktree directory and execs the agent.
++func openDirect(path string) {
++	cfg := internal.LoadConfig()
++	agentCmd := cfg.GetAgentCommand()
++
++	// Claude-specific: use -c if session exists
++	if isClaudeAgent(agentCmd) && hasClaudeSession(path) {
++		agentCmd = agentCmd + " -c"
++	}
++
++	// Find the agent binary
++	parts := strings.Fields(agentCmd)
++	binary, err := exec.LookPath(parts[0])
++	if err != nil {
++		fmt.Printf("Error: agent %q not found in PATH\n", parts[0])
++		os.Exit(1)
++	}
++
++	fmt.Printf("Opening: %s\nRunning: %s\n", path, agentCmd)
++
++	// Change to worktree dir and exec the agent (replaces this process)
++	if err := os.Chdir(path); err != nil {
++		fmt.Printf("Error: could not cd to %s: %v\n", path, err)
++		os.Exit(1)
++	}
++
++	// syscall.Exec replaces the current process
++	if err := syscall.Exec(binary, parts, os.Environ()); err != nil {
++		fmt.Printf("Error: could not exec %s: %v\n", agentCmd, err)
++		os.Exit(1)
++	}
++}
++
++// openWithTmux wraps the agent in a tmux session.
++func openWithTmux(feature, branch, path string) {
++	internal.RequireTool("tmux")
++
+ 	session := sanitizeSessionName(feature + "/" + branch)
+ 
+ 	// Check if session already exists
+@@ -37,23 +112,19 @@ func Open(args []string) {
+ 		return
+ 	}
+ 
+-	// Create new session in the worktree directory
+-	fmt.Printf("Creating session: %s\n", session)
+-	internal.Must(internal.Run("tmux", "new-session", "-d", "-s", session, "-c", path))
+-
+-	// Resolve agent command from config
+ 	cfg := internal.LoadConfig()
+ 	agentCmd := cfg.GetAgentCommand()
+ 
+-	// Claude-specific: use -c (continue) if a session exists for this worktree
+ 	if isClaudeAgent(agentCmd) && hasClaudeSession(path) {
+ 		agentCmd = agentCmd + " -c"
+ 	}
+ 
++	fmt.Printf("Creating tmux session: %s\n", session)
++	internal.Must(internal.Run("tmux", "new-session", "-d", "-s", session, "-c", path))
++
+ 	fmt.Printf("Running: %s\n", agentCmd)
+ 	internal.Must(internal.Run("tmux", "send-keys", "-t", session, agentCmd, "Enter"))
+ 
+-	// Attach
+ 	internal.Must(internal.Run("tmux", "attach", "-t", session))
+ }
+ 
+@@ -63,20 +134,16 @@ func sessionExists(name string) bool {
+ 	return err == nil
+ }
+ 
+-// sanitizeSessionName replaces characters tmux doesn't allow in session names.
+ func sanitizeSessionName(s string) string {
+ 	r := strings.NewReplacer(".", "_", ":", "_", "/", "-")
+ 	return r.Replace(s)
+ }
+ 
+-// isClaudeAgent checks if the agent command is claude (or claude-dev, cc, etc.)
+ func isClaudeAgent(cmd string) bool {
+ 	base := strings.Fields(cmd)[0]
+ 	return base == "claude" || base == "claude-dev" || base == "cc"
+ }
+ 
+-// hasClaudeSession checks if Claude Code has an existing session for the given
+-// working directory by looking for a project folder in ~/.claude/projects/.
+ func hasClaudeSession(workdir string) bool {
+ 	home, err := os.UserHomeDir()
+ 	if err != nil {
+@@ -88,7 +155,6 @@ func hasClaudeSession(workdir string) bool {
+ 		return false
+ 	}
+ 
+-	// Claude encodes project paths as: -Users-name-projects-repo
+ 	encoded := strings.ReplaceAll(absPath, string(filepath.Separator), "-")
+ 	projectDir := filepath.Join(home, ".claude", "projects", encoded)
+ 
+diff --git a/internal/config.go b/internal/config.go
+index a8c5f16..5f289a9 100644
+--- a/internal/config.go
++++ b/internal/config.go
+@@ -10,6 +10,7 @@ import (
+ type Config struct {
+ 	Workspaces   map[string]string `yaml:"workspaces"`
+ 	AgentCommand string            `yaml:"agent_command"`
++	UseTmux      *bool             `yaml:"use_tmux"`
+ }
+ 
+ func (c Config) GetAgentCommand() string {

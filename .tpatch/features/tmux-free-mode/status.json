@@ -2,12 +2,16 @@
   "id": "tmux-free-mode",
   "slug": "tmux-free-mode",
   "title": "Make tmux optional for tws open. Add a simpler mode that just cd's into the worktree directory and runs the agent command (claude or configured alternative) directly without tmux wrapping. tmux is nice for session persistence but not always needed. Could be a --no-tmux flag or a config option.",
-  "state": "requested",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-05-02T04:36:40Z",
-  "updated_at": "2026-05-02T04:36:40Z",
-  "last_command": "add",
-  "apply": {},
+  "updated_at": "2026-05-02T08:20:50Z",
+  "last_command": "record",
+  "notes": "Patch recorded",
+  "apply": {
+    "base_commit": "fa2515261a211b051eb8acebc0c7c7919f50682f",
+    "has_patch": true
+  },
   "reconcile": {},
   "depends_on": [
     {
