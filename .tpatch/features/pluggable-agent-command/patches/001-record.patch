@@ -1,0 +1,123 @@
+diff --git a/README.md b/README.md
+index 501441d..6afecf4 100644
+--- a/README.md
++++ b/README.md
+@@ -6,7 +6,7 @@ A CLI tool for creating feature-scoped workspaces with multiple git worktrees. W
+ 
+ 1. **Add a feature** — creates a feature directory with shared context files
+ 2. **Create worktrees** — spin up isolated branches under that feature using `git worktree`
+-3. **Open a worktree** — launches a tmux session with your editor and Claude Code attached
++3. **Open a worktree** — launches a tmux session with your coding agent attached
+ 4. **Sync** — rebases all worktrees in a feature in dependency order
+ 
+ ## Requirements
+@@ -14,7 +14,7 @@ A CLI tool for creating feature-scoped workspaces with multiple git worktrees. W
+ - [Go](https://go.dev/dl/) 1.26+
+ - [git](https://git-scm.com/)
+ - [tmux](https://github.com/tmux/tmux) (for `tws open`)
+-- [Claude Code](https://claude.ai/claude-code) (for `tws open`, configurable in a future release)
++- A coding agent: [Claude Code](https://claude.ai/claude-code) (default), [OpenCode](https://opencode.ai), [Aider](https://aider.chat), or any CLI agent (configurable via `~/.config/tws/config.yaml`)
+ 
+ ## Install
+ 
+diff --git a/docs/configuration.md b/docs/configuration.md
+index c1279a0..8226229 100644
+--- a/docs/configuration.md
++++ b/docs/configuration.md
+@@ -14,11 +14,31 @@ tesseraworkspaces resolves the workspace root directory using the following prio
+ Location: `~/.config/tws/config.yaml`
+ 
+ ```yaml
++# Workspace paths (keyed by repo path)
+ workspaces:
+   /Users/you/projects/myapp: /data/workspaces/myapp
+   /Users/you/projects/api: /custom/path/api-workspaces
++
++# Agent command launched by tws open (default: claude)
++agent_command: claude
++```
++
++### Agent command
++
++The `agent_command` field controls what `tws open` runs in the tmux session. Defaults to `claude`.
++
++Examples:
++
++```yaml
++agent_command: claude          # default — includes -c auto-detection
++agent_command: opencode        # OpenCode
++agent_command: aider           # Aider
++agent_command: codex            # Codex CLI
++agent_command: claude-dev      # Claude Code dev build — -c auto-detection works
+ ```
+ 
++When the agent is `claude`, `claude-dev`, or `cc`, tws automatically detects existing Claude sessions and appends `-c` (continue) on subsequent opens.
++
+ Each key is the absolute path to a git repository. The value is the workspace root where features and worktrees are stored for that repo.
+ 
+ If no entry exists for the current repo, tesseraworkspaces defaults to a sibling directory named `<repo>.tws/` next to the repo.
+diff --git a/internal/cli/open.go b/internal/cli/open.go
+index d3ece13..fabfb99 100644
+--- a/internal/cli/open.go
++++ b/internal/cli/open.go
+@@ -41,13 +41,17 @@ func Open(args []string) {
+ 	fmt.Printf("Creating session: %s\n", session)
+ 	internal.Must(internal.Run("tmux", "new-session", "-d", "-s", session, "-c", path))
+ 
+-	// Launch claude — use -c (continue) if a session exists for this worktree
+-	claudeCmd := "claude"
+-	if hasClaudeSession(path) {
+-		claudeCmd = "claude -c"
++	// Resolve agent command from config
++	cfg := internal.LoadConfig()
++	agentCmd := cfg.GetAgentCommand()
++
++	// Claude-specific: use -c (continue) if a session exists for this worktree
++	if isClaudeAgent(agentCmd) && hasClaudeSession(path) {
++		agentCmd = agentCmd + " -c"
+ 	}
+-	fmt.Printf("Running: %s\n", claudeCmd)
+-	internal.Must(internal.Run("tmux", "send-keys", "-t", session, claudeCmd, "Enter"))
++
++	fmt.Printf("Running: %s\n", agentCmd)
++	internal.Must(internal.Run("tmux", "send-keys", "-t", session, agentCmd, "Enter"))
+ 
+ 	// Attach
+ 	internal.Must(internal.Run("tmux", "attach", "-t", session))
+@@ -65,9 +69,14 @@ func sanitizeSessionName(s string) string {
+ 	return r.Replace(s)
+ }
+ 
++// isClaudeAgent checks if the agent command is claude (or claude-dev, cc, etc.)
++func isClaudeAgent(cmd string) bool {
++	base := strings.Fields(cmd)[0]
++	return base == "claude" || base == "claude-dev" || base == "cc"
++}
++
+ // hasClaudeSession checks if Claude Code has an existing session for the given
+ // working directory by looking for a project folder in ~/.claude/projects/.
+-// Claude encodes paths by replacing / with - and prepending -.
+ func hasClaudeSession(workdir string) bool {
+ 	home, err := os.UserHomeDir()
+ 	if err != nil {
+diff --git a/internal/config.go b/internal/config.go
+index 19c04eb..a8c5f16 100644
+--- a/internal/config.go
++++ b/internal/config.go
+@@ -8,7 +8,15 @@ import (
+ )
+ 
+ type Config struct {
+-	Workspaces map[string]string `yaml:"workspaces"`
++	Workspaces   map[string]string `yaml:"workspaces"`
++	AgentCommand string            `yaml:"agent_command"`
++}
++
++func (c Config) GetAgentCommand() string {
++	if c.AgentCommand != "" {
++		return c.AgentCommand
++	}
++	return "claude"
+ }
+ 
+ func ConfigPath() string {
