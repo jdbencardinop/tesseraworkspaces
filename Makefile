@@ -2,10 +2,12 @@
 
 BINARY=bin/tws
 BUILD_DIR=./cmd/tws
+VERSION=$(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS=-ldflags "-X main.version=$(VERSION)"
 
 build:
 	@mkdir -p bin
-	go build -o $(BINARY) $(BUILD_DIR)
+	go build $(LDFLAGS) -o $(BINARY) $(BUILD_DIR)
 
 test:
 	go test ./...
@@ -18,7 +20,7 @@ lint:
 	go vet ./...
 
 install:
-	go install $(BUILD_DIR)
+	go install $(LDFLAGS) $(BUILD_DIR)
 
 clean:
 	rm -rf bin/

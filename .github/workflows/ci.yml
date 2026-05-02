@@ -49,6 +49,11 @@ jobs:
       - name: Test
         run: go test ./... -count=1
 
+      - name: Install and smoke test
+        run: |
+          go install ./cmd/tws
+          "$(go env GOPATH)/bin/tws" --version
+
   release:
     name: release
     needs: test

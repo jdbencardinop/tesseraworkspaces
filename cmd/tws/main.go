@@ -7,13 +7,19 @@ import (
 	"github.com/jdbencardinop/tesseraworkspaces/internal/cli"
 )
 
+var version = "dev"
+
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: tws <command>")
+		printHelp()
 		return
 	}
 
 	switch os.Args[1] {
+	case "--version", "-v":
+		fmt.Printf("tws %s\n", version)
+	case "--help", "-h":
+		printHelp()
 	case "add":
 		cli.Add(os.Args[2:])
 	case "new":
@@ -28,6 +34,24 @@ func main() {
 		cli.Delete(os.Args[2:])
 	default:
 		fmt.Printf("Unknown command: %s\n", os.Args[1])
-		fmt.Println("Available commands: add, new, open, sync, stack, delete")
+		printHelp()
+		os.Exit(1)
 	}
+}
+
+func printHelp() {
+	fmt.Printf("tws %s — tesseraworkspaces\n\n", version)
+	fmt.Println("Usage: tws <command> [args]")
+	fmt.Println()
+	fmt.Println("Commands:")
+	fmt.Println("  add <feature>                        Create a feature workspace")
+	fmt.Println("  new <feature> <branch> [--base <b>]  Create a worktree branch")
+	fmt.Println("  open <feature> <branch>              Open worktree in tmux session")
+	fmt.Println("  sync <feature>                       Rebase worktrees in dependency order")
+	fmt.Println("  stack <feature>                      Show branch dependency tree")
+	fmt.Println("  delete <feature>                     Remove feature and worktrees")
+	fmt.Println()
+	fmt.Println("Flags:")
+	fmt.Println("  --version, -v  Print version")
+	fmt.Println("  --help, -h     Print this help")
 }
