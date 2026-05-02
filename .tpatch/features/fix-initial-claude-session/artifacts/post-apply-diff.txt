@@ -1,3 +1,2 @@
- .tpatch/FEATURES.md                                     | 2 +-
- .tpatch/features/fix-initial-claude-session/status.json | 7 ++++---
- 2 files changed, 5 insertions(+), 4 deletions(-)
+ .../artifacts/post-apply.patch                     | 122 ++++++++-------------
+ 1 file changed, 47 insertions(+), 75 deletions(-)

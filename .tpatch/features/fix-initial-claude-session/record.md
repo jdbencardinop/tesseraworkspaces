@@ -1,15 +1,14 @@
 # Implementation Record: fix-initial-claude-session
 
-**Recorded**: 2026-05-02T05:05:49Z
+**Recorded**: 2026-05-02T05:18:25Z
 **Files changed**: 1
-**Patch size**: 3753 bytes
+**Patch size**: 1854 bytes
 
 ## Change Summary
 
 ```
- .tpatch/FEATURES.md                                     | 2 +-
- .tpatch/features/fix-initial-claude-session/status.json | 7 ++++---
- 2 files changed, 5 insertions(+), 4 deletions(-)
+ .../artifacts/post-apply.patch                     | 122 ++++++++-------------
+ 1 file changed, 47 insertions(+), 75 deletions(-)
 ```
 
 ## Replay Instructions
