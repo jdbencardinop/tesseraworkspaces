@@ -24,8 +24,10 @@ func main() {
 		cli.Sync(os.Args[2:])
 	case "stack":
 		cli.StackCmd(os.Args[2:])
+	case "delete":
+		cli.Delete(os.Args[2:])
 	default:
 		fmt.Printf("Unknown command: %s\n", os.Args[1])
-		fmt.Println("Available commands: add, new, open, sync, stack")
+		fmt.Println("Available commands: add, new, open, sync, stack, delete")
 	}
 }
