@@ -1,0 +1,26 @@
+{
+  "feature": "versioned-builds",
+  "operations": [
+    {
+      "type": "write-file",
+      "path": ".github/workflows/ci.yml",
+      "content": "name: CI\n\non:\n  push:\n    branches: [\"main\"]\n    tags: [\"v*\"]\n  pull_request:\n    branches: [\"main\"]\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.ref }}\n  cancel-in-progress: true\n\npermissions:\n  contents: read\n\njobs:\n  test:\n    name: test (${{ matrix.os }})\n    runs-on: ${{ matrix.os }}\n    strategy:\n      fail-fast: false\n      matrix:\n        os: [ubuntu-latest, macos-latest]\n    steps:\n      - uses: actions/checkout@v4\n\n      - name: Set up Go\n        uses: actions/setup-go@v5\n        with:\n          go-version-file: go.mod\n          cache: true\n\n      - name: Verify formatting\n        run: |\n          unformatted=$(gofmt -l .)\n          if [ -n \"$unformatted\" ]; then\n            echo \"::error::Unformatted files:\"\n            echo \"$unformatted\"\n            exit 1\n          fi\n\n      - name: go vet\n        run: go vet ./...\n\n      - name: Build\n        run: go build ./...\n\n      - name: Test\n        run: go test ./... -count=1\n\n      - name: Install and smoke test\n        run: |\n          go install ./cmd/tws\n          \"$(go env GOPATH)/bin/tws\" --version\n\n  release:\n    name: release\n    needs: test\n    if: startsWith(github.ref, 'refs/tags/v')\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 0\n\n      - name: Create GitHub Release\n        uses: softprops/action-gh-release@v2\n        with:\n          generate_release_notes: true\n          draft: false\n          prerelease: ${{ contains(github.ref_name, '-') }}\n",
+      "search": "",
+      "replace": ""
+    },
+    {
+      "type": "write-file",
+      "path": "Makefile",
+      "content": ".PHONY: build test fmt install clean lint all\n\nBINARY=bin/tws\nBUILD_DIR=./cmd/tws\nVERSION=$(shell git describe --tags --always --dirty 2\u003e/dev/null || echo dev)\nLDFLAGS=-ldflags \"-X main.version=$(VERSION)\"\n\nbuild:\n\t@mkdir -p bin\n\tgo build $(LDFLAGS) -o $(BINARY) $(BUILD_DIR)\n\ntest:\n\tgo test ./...\n\nfmt:\n\tgofmt -w .\n\nlint:\n\tgofmt -l . | tee /dev/stderr | (! read)\n\tgo vet ./...\n\ninstall:\n\tgo install $(LDFLAGS) $(BUILD_DIR)\n\nclean:\n\trm -rf bin/\n\nall: fmt lint test build\n",
+      "search": "",
+      "replace": ""
+    },
+    {
+      "type": "write-file",
+      "path": "cmd/tws/main.go",
+      "content": "package main\n\nimport (\n\t\"fmt\"\n\t\"os\"\n\n\t\"github.com/jdbencardinop/tesseraworkspaces/internal/cli\"\n)\n\nvar version = \"dev\"\n\nfunc main() {\n\tif len(os.Args) \u003c 2 {\n\t\tprintHelp()\n\t\treturn\n\t}\n\n\tswitch os.Args[1] {\n\tcase \"--version\", \"-v\":\n\t\tfmt.Printf(\"tws %s\\n\", version)\n\tcase \"--help\", \"-h\":\n\t\tprintHelp()\n\tcase \"add\":\n\t\tcli.Add(os.Args[2:])\n\tcase \"new\":\n\t\tcli.New(os.Args[2:])\n\tcase \"open\":\n\t\tcli.Open(os.Args[2:])\n\tcase \"sync\":\n\t\tcli.Sync(os.Args[2:])\n\tcase \"stack\":\n\t\tcli.StackCmd(os.Args[2:])\n\tcase \"delete\":\n\t\tcli.Delete(os.Args[2:])\n\tdefault:\n\t\tfmt.Printf(\"Unknown command: %s\\n\", os.Args[1])\n\t\tprintHelp()\n\t\tos.Exit(1)\n\t}\n}\n\nfunc printHelp() {\n\tfmt.Printf(\"tws %s — tesseraworkspaces\\n\\n\", version)\n\tfmt.Println(\"Usage: tws \u003ccommand\u003e [args]\")\n\tfmt.Println()\n\tfmt.Println(\"Commands:\")\n\tfmt.Println(\"  add \u003cfeature\u003e                        Create a feature workspace\")\n\tfmt.Println(\"  new \u003cfeature\u003e \u003cbranch\u003e [--base \u003cb\u003e]  Create a worktree branch\")\n\tfmt.Println(\"  open \u003cfeature\u003e \u003cbranch\u003e              Open worktree in tmux session\")\n\tfmt.Println(\"  sync \u003cfeature\u003e                       Rebase worktrees in dependency order\")\n\tfmt.Println(\"  stack \u003cfeature\u003e                      Show branch dependency tree\")\n\tfmt.Println(\"  delete \u003cfeature\u003e                     Remove feature and worktrees\")\n\tfmt.Println()\n\tfmt.Println(\"Flags:\")\n\tfmt.Println(\"  --version, -v  Print version\")\n\tfmt.Println(\"  --help, -h     Print this help\")\n}\n",
+      "search": "",
+      "replace": ""
+    }
+  ]
+}
