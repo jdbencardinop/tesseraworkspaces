@@ -1,0 +1,19 @@
+{
+  "feature": "delete-feature",
+  "operations": [
+    {
+      "type": "write-file",
+      "path": "cmd/tws/main.go",
+      "content": "package main\n\nimport (\n\t\"fmt\"\n\t\"os\"\n\n\t\"github.com/jdbencardinop/tesseraworkspaces/internal/cli\"\n)\n\nfunc main() {\n\tif len(os.Args) \u003c 2 {\n\t\tfmt.Println(\"Usage: tws \u003ccommand\u003e\")\n\t\treturn\n\t}\n\n\tswitch os.Args[1] {\n\tcase \"add\":\n\t\tcli.Add(os.Args[2:])\n\tcase \"new\":\n\t\tcli.New(os.Args[2:])\n\tcase \"open\":\n\t\tcli.Open(os.Args[2:])\n\tcase \"sync\":\n\t\tcli.Sync(os.Args[2:])\n\tcase \"stack\":\n\t\tcli.StackCmd(os.Args[2:])\n\tcase \"delete\":\n\t\tcli.Delete(os.Args[2:])\n\tdefault:\n\t\tfmt.Printf(\"Unknown command: %s\\n\", os.Args[1])\n\t\tfmt.Println(\"Available commands: add, new, open, sync, stack, delete\")\n\t}\n}\n",
+      "search": "",
+      "replace": ""
+    },
+    {
+      "type": "write-file",
+      "path": "internal/cli/delete.go",
+      "content": "package cli\n\nimport (\n\t\"fmt\"\n\t\"os\"\n\n\t\"github.com/jdbencardinop/tesseraworkspaces/internal\"\n)\n\nfunc Delete(args []string) {\n\tif len(args) \u003c 1 {\n\t\tprintln(\"Usage: tws delete \u003cfeature\u003e\")\n\t\treturn\n\t}\n\n\tinternal.RequireTool(\"git\")\n\n\tfeature := args[0]\n\tfeaturePath := internal.FeaturePath(feature)\n\n\tif _, err := os.Stat(featurePath); os.IsNotExist(err) {\n\t\tfmt.Printf(\"Feature not found: %s\\n\", feature)\n\t\tos.Exit(1)\n\t}\n\n\t// Remove worktrees tracked in stack.yaml\n\tstack, err := internal.LoadStack(featurePath)\n\tif err == nil {\n\t\tfor _, entry := range stack.Branches {\n\t\t\tpath := internal.WorktreePath(feature, entry.Name)\n\t\t\tif _, err := os.Stat(path); os.IsNotExist(err) {\n\t\t\t\tfmt.Printf(\"  Worktree already removed: %s\\n\", entry.Name)\n\t\t\t\tcontinue\n\t\t\t}\n\t\t\terr := internal.Run(\"git\", \"worktree\", \"remove\", \"--force\", path)\n\t\t\tif err != nil {\n\t\t\t\tfmt.Printf(\"  Warning: failed to remove worktree %s: %v\\n\", entry.Name, err)\n\t\t\t} else {\n\t\t\t\tfmt.Printf(\"  Removed worktree: %s\\n\", entry.Name)\n\t\t\t}\n\t\t}\n\t}\n\n\t// Prune stale worktree refs\n\tinternal.Run(\"git\", \"worktree\", \"prune\")\n\n\t// Remove the feature directory\n\tif err := os.RemoveAll(featurePath); err != nil {\n\t\tfmt.Printf(\"Error removing feature directory: %v\\n\", err)\n\t\tos.Exit(1)\n\t}\n\n\tfmt.Printf(\"Feature deleted: %s (branches preserved in git)\\n\", feature)\n}\n",
+      "search": "",
+      "replace": ""
+    }
+  ]
+}

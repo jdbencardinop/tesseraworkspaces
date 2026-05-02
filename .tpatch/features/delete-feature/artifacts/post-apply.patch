@@ -1,0 +1,76 @@
+diff --git a/cmd/tws/main.go b/cmd/tws/main.go
+index 11b5c4e..39d2370 100644
+--- a/cmd/tws/main.go
++++ b/cmd/tws/main.go
+@@ -24,8 +24,10 @@ func main() {
+ 		cli.Sync(os.Args[2:])
+ 	case "stack":
+ 		cli.StackCmd(os.Args[2:])
++	case "delete":
++		cli.Delete(os.Args[2:])
+ 	default:
+ 		fmt.Printf("Unknown command: %s\n", os.Args[1])
+-		fmt.Println("Available commands: add, new, open, sync, stack")
++		fmt.Println("Available commands: add, new, open, sync, stack, delete")
+ 	}
+ }
+diff --git a/internal/cli/delete.go b/internal/cli/delete.go
+new file mode 100644
+index 0000000..03936d3
+--- /dev/null
++++ b/internal/cli/delete.go
+@@ -0,0 +1,54 @@
++package cli
++
++import (
++	"fmt"
++	"os"
++
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
++)
++
++func Delete(args []string) {
++	if len(args) < 1 {
++		println("Usage: tws delete <feature>")
++		return
++	}
++
++	internal.RequireTool("git")
++
++	feature := args[0]
++	featurePath := internal.FeaturePath(feature)
++
++	if _, err := os.Stat(featurePath); os.IsNotExist(err) {
++		fmt.Printf("Feature not found: %s\n", feature)
++		os.Exit(1)
++	}
++
++	// Remove worktrees tracked in stack.yaml
++	stack, err := internal.LoadStack(featurePath)
++	if err == nil {
++		for _, entry := range stack.Branches {
++			path := internal.WorktreePath(feature, entry.Name)
++			if _, err := os.Stat(path); os.IsNotExist(err) {
++				fmt.Printf("  Worktree already removed: %s\n", entry.Name)
++				continue
++			}
++			err := internal.Run("git", "worktree", "remove", "--force", path)
++			if err != nil {
++				fmt.Printf("  Warning: failed to remove worktree %s: %v\n", entry.Name, err)
++			} else {
++				fmt.Printf("  Removed worktree: %s\n", entry.Name)
++			}
++		}
++	}
++
++	// Prune stale worktree refs
++	internal.Run("git", "worktree", "prune")
++
++	// Remove the feature directory
++	if err := os.RemoveAll(featurePath); err != nil {
++		fmt.Printf("Error removing feature directory: %v\n", err)
++		os.Exit(1)
++	}
++
++	fmt.Printf("Feature deleted: %s (branches preserved in git)\n", feature)
++}
