@@ -2,11 +2,15 @@
   "id": "fix-initial-claude-session",
   "slug": "fix-initial-claude-session",
   "title": "When opening a worktree for the first time via tws open, the tmux command runs \"claude -c\" which fails because there is no existing session to continue. On first open we should run \"claude\" (or the configured agent command) without the -c flag. Detect whether a session already exists to decide which variant to use.",
-  "state": "requested",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-05-02T04:36:30Z",
-  "updated_at": "2026-05-02T04:36:30Z",
-  "last_command": "add",
-  "apply": {},
+  "updated_at": "2026-05-02T05:05:49Z",
+  "last_command": "record",
+  "notes": "Patch recorded",
+  "apply": {
+    "base_commit": "15da11cd9ffdcb399e276ee6b0f098244aed2a1a",
+    "has_patch": true
+  },
   "reconcile": {}
 }

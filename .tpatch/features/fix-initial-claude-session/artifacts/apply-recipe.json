@@ -1,0 +1,12 @@
+{
+  "feature": "fix-initial-claude-session",
+  "operations": [
+    {
+      "type": "write-file",
+      "path": "internal/cli/open.go",
+      "content": "package cli\n\nimport (\n\t\"fmt\"\n\t\"os\"\n\t\"os/exec\"\n\t\"strings\"\n\n\t\"github.com/jdbencardinop/tesseraworkspaces/internal\"\n)\n\nfunc Open(args []string) {\n\tif len(args) \u003c 2 {\n\t\tprintln(\"Usage: tws open \u003cfeature\u003e \u003cbranch\u003e\")\n\t\treturn\n\t}\n\n\tinternal.RequireTool(\"tmux\")\n\n\tfeature := args[0]\n\tbranch := args[1]\n\n\tpath := internal.WorktreePath(feature, branch)\n\n\tif _, err := os.Stat(path); os.IsNotExist(err) {\n\t\tfmt.Printf(\"Worktree not found: %s\\n\", path)\n\t\tos.Exit(1)\n\t}\n\n\tsession := sanitizeSessionName(feature + \"/\" + branch)\n\n\t// Check if session already exists\n\tif sessionExists(session) {\n\t\tfmt.Printf(\"Attaching to existing session: %s\\n\", session)\n\t\tinternal.Must(internal.Run(\"tmux\", \"attach\", \"-t\", session))\n\t\treturn\n\t}\n\n\t// Create new session in the worktree directory\n\tfmt.Printf(\"Creating session: %s\\n\", session)\n\tinternal.Must(internal.Run(\"tmux\", \"new-session\", \"-d\", \"-s\", session, \"-c\", path))\n\n\t// Launch claude (without -c, since this is a fresh session)\n\tinternal.Must(internal.Run(\"tmux\", \"send-keys\", \"-t\", session, \"claude\", \"Enter\"))\n\n\t// Attach\n\tinternal.Must(internal.Run(\"tmux\", \"attach\", \"-t\", session))\n}\n\nfunc sessionExists(name string) bool {\n\tcmd := exec.Command(\"tmux\", \"has-session\", \"-t\", name)\n\terr := cmd.Run()\n\treturn err == nil\n}\n\n// sanitizeSessionName replaces characters tmux doesn't allow in session names.\nfunc sanitizeSessionName(s string) string {\n\tr := strings.NewReplacer(\".\", \"_\", \":\", \"_\", \"/\", \"-\")\n\treturn r.Replace(s)\n}\n",
+      "search": "",
+      "replace": ""
+    }
+  ]
+}

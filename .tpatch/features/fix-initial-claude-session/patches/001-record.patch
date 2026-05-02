@@ -1,0 +1,85 @@
+diff --git a/internal/cli/open.go b/internal/cli/open.go
+index 65eabf3..7ac5f5f 100644
+--- a/internal/cli/open.go
++++ b/internal/cli/open.go
+@@ -1,6 +1,13 @@
+ package cli
+ 
+-import "github.com/jdbencardinop/tesseraworkspaces/internal"
++import (
++	"fmt"
++	"os"
++	"os/exec"
++	"strings"
++
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
++)
+ 
+ func Open(args []string) {
+ 	if len(args) < 2 {
+@@ -14,36 +21,40 @@ func Open(args []string) {
+ 	branch := args[1]
+ 
+ 	path := internal.WorktreePath(feature, branch)
+-	session := feature + "__" + branch
+-
+-	// TODO: we should validate if tmux is installed and available in PATH
+-	// we should consider making this an interface and allowing users to choose between different terminal multiplexers
+-	// we could probably do one of our own that is more lightweight and doesn't require tmux, but for now we can just use tmux or tmuxinator
+ 
+-	// Create tmux session if it doesn't exist
+-	internal.Run("tmux", "has-session", "-t", session)
+-	// if not exist, create it
+-	internal.Run("tmux", "new-session", "-d", "-s", session, "-c", path)
++	if _, err := os.Stat(path); os.IsNotExist(err) {
++		fmt.Printf("Worktree not found: %s\n", path)
++		os.Exit(1)
++	}
+ 
+-	// Configure tmux session with some default panes and commands
+-	// TODO: we should probably move this to a template file and copy it over instead of creating it from scratch
++	session := sanitizeSessionName(feature + "/" + branch)
+ 
+-	// TODO: this pane should only be shown for the first time, we can probably check if the user has already opened this session before and skip this part if they have, we can store this information in a file in the feature directory or in a global config file
+-	internal.Run("tmux", "send-keys", "-t", session, "clear", "Enter")
+-	internal.Run("tmux", "send-keys", "-t", session, "echo 'Welcome to your Tesseraspaces session!'", "Enter")
+-	internal.Run("tmux", "send-keys", "-t", session, "echo 'Feature: "+feature+"'", "Enter")
+-	internal.Run("tmux", "send-keys", "-t", session, "echo 'Branch: "+branch+"'", "Enter")
+-	internal.Run("tmux", "send-keys", "-t", session, "echo 'Use tmux commands to manage your panes and windows.'", "Enter")
++	// Check if session already exists
++	if sessionExists(session) {
++		fmt.Printf("Attaching to existing session: %s\n", session)
++		internal.Must(internal.Run("tmux", "attach", "-t", session))
++		return
++	}
+ 
+-	// Start the normal session in the first window
++	// Create new session in the worktree directory
++	fmt.Printf("Creating session: %s\n", session)
++	internal.Must(internal.Run("tmux", "new-session", "-d", "-s", session, "-c", path))
+ 
+-	// Start a new window to put the rest of the stuff in
+-	internal.Run("tmux", "new-window", "-t", session, "-n", "claude", "-c", path)
+-	// Start claude
+-	// TODO: we should probably check if the user has claude installed and available in PATH
+-	// TODO: we could probably think about adding more providers like codex, copilot-cli or opencode
+-	internal.Run("tmux", "send-keys", "-t", session, ":1", "claude -c", "C-m")
++	// Launch claude (without -c, since this is a fresh session)
++	internal.Must(internal.Run("tmux", "send-keys", "-t", session, "claude", "Enter"))
+ 
+-	// TODO: we should probably check if the session is already attached to avoid attaching to it multiple times and causing issues
++	// Attach
+ 	internal.Must(internal.Run("tmux", "attach", "-t", session))
+ }
++
++func sessionExists(name string) bool {
++	cmd := exec.Command("tmux", "has-session", "-t", name)
++	err := cmd.Run()
++	return err == nil
++}
++
++// sanitizeSessionName replaces characters tmux doesn't allow in session names.
++func sanitizeSessionName(s string) string {
++	r := strings.NewReplacer(".", "_", ":", "_", "/", "-")
++	return r.Replace(s)
++}
