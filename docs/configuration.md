@@ -21,11 +21,15 @@ workspaces:
 
 # Agent command launched by tws open (default: claude)
 agent_command: claude
+
+# Use tmux for tws open (default: false)
+# Override per-invocation with --tmux or --no-tmux
+use_tmux: false
 ```
 
 ### Agent command
 
-The `agent_command` field controls what `tws open` runs in the tmux session. Defaults to `claude`.
+The `agent_command` field controls what `tws open` runs in the worktree. Defaults to `claude`.
 
 Examples:
 

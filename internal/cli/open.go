@@ -6,20 +6,45 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
 )
 
 func Open(args []string) {
 	if len(args) < 2 {
-		println("Usage: tws open <feature> <branch>")
+		println("Usage: tws open <feature> <branch> [--tmux] [--no-tmux] [--no-agent]")
 		return
 	}
 
-	internal.RequireTool("tmux")
-
 	feature := args[0]
 	branch := args[1]
+
+	// Parse flags
+	useTmux := false
+	tmuxFlagSet := false
+	noAgent := false
+
+	for i := 2; i < len(args); i++ {
+		switch args[i] {
+		case "--tmux":
+			useTmux = true
+			tmuxFlagSet = true
+		case "--no-tmux":
+			useTmux = false
+			tmuxFlagSet = true
+		case "--no-agent":
+			noAgent = true
+		}
+	}
+
+	// If no flag, check config
+	if !tmuxFlagSet {
+		cfg := internal.LoadConfig()
+		if cfg.UseTmux != nil {
+			useTmux = *cfg.UseTmux
+		}
+	}
 
 	path := internal.WorktreePath(feature, branch)
 
@@ -27,6 +52,56 @@ func Open(args []string) {
 		fmt.Printf("Worktree not found: %s\n", path)
 		os.Exit(1)
 	}
+
+	if noAgent {
+		fmt.Printf("cd %s\n", path)
+		fmt.Println("Run your agent manually from there.")
+		return
+	}
+
+	if useTmux {
+		openWithTmux(feature, branch, path)
+	} else {
+		openDirect(path)
+	}
+}
+
+// openDirect changes into the worktree directory and execs the agent.
+func openDirect(path string) {
+	cfg := internal.LoadConfig()
+	agentCmd := cfg.GetAgentCommand()
+
+	// Claude-specific: use -c if session exists
+	if isClaudeAgent(agentCmd) && hasClaudeSession(path) {
+		agentCmd = agentCmd + " -c"
+	}
+
+	// Find the agent binary
+	parts := strings.Fields(agentCmd)
+	binary, err := exec.LookPath(parts[0])
+	if err != nil {
+		fmt.Printf("Error: agent %q not found in PATH\n", parts[0])
+		os.Exit(1)
+	}
+
+	fmt.Printf("Opening: %s\nRunning: %s\n", path, agentCmd)
+
+	// Change to worktree dir and exec the agent (replaces this process)
+	if err := os.Chdir(path); err != nil {
+		fmt.Printf("Error: could not cd to %s: %v\n", path, err)
+		os.Exit(1)
+	}
+
+	// syscall.Exec replaces the current process
+	if err := syscall.Exec(binary, parts, os.Environ()); err != nil {
+		fmt.Printf("Error: could not exec %s: %v\n", agentCmd, err)
+		os.Exit(1)
+	}
+}
+
+// openWithTmux wraps the agent in a tmux session.
+func openWithTmux(feature, branch, path string) {
+	internal.RequireTool("tmux")
 
 	session := sanitizeSessionName(feature + "/" + branch)
 
@@ -37,23 +112,19 @@ func Open(args []string) {
 		return
 	}
 
-	// Create new session in the worktree directory
-	fmt.Printf("Creating session: %s\n", session)
-	internal.Must(internal.Run("tmux", "new-session", "-d", "-s", session, "-c", path))
-
-	// Resolve agent command from config
 	cfg := internal.LoadConfig()
 	agentCmd := cfg.GetAgentCommand()
 
-	// Claude-specific: use -c (continue) if a session exists for this worktree
 	if isClaudeAgent(agentCmd) && hasClaudeSession(path) {
 		agentCmd = agentCmd + " -c"
 	}
 
+	fmt.Printf("Creating tmux session: %s\n", session)
+	internal.Must(internal.Run("tmux", "new-session", "-d", "-s", session, "-c", path))
+
 	fmt.Printf("Running: %s\n", agentCmd)
 	internal.Must(internal.Run("tmux", "send-keys", "-t", session, agentCmd, "Enter"))
 
-	// Attach
 	internal.Must(internal.Run("tmux", "attach", "-t", session))
 }
 
@@ -63,20 +134,16 @@ func sessionExists(name string) bool {
 	return err == nil
 }
 
-// sanitizeSessionName replaces characters tmux doesn't allow in session names.
 func sanitizeSessionName(s string) string {
 	r := strings.NewReplacer(".", "_", ":", "_", "/", "-")
 	return r.Replace(s)
 }
 
-// isClaudeAgent checks if the agent command is claude (or claude-dev, cc, etc.)
 func isClaudeAgent(cmd string) bool {
 	base := strings.Fields(cmd)[0]
 	return base == "claude" || base == "claude-dev" || base == "cc"
 }
 
-// hasClaudeSession checks if Claude Code has an existing session for the given
-// working directory by looking for a project folder in ~/.claude/projects/.
 func hasClaudeSession(workdir string) bool {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -88,7 +155,6 @@ func hasClaudeSession(workdir string) bool {
 		return false
 	}
 
-	// Claude encodes project paths as: -Users-name-projects-repo
 	encoded := strings.ReplaceAll(absPath, string(filepath.Separator), "-")
 	projectDir := filepath.Join(home, ".claude", "projects", encoded)
 

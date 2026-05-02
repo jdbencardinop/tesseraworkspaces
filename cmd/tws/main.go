@@ -48,7 +48,7 @@ func printHelp() {
 	fmt.Println("Commands:")
 	fmt.Println("  add <feature>                        Create a feature workspace")
 	fmt.Println("  new <feature> <branch> [--base <b>]  Create a worktree branch")
-	fmt.Println("  open <feature> <branch>              Open worktree in tmux session")
+	fmt.Println("  open <feature> <branch> [--tmux]    Open worktree and run agent")
 	fmt.Println("  sync <feature>                       Rebase worktrees in dependency order")
 	fmt.Println("  stack <feature>                      Show branch dependency tree")
 	fmt.Println("  delete <feature>                     Remove feature and worktrees")

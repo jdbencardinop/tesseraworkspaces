@@ -31,10 +31,11 @@ tws new auth main --force                         # force if already checked out
 ## Work in a worktree
 
 ```sh
-tws open auth auth-models    # opens tmux session + claude in the worktree
-                             # first time: runs `claude`
-                             # subsequent: runs `claude -c` (continue)
-                             # re-attach: just re-attaches to existing session
+tws open auth auth-models              # cd + run agent (default)
+                                       # first time: runs `claude`
+                                       # subsequent: runs `claude -c` (continue)
+tws open auth auth-models --tmux       # wrap in tmux session
+tws open auth auth-models --no-agent   # just print the path
 ```
 
 ## See what you have

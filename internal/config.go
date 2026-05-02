@@ -10,6 +10,7 @@ import (
 type Config struct {
 	Workspaces   map[string]string `yaml:"workspaces"`
 	AgentCommand string            `yaml:"agent_command"`
+	UseTmux      *bool             `yaml:"use_tmux"`
 }
 
 func (c Config) GetAgentCommand() string {
