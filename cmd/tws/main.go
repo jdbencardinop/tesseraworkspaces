@@ -32,6 +32,8 @@ func main() {
 		cli.StackCmd(os.Args[2:])
 	case "delete":
 		cli.Delete(os.Args[2:])
+	case "list", "ls":
+		cli.List(os.Args[2:])
 	default:
 		fmt.Printf("Unknown command: %s\n", os.Args[1])
 		printHelp()
@@ -50,6 +52,7 @@ func printHelp() {
 	fmt.Println("  sync <feature>                       Rebase worktrees in dependency order")
 	fmt.Println("  stack <feature>                      Show branch dependency tree")
 	fmt.Println("  delete <feature>                     Remove feature and worktrees")
+	fmt.Println("  list, ls                             List features and branches")
 	fmt.Println()
 	fmt.Println("Flags:")
 	fmt.Println("  --version, -v  Print version")
