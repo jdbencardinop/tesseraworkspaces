@@ -1,0 +1,12 @@
+{
+  "id": "versioned-builds",
+  "slug": "versioned-builds",
+  "title": "Add --version and --help flags to the tws CLI. Tag builds with the git tag version via ldflags. CI should only trigger binary builds/releases on tag push; tests, lint, and formatting should run on every push to main and PRs.",
+  "state": "requested",
+  "compatibility": "unknown",
+  "requested_at": "2026-05-02T04:36:11Z",
+  "updated_at": "2026-05-02T04:36:11Z",
+  "last_command": "add",
+  "apply": {},
+  "reconcile": {}
+}

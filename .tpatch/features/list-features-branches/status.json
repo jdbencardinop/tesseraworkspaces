@@ -1,0 +1,12 @@
+{
+  "id": "list-features-branches",
+  "slug": "list-features-branches",
+  "title": "Add a tws list (or tws ls) command that shows all features and their branches in the current workspace. Could integrate with fzf for interactive selection or shell completions in a future feature.",
+  "state": "requested",
+  "compatibility": "unknown",
+  "requested_at": "2026-05-02T04:36:38Z",
+  "updated_at": "2026-05-02T04:36:38Z",
+  "last_command": "add",
+  "apply": {},
+  "reconcile": {}
+}

@@ -13,6 +13,10 @@
     {
       "slug": "lightweight-worktree-handler",
       "kind": "hard"
+    },
+    {
+      "slug": "fix-initial-claude-session",
+      "kind": "hard"
     }
   ]
 }

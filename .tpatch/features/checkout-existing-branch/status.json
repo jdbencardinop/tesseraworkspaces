@@ -1,0 +1,12 @@
+{
+  "id": "checkout-existing-branch",
+  "slug": "checkout-existing-branch",
+  "title": "Allow tws new to check out an existing branch into a feature worktree instead of only creating new branches. Should work even if the branch is currently checked out in the main repo (git worktree add --detach the main repo first, or use a different approach). This enables migrating existing in-progress work into the tesseraworkspaces model.",
+  "state": "requested",
+  "compatibility": "unknown",
+  "requested_at": "2026-05-02T04:35:58Z",
+  "updated_at": "2026-05-02T04:35:58Z",
+  "last_command": "add",
+  "apply": {},
+  "reconcile": {}
+}
