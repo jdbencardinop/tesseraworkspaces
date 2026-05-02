@@ -8,7 +8,15 @@ import (
 )
 
 type Config struct {
-	Workspaces map[string]string `yaml:"workspaces"`
+	Workspaces   map[string]string `yaml:"workspaces"`
+	AgentCommand string            `yaml:"agent_command"`
+}
+
+func (c Config) GetAgentCommand() string {
+	if c.AgentCommand != "" {
+		return c.AgentCommand
+	}
+	return "claude"
 }
 
 func ConfigPath() string {

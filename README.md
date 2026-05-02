@@ -6,7 +6,7 @@ A CLI tool for creating feature-scoped workspaces with multiple git worktrees. W
 
 1. **Add a feature** — creates a feature directory with shared context files
 2. **Create worktrees** — spin up isolated branches under that feature using `git worktree`
-3. **Open a worktree** — launches a tmux session with your editor and Claude Code attached
+3. **Open a worktree** — launches a tmux session with your coding agent attached
 4. **Sync** — rebases all worktrees in a feature in dependency order
 
 ## Requirements
@@ -14,7 +14,7 @@ A CLI tool for creating feature-scoped workspaces with multiple git worktrees. W
 - [Go](https://go.dev/dl/) 1.26+
 - [git](https://git-scm.com/)
 - [tmux](https://github.com/tmux/tmux) (for `tws open`)
-- [Claude Code](https://claude.ai/claude-code) (for `tws open`, configurable in a future release)
+- A coding agent: [Claude Code](https://claude.ai/claude-code) (default), [OpenCode](https://opencode.ai), [Aider](https://aider.chat), or any CLI agent (configurable via `~/.config/tws/config.yaml`)
 
 ## Install
 

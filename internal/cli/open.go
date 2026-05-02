@@ -41,13 +41,17 @@ func Open(args []string) {
 	fmt.Printf("Creating session: %s\n", session)
 	internal.Must(internal.Run("tmux", "new-session", "-d", "-s", session, "-c", path))
 
-	// Launch claude — use -c (continue) if a session exists for this worktree
-	claudeCmd := "claude"
-	if hasClaudeSession(path) {
-		claudeCmd = "claude -c"
+	// Resolve agent command from config
+	cfg := internal.LoadConfig()
+	agentCmd := cfg.GetAgentCommand()
+
+	// Claude-specific: use -c (continue) if a session exists for this worktree
+	if isClaudeAgent(agentCmd) && hasClaudeSession(path) {
+		agentCmd = agentCmd + " -c"
 	}
-	fmt.Printf("Running: %s\n", claudeCmd)
-	internal.Must(internal.Run("tmux", "send-keys", "-t", session, claudeCmd, "Enter"))
+
+	fmt.Printf("Running: %s\n", agentCmd)
+	internal.Must(internal.Run("tmux", "send-keys", "-t", session, agentCmd, "Enter"))
 
 	// Attach
 	internal.Must(internal.Run("tmux", "attach", "-t", session))
@@ -65,9 +69,14 @@ func sanitizeSessionName(s string) string {
 	return r.Replace(s)
 }
 
+// isClaudeAgent checks if the agent command is claude (or claude-dev, cc, etc.)
+func isClaudeAgent(cmd string) bool {
+	base := strings.Fields(cmd)[0]
+	return base == "claude" || base == "claude-dev" || base == "cc"
+}
+
 // hasClaudeSession checks if Claude Code has an existing session for the given
 // working directory by looking for a project folder in ~/.claude/projects/.
-// Claude encodes paths by replacing / with - and prepending -.
 func hasClaudeSession(workdir string) bool {
 	home, err := os.UserHomeDir()
 	if err != nil {

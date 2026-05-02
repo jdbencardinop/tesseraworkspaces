@@ -14,10 +14,30 @@ tesseraworkspaces resolves the workspace root directory using the following prio
 Location: `~/.config/tws/config.yaml`
 
 ```yaml
+# Workspace paths (keyed by repo path)
 workspaces:
   /Users/you/projects/myapp: /data/workspaces/myapp
   /Users/you/projects/api: /custom/path/api-workspaces
+
+# Agent command launched by tws open (default: claude)
+agent_command: claude
 ```
+
+### Agent command
+
+The `agent_command` field controls what `tws open` runs in the tmux session. Defaults to `claude`.
+
+Examples:
+
+```yaml
+agent_command: claude          # default — includes -c auto-detection
+agent_command: opencode        # OpenCode
+agent_command: aider           # Aider
+agent_command: codex            # Codex CLI
+agent_command: claude-dev      # Claude Code dev build — -c auto-detection works
+```
+
+When the agent is `claude`, `claude-dev`, or `cc`, tws automatically detects existing Claude sessions and appends `-c` (continue) on subsequent opens.
 
 Each key is the absolute path to a git repository. The value is the workspace root where features and worktrees are stored for that repo.
 
