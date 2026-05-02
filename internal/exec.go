@@ -41,6 +41,11 @@ func RepoRoot() (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+func BranchExists(branch string) bool {
+	err := exec.Command("git", "rev-parse", "--verify", branch).Run()
+	return err == nil
+}
+
 func Run(name string, args ...string) error {
 	cmd := exec.Command(name, args...)
 	cmd.Stdout = os.Stdout
