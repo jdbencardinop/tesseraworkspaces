@@ -85,8 +85,8 @@ func TestDetectWorkspaceRoot_MarkerFile(t *testing.T) {
 	tmp := t.TempDir()
 	wsRoot := filepath.Join(tmp, "myapp.tws")
 	nested := filepath.Join(wsRoot, "auth", "worktrees", "branch-a")
-	os.MkdirAll(filepath.Join(wsRoot, ".tws-workspace"), 0755)
-	os.MkdirAll(nested, 0755)
+	os.MkdirAll(filepath.Join(wsRoot, ".tws-workspace"), 0755) //nolint:errcheck
+	os.MkdirAll(nested, 0755)                                  //nolint:errcheck
 
 	got := DetectWorkspaceRoot(nested, Config{})
 	if got != wsRoot {
@@ -98,7 +98,7 @@ func TestDetectWorkspaceRoot_ConfigMatch(t *testing.T) {
 	tmp := t.TempDir()
 	wsRoot := filepath.Join(tmp, "custom-workspace")
 	nested := filepath.Join(wsRoot, "feature", "worktrees", "branch")
-	os.MkdirAll(nested, 0755)
+	os.MkdirAll(nested, 0755) //nolint:errcheck
 
 	cfg := Config{Workspaces: map[string]string{
 		"/some/repo": wsRoot,
@@ -115,11 +115,11 @@ func TestDetectWorkspaceRoot_GlobalDefault(t *testing.T) {
 
 	nested := filepath.Join(globalDefault, "some-feature")
 	if _, err := os.Stat(globalDefault); os.IsNotExist(err) {
-		os.MkdirAll(nested, 0755)
-		defer os.RemoveAll(globalDefault)
+		os.MkdirAll(nested, 0755)         //nolint:errcheck
+		defer os.RemoveAll(globalDefault) //nolint:errcheck
 	} else {
-		os.MkdirAll(nested, 0755)
-		defer os.Remove(nested)
+		os.MkdirAll(nested, 0755) //nolint:errcheck
+		defer os.Remove(nested)   //nolint:errcheck
 	}
 
 	got := DetectWorkspaceRoot(nested, Config{})
@@ -139,8 +139,8 @@ func TestResolveTwsRoot_WorkspaceDetectionWins(t *testing.T) {
 	tmp := t.TempDir()
 	wsRoot := filepath.Join(tmp, "myapp.tws")
 	cwd := filepath.Join(wsRoot, "auth", "worktrees", "branch-a")
-	os.MkdirAll(filepath.Join(wsRoot, ".tws-workspace"), 0755)
-	os.MkdirAll(cwd, 0755)
+	os.MkdirAll(filepath.Join(wsRoot, ".tws-workspace"), 0755) //nolint:errcheck
+	os.MkdirAll(cwd, 0755)                                     //nolint:errcheck
 
 	got := resolveTwsRoot("", cwd, "/some/repo", nil, Config{})
 	if got != wsRoot {

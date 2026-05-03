@@ -42,7 +42,7 @@ func Delete(args []string) {
 	}
 
 	// Prune stale worktree refs
-	internal.Run("git", "worktree", "prune")
+	_ = internal.Run("git", "worktree", "prune")
 
 	// Remove the feature directory
 	if err := os.RemoveAll(featurePath); err != nil {

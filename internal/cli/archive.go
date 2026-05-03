@@ -46,7 +46,7 @@ func Archive(args []string) {
 	}
 
 	// Prune stale refs
-	internal.RunSilent("git", "worktree", "prune")
+	_ = internal.RunSilent("git", "worktree", "prune")
 
 	fmt.Printf("Archived: %s (branch preserved, restore with: tws new %s %s)\n", branch, feature, branch)
 }

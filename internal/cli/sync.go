@@ -89,7 +89,7 @@ func Sync(args []string) {
 		base := resolveBase(entry.Base)
 		err := internal.RunSilent("git", "rebase", base, entry.Name)
 		if err != nil {
-			internal.RunSilent("git", "rebase", "--abort")
+			_ = internal.RunSilent("git", "rebase", "--abort")
 			fmt.Println(formatSyncStatus(entry.Name, "archived", "conflict"))
 			fmt.Printf("    Restore with: tws new %s %s\n", feature, entry.Name)
 			skipDescendants(stack, entry.Name, skipped)
