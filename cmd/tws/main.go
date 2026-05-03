@@ -34,6 +34,8 @@ func main() {
 		cli.Delete(os.Args[2:])
 	case "list", "ls":
 		cli.List(os.Args[2:])
+	case "archive":
+		cli.Archive(os.Args[2:])
 	default:
 		fmt.Printf("Unknown command: %s\n", os.Args[1])
 		printHelp()
@@ -53,6 +55,7 @@ func printHelp() {
 	fmt.Println("  stack <feature>                      Show branch dependency tree")
 	fmt.Println("  delete <feature>                     Remove feature and worktrees")
 	fmt.Println("  list, ls                             List features and branches")
+	fmt.Println("  archive <feature> <branch>           Remove worktree, keep branch")
 	fmt.Println()
 	fmt.Println("Flags:")
 	fmt.Println("  --version, -v  Print version")

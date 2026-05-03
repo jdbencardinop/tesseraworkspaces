@@ -135,6 +135,26 @@ func TestDescendants(t *testing.T) {
 	}
 }
 
+func TestHasBranch(t *testing.T) {
+	s := Stack{Branches: []StackEntry{
+		{Name: "auth-models", Base: "main"},
+		{Name: "auth-middleware", Base: "auth-models"},
+	}}
+
+	if !HasBranch(s, "auth-models") {
+		t.Error("should find auth-models")
+	}
+	if !HasBranch(s, "auth-middleware") {
+		t.Error("should find auth-middleware")
+	}
+	if HasBranch(s, "nonexistent") {
+		t.Error("should not find nonexistent")
+	}
+	if HasBranch(Stack{}, "anything") {
+		t.Error("empty stack should not find anything")
+	}
+}
+
 func TestLoadSaveStack(t *testing.T) {
 	tmp := t.TempDir()
 

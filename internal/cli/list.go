@@ -49,7 +49,11 @@ func List(args []string) {
 				wtPath := filepath.Join(featurePath, "worktrees", entry.Name)
 				status := "active"
 				if _, err := os.Stat(wtPath); os.IsNotExist(err) {
-					status = "missing"
+					if internal.IsPrunableWorktree(entry.Name) {
+						status = "missing"
+					} else {
+						status = "archived"
+					}
 				}
 
 				connector := "├──"

@@ -67,10 +67,12 @@ func New(args []string) {
 		internal.Must(internal.RunDir(repoRoot, "git", "worktree", "add", path, "-b", branch))
 	}
 
-	// Register branch in stack.yaml
+	// Register branch in stack.yaml (idempotent — skip if already tracked)
 	stack, _ := internal.LoadStack(featurePath)
-	stack.Branches = append(stack.Branches, internal.StackEntry{Name: branch, Base: base})
-	internal.Must(internal.SaveStack(featurePath, stack))
+	if !internal.HasBranch(stack, branch) {
+		stack.Branches = append(stack.Branches, internal.StackEntry{Name: branch, Base: base})
+		internal.Must(internal.SaveStack(featurePath, stack))
+	}
 
 	fmt.Printf("Worktree created: %s (base: %s)\n", path, base)
 }

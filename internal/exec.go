@@ -65,6 +65,35 @@ func RunDir(dir string, name string, args ...string) error {
 	return cmd.Run()
 }
 
+func RunSilent(name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	return cmd.Run()
+}
+
+// IsPrunableWorktree checks if a branch has a stale (prunable) worktree entry,
+// meaning the directory was deleted but git still tracks it.
+func IsPrunableWorktree(branch string) bool {
+	out, err := exec.Command("git", "worktree", "list", "--porcelain").Output()
+	if err != nil {
+		return false
+	}
+	lines := strings.Split(string(out), "\n")
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "branch refs/heads/"+branch {
+			// Check surrounding lines in the same worktree block for "prunable"
+			for j := i - 3; j <= i+2 && j < len(lines); j++ {
+				if j < 0 {
+					continue
+				}
+				if strings.HasPrefix(lines[j], "prunable") {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 func Must(err error) {
 	if err != nil {
 		fmt.Println("Error:", err)

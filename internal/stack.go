@@ -18,6 +18,16 @@ type Stack struct {
 	Branches []StackEntry `yaml:"branches"`
 }
 
+// HasBranch checks if a branch name already exists in the stack.
+func HasBranch(s Stack, name string) bool {
+	for _, e := range s.Branches {
+		if e.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 func StackPath(featurePath string) string {
 	return filepath.Join(featurePath, "stack.yaml")
 }
