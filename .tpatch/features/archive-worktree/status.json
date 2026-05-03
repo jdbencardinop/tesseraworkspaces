@@ -2,12 +2,16 @@
   "id": "archive-worktree",
   "slug": "archive-worktree",
   "title": "Add a tws archive command that removes the worktree from disk but keeps the branch reference in stack.yaml. This saves disk space for large repos where worktrees accumulate. A tws restore or tws new with the same branch name should be able to recreate the worktree from the archived branch. Long-term quality of life improvement.",
-  "state": "requested",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-05-02T04:36:42Z",
-  "updated_at": "2026-05-02T04:36:42Z",
-  "last_command": "add",
-  "apply": {},
+  "updated_at": "2026-05-03T01:23:13Z",
+  "last_command": "record",
+  "notes": "Patch recorded",
+  "apply": {
+    "base_commit": "a1dad73c5c71e7acd83f52b8cf3b99ef67e5d28e",
+    "has_patch": true
+  },
   "reconcile": {},
   "depends_on": [
     {
