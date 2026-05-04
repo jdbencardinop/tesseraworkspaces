@@ -20,13 +20,25 @@ func (c Config) GetAgentCommand() string {
 	return "claude"
 }
 
+// ConfigPath returns the global config path.
 func ConfigPath() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".config", "tws", "config.yaml")
 }
 
-func LoadConfig() Config {
-	data, err := os.ReadFile(ConfigPath())
+func repoConfigPath() string {
+	root, err := RepoRoot()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(root, ".tws", "config.yaml")
+}
+
+func loadConfigFile(path string) Config {
+	if path == "" {
+		return Config{}
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return Config{}
 	}
@@ -34,5 +46,29 @@ func LoadConfig() Config {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return Config{}
 	}
+	return cfg
+}
+
+// LoadConfig loads the global config, then merges per-repo config on top.
+// Per-repo values override global values when set.
+func LoadConfig() Config {
+	cfg := loadConfigFile(ConfigPath())
+	repo := loadConfigFile(repoConfigPath())
+
+	if repo.AgentCommand != "" {
+		cfg.AgentCommand = repo.AgentCommand
+	}
+	if repo.UseTmux != nil {
+		cfg.UseTmux = repo.UseTmux
+	}
+	if len(repo.Workspaces) > 0 {
+		if cfg.Workspaces == nil {
+			cfg.Workspaces = make(map[string]string)
+		}
+		for k, v := range repo.Workspaces {
+			cfg.Workspaces[k] = v
+		}
+	}
+
 	return cfg
 }

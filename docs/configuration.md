@@ -5,9 +5,24 @@ tesseraworkspaces resolves the workspace root directory using the following prio
 | Priority | Source | Example |
 |----------|--------|---------|
 | 1 | `TWS_ROOT` environment variable | `export TWS_ROOT=/data/workspaces` |
-| 2 | Global config (`~/.config/tws/config.yaml`) keyed by repo path | See below |
-| 3 | Repo-relative sibling directory | `../myapp.tws/` |
-| 4 | Global fallback | `~/tws` |
+| 2 | Per-repo config (`.tws/config.yaml` in repo root) | See below |
+| 3 | Global config (`~/.config/tws/config.yaml`) keyed by repo path | See below |
+| 4 | Repo-relative sibling directory | `../myapp.tws/` |
+| 5 | Global fallback | `~/tws` |
+
+## Per-repo config file
+
+Location: `.tws/config.yaml` in the repo root. Committable so team members share settings.
+
+```yaml
+# Override agent command for this repo
+agent_command: opencode
+
+# Use tmux by default for this repo
+use_tmux: true
+```
+
+Per-repo values override global config. Only `agent_command` and `use_tmux` are typically set per-repo.
 
 ## Global config file
 
