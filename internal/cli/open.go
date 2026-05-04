@@ -18,12 +18,26 @@ func openCmd() *cobra.Command {
 	var noAgent bool
 
 	cmd := &cobra.Command{
-		Use:   "open <feature> <branch>",
+		Use:   "open [feature] [branch]",
 		Short: "Open worktree and run agent",
-		Args:  cobra.ExactArgs(2),
+		Long:  "Open a worktree and run the configured agent. With no args, shows an interactive picker.",
+		Args:  cobra.RangeArgs(0, 2),
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			switch len(args) {
+			case 0:
+				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
+			case 1:
+				return internal.ListBranches(args[0]), cobra.ShellCompDirectiveNoFileComp
+			default:
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			}
+		},
 		Run: func(cmd *cobra.Command, args []string) {
-			feature := args[0]
-			branch := args[1]
+			feature, branch, err := resolveOpenArgs(args)
+			if err != nil {
+				fmt.Println(err)
+				os.Exit(1)
+			}
 
 			path := internal.WorktreePath(feature, branch)
 
@@ -63,6 +77,46 @@ func openCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noAgent, "no-agent", false, "Just print the worktree path")
 
 	return cmd
+}
+
+func resolveOpenArgs(args []string) (string, string, error) {
+	var feature, branch string
+	var err error
+
+	switch len(args) {
+	case 2:
+		return args[0], args[1], nil
+	case 1:
+		feature = args[0]
+		branches := internal.ListBranches(feature)
+		if len(branches) == 0 {
+			return "", "", fmt.Errorf("no branches found for feature: %s", feature)
+		}
+		branch, err = pick("Select branch:", branches)
+		if err != nil {
+			return "", "", err
+		}
+		return feature, branch, nil
+	case 0:
+		features := internal.ListFeatures()
+		if len(features) == 0 {
+			return "", "", fmt.Errorf("no features found. Use 'tws add <feature>' to create one")
+		}
+		feature, err = pick("Select feature:", features)
+		if err != nil {
+			return "", "", err
+		}
+		branches := internal.ListBranches(feature)
+		if len(branches) == 0 {
+			return "", "", fmt.Errorf("no branches found for feature: %s", feature)
+		}
+		branch, err = pick("Select branch:", branches)
+		if err != nil {
+			return "", "", err
+		}
+		return feature, branch, nil
+	}
+	return "", "", fmt.Errorf("unexpected args")
 }
 
 func openDirect(path string) {

@@ -92,3 +92,47 @@ func FeaturePath(feature string) string {
 func WorktreePath(feature, branch string) string {
 	return filepath.Join(FeaturePath(feature), "worktrees", branch)
 }
+
+// ListFeatures returns the names of all feature directories in the workspace.
+func ListFeatures() []string {
+	wsRoot := TwsRoot()
+	entries, err := os.ReadDir(wsRoot)
+	if err != nil {
+		return nil
+	}
+	var features []string
+	for _, e := range entries {
+		if e.IsDir() && e.Name() != ".tws-workspace" {
+			features = append(features, e.Name())
+		}
+	}
+	return features
+}
+
+// ListBranches returns the branch names for a feature from stack.yaml,
+// or from the worktrees directory if no stack exists.
+func ListBranches(feature string) []string {
+	featurePath := FeaturePath(feature)
+	stack, err := LoadStack(featurePath)
+	if err == nil && len(stack.Branches) > 0 {
+		var names []string
+		for _, e := range stack.Branches {
+			names = append(names, e.Name)
+		}
+		return names
+	}
+
+	// Fallback: list worktree directories
+	wtDir := filepath.Join(featurePath, "worktrees")
+	entries, err := os.ReadDir(wtDir)
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	return names
+}
