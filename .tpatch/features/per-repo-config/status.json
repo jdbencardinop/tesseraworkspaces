@@ -2,11 +2,15 @@
   "id": "per-repo-config",
   "slug": "per-repo-config",
   "title": "Add support for a .tws/config.yaml in the repo root for per-repo configuration. This would override global config for that repo. Settings like agent_command, use_tmux, and workspace path could be set per-repo and committed. Deferred from user-defined-workdir.",
-  "state": "requested",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-05-04T06:23:38Z",
-  "updated_at": "2026-05-04T06:23:38Z",
-  "last_command": "add",
-  "apply": {},
+  "updated_at": "2026-05-04T07:34:56Z",
+  "last_command": "record",
+  "notes": "Patch recorded",
+  "apply": {
+    "base_commit": "aad1ed70bb55ace7b31e086ba0caa88034e91d60",
+    "has_patch": true
+  },
   "reconcile": {}
 }
