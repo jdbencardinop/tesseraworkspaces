@@ -16,7 +16,11 @@ fmt:
 	gofmt -w .
 
 lint:
-	gofmt -l . | tee /dev/stderr | (! read)
+	unformatted=$$(gofmt -l .); \
+	if [ -n "$$unformatted" ]; then \
+		echo "$$unformatted"; \
+		exit 1; \
+	fi
 	go vet ./...
 
 install:

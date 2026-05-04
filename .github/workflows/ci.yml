@@ -54,6 +54,17 @@ jobs:
           go install ./cmd/tws
           "$(go env GOPATH)/bin/tws" --version
 
+      - name: Verify tag version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          make install
+          version_output="$("$(go env GOPATH)/bin/tws" --version)"
+          echo "$version_output"
+          if [ "$version_output" != "tws version ${GITHUB_REF_NAME}" ]; then
+            echo "::error::Expected tws version ${GITHUB_REF_NAME}, got: $version_output"
+            exit 1
+          fi
+
   release:
     name: release
     needs: test
