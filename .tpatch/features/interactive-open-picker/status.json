@@ -2,12 +2,16 @@
   "id": "interactive-open-picker",
   "slug": "interactive-open-picker",
   "title": "When tws open is called without arguments, show an interactive picker (via fzf or built-in) to select a feature and branch. Could also support tws open \u003cfeature\u003e with no branch to pick from branches within that feature. Shell completions from cobra should also suggest valid features and branches.",
-  "state": "requested",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-05-04T06:23:25Z",
-  "updated_at": "2026-05-04T06:23:25Z",
-  "last_command": "add",
-  "apply": {},
+  "updated_at": "2026-05-04T07:02:28Z",
+  "last_command": "record",
+  "notes": "Patch recorded",
+  "apply": {
+    "base_commit": "dee366a41e3c0ea347f01499f597c3340ddd8d36",
+    "has_patch": true
+  },
   "reconcile": {},
   "depends_on": [
     {
