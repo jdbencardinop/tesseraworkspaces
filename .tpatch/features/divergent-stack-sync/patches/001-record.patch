@@ -1,0 +1,166 @@
+diff --git a/docs/cheatsheet.md b/docs/cheatsheet.md
+index 6c88cb8..b34571a 100644
+--- a/docs/cheatsheet.md
++++ b/docs/cheatsheet.md
+@@ -19,6 +19,14 @@ tws add auth                 # creates ../myapp.tws/auth/
+ tws new auth auth-models                          # first branch (base: main)
+ tws new auth auth-middleware --base auth-models    # stacks on auth-models
+ tws new auth auth-routes --base auth-middleware    # stacks on auth-middleware
++tws new auth auth-tests --base auth-models         # diverges (parallel to middleware)
++
++# Result:
++# (main)
++# └── auth-models
++#     ├── auth-middleware
++#     │   └── auth-routes
++#     └── auth-tests
+ ```
+ 
+ ## Migrate an existing branch
+diff --git a/docs/configuration.md b/docs/configuration.md
+index 8656271..ceef7a9 100644
+--- a/docs/configuration.md
++++ b/docs/configuration.md
+@@ -111,3 +111,33 @@ tws new auth auth-routes --base auth-middleware
+ ```
+ 
+ Features without a `stack.yaml` fall back to rebasing all worktrees against `origin/main`.
++
++### Divergent stacks
++
++Multiple branches can share the same parent, creating a tree structure:
++
++```yaml
++branches:
++  - name: auth-models
++    base: main
++  - name: auth-middleware
++    base: auth-models
++  - name: auth-routes
++    base: auth-middleware
++  - name: auth-tests
++    base: auth-models       # diverges from middleware
++```
++
++```sh
++tws new auth auth-tests --base auth-models
++```
++
++```
++(main)
++└── auth-models
++    ├── auth-middleware
++    │   └── auth-routes
++    └── auth-tests
++```
++
++Sync handles divergent stacks correctly — each lineage is rebased independently. A failure in `auth-middleware` skips `auth-routes` but does NOT skip `auth-tests` (different lineage).
+diff --git a/internal/stack_test.go b/internal/stack_test.go
+index c7a2e9a..b685e18 100644
+--- a/internal/stack_test.go
++++ b/internal/stack_test.go
+@@ -155,6 +155,105 @@ func TestHasBranch(t *testing.T) {
+ 	}
+ }
+ 
++// --- Divergent stack (DAG) tests ---
++
++func TestTopoSort_DiamondDAG(t *testing.T) {
++	// Diamond: A→B, A→C, B→D, C→D
++	s := Stack{Branches: []StackEntry{
++		{Name: "a", Base: "main"},
++		{Name: "b", Base: "a"},
++		{Name: "c", Base: "a"},
++		{Name: "d", Base: "b"}, // d only depends on b, not c
++	}}
++
++	sorted, err := TopoSort(s)
++	if err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++
++	indexOf := func(name string) int {
++		for i, e := range sorted {
++			if e.Name == name {
++				return i
++			}
++		}
++		return -1
++	}
++
++	if indexOf("a") > indexOf("b") || indexOf("a") > indexOf("c") {
++		t.Error("a must come before b and c")
++	}
++	if indexOf("b") > indexOf("d") {
++		t.Error("b must come before d")
++	}
++}
++
++func TestDescendants_DivergentDoesNotCrossLineage(t *testing.T) {
++	// A has children B and C. Failing B should NOT skip C.
++	s := Stack{Branches: []StackEntry{
++		{Name: "a", Base: "main"},
++		{Name: "b", Base: "a"},
++		{Name: "c", Base: "a"},
++		{Name: "d", Base: "b"},
++	}}
++
++	// Descendants of b should be d, not c
++	descsB := Descendants(s, "b")
++	if !descsB["d"] {
++		t.Error("d should be descendant of b")
++	}
++	if descsB["c"] {
++		t.Error("c should NOT be descendant of b (sibling lineage)")
++	}
++	if descsB["a"] {
++		t.Error("a should NOT be descendant of b (it's the parent)")
++	}
++
++	// Descendants of a should be b, c, d
++	descsA := Descendants(s, "a")
++	if !descsA["b"] || !descsA["c"] || !descsA["d"] {
++		t.Errorf("all of b,c,d should be descendants of a, got %v", descsA)
++	}
++}
++
++func TestHasBranch_DAG(t *testing.T) {
++	s := Stack{Branches: []StackEntry{
++		{Name: "models", Base: "main"},
++		{Name: "middleware", Base: "models"},
++		{Name: "tests", Base: "models"},
++	}}
++
++	if !HasBranch(s, "tests") {
++		t.Error("should find tests in divergent stack")
++	}
++	if HasBranch(s, "nonexistent") {
++		t.Error("should not find nonexistent")
++	}
++}
++
++func TestTopoSort_WideDAG(t *testing.T) {
++	// One parent with 4 children — all should come after parent
++	s := Stack{Branches: []StackEntry{
++		{Name: "root", Base: "main"},
++		{Name: "child-a", Base: "root"},
++		{Name: "child-b", Base: "root"},
++		{Name: "child-c", Base: "root"},
++		{Name: "child-d", Base: "root"},
++	}}
++
++	sorted, err := TopoSort(s)
++	if err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++
++	if sorted[0].Name != "root" {
++		t.Errorf("root should be first, got %s", sorted[0].Name)
++	}
++	if len(sorted) != 5 {
++		t.Errorf("expected 5 entries, got %d", len(sorted))
++	}
++}
++
+ func TestLoadSaveStack(t *testing.T) {
+ 	tmp := t.TempDir()

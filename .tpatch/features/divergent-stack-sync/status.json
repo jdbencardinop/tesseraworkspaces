@@ -2,12 +2,16 @@
   "id": "divergent-stack-sync",
   "slug": "divergent-stack-sync",
   "title": "The stack.yaml data model should support DAG dependencies from day one (A-\u003eB, A-\u003eC divergent stacks), but only implement linear sync initially. Divergent sync (rebasing B and C independently from A) is a future feature. The data model cost of supporting DAGs upfront is minimal, and retrofitting it later into a linear-only schema would be painful.",
-  "state": "requested",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-05-01T09:03:44Z",
-  "updated_at": "2026-05-01T09:03:44Z",
-  "last_command": "add",
-  "apply": {},
+  "updated_at": "2026-05-04T07:26:11Z",
+  "last_command": "record",
+  "notes": "Patch recorded",
+  "apply": {
+    "base_commit": "6ccb5dac5d1c1303123d0f7de4f312b625da0852",
+    "has_patch": true
+  },
   "reconcile": {},
   "depends_on": [
     {
