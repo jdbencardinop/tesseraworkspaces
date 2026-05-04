@@ -1,0 +1,1287 @@
+diff --git a/cmd/tws/main.go b/cmd/tws/main.go
+index a26202b..523c3c7 100644
+--- a/cmd/tws/main.go
++++ b/cmd/tws/main.go
+@@ -1,7 +1,6 @@
+ package main
+ 
+ import (
+-	"fmt"
+ 	"os"
+ 
+ 	"github.com/jdbencardinop/tesseraworkspaces/internal/cli"
+@@ -10,57 +9,6 @@ import (
+ var version = "dev"
+ 
+ func main() {
+-	if len(os.Args) < 2 {
+-		printHelp()
+-		return
+-	}
+-
+-	switch os.Args[1] {
+-	case "--version", "-v":
+-		fmt.Printf("tws %s\n", version)
+-	case "--help", "-h":
+-		printHelp()
+-	case "add":
+-		cli.Add(os.Args[2:])
+-	case "new":
+-		cli.New(os.Args[2:])
+-	case "open":
+-		cli.Open(os.Args[2:])
+-	case "sync":
+-		cli.Sync(os.Args[2:])
+-	case "stack":
+-		cli.StackCmd(os.Args[2:])
+-	case "delete":
+-		cli.Delete(os.Args[2:])
+-	case "list", "ls":
+-		cli.List(os.Args[2:])
+-	case "archive":
+-		cli.Archive(os.Args[2:])
+-	case "init":
+-		cli.Init(os.Args[2:])
+-	default:
+-		fmt.Printf("Unknown command: %s\n", os.Args[1])
+-		printHelp()
+-		os.Exit(1)
+-	}
+-}
+-
+-func printHelp() {
+-	fmt.Printf("tws %s — tesseraworkspaces\n\n", version)
+-	fmt.Println("Usage: tws <command> [args]")
+-	fmt.Println()
+-	fmt.Println("Commands:")
+-	fmt.Println("  add <feature>                        Create a feature workspace")
+-	fmt.Println("  new <feature> <branch> [--base <b>]  Create a worktree branch")
+-	fmt.Println("  open <feature> <branch> [--tmux]    Open worktree and run agent")
+-	fmt.Println("  sync <feature>                       Rebase worktrees in dependency order")
+-	fmt.Println("  stack <feature>                      Show branch dependency tree")
+-	fmt.Println("  delete <feature>                     Remove feature and worktrees")
+-	fmt.Println("  list, ls                             List features and branches")
+-	fmt.Println("  archive <feature> <branch>           Remove worktree, keep branch")
+-	fmt.Println("  init [--agent claude|copilot]         Install agent skills")
+-	fmt.Println()
+-	fmt.Println("Flags:")
+-	fmt.Println("  --version, -v  Print version")
+-	fmt.Println("  --help, -h     Print this help")
++	cli.SetVersion(version)
++	os.Exit(cli.Execute())
+ }
+diff --git a/go.mod b/go.mod
+index 27ebfe6..17aab8f 100644
+--- a/go.mod
++++ b/go.mod
+@@ -2,4 +2,12 @@ module github.com/jdbencardinop/tesseraworkspaces
+ 
+ go 1.26.1
+ 
+-require gopkg.in/yaml.v3 v3.0.1
++require (
++	github.com/spf13/cobra v1.10.2
++	gopkg.in/yaml.v3 v3.0.1
++)
++
++require (
++	github.com/inconshreveable/mousetrap v1.1.0 // indirect
++	github.com/spf13/pflag v1.0.9 // indirect
++)
+diff --git a/go.sum b/go.sum
+index a62c313..47edb24 100644
+--- a/go.sum
++++ b/go.sum
+@@ -1,3 +1,12 @@
++github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
++github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
++github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
++github.com/russross/blackfriday/v2 v2.1.0/go.mod h1:+Rmxgy9KzJVeS9/2gXHxylqXiyQDYRxCVz55jmeOWTM=
++github.com/spf13/cobra v1.10.2 h1:DMTTonx5m65Ic0GOoRY2c16WCbHxOOw6xxezuLaBpcU=
++github.com/spf13/cobra v1.10.2/go.mod h1:7C1pvHqHw5A4vrJfjNwvOdzYu0Gml16OCs2GRiTUUS4=
++github.com/spf13/pflag v1.0.9 h1:9exaQaMOCwffKiiiYk6/BndUBv+iRViNW+4lEMi0PvY=
++github.com/spf13/pflag v1.0.9/go.mod h1:McXfInJRrz4CZXVZOBLb0bTZqETkiAhM9Iw0y3An2Bg=
++go.yaml.in/yaml/v3 v3.0.4/go.mod h1:DhzuOOF2ATzADvBadXxruRBLzYTpT36CKvDb3+aBEFg=
+ gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=
+ gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
+ gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
+diff --git a/internal/cli/add.go b/internal/cli/add.go
+index 58d1f9d..2849168 100644
+--- a/internal/cli/add.go
++++ b/internal/cli/add.go
+@@ -6,29 +6,25 @@ import (
+ 	"path/filepath"
+ 
+ 	"github.com/jdbencardinop/tesseraworkspaces/internal"
++	"github.com/spf13/cobra"
+ )
+ 
+-func Add(args []string) {
+-	if len(args) < 1 {
+-		println("Usage: tws add <feature>")
+-		return
++func addCmd() *cobra.Command {
++	return &cobra.Command{
++		Use:   "add <feature>",
++		Short: "Create a feature workspace",
++		Args:  cobra.ExactArgs(1),
++		Run: func(cmd *cobra.Command, args []string) {
++			feature := args[0]
++			root := internal.FeaturePath(feature)
++
++			wsRoot := internal.TwsRoot()
++			internal.Must(os.MkdirAll(filepath.Join(wsRoot, ".tws-workspace"), 0755))
++			internal.Must(os.MkdirAll(filepath.Join(root, "worktrees"), 0755))
++			internal.Must(os.WriteFile(filepath.Join(root, "FEATURE.md"), []byte("# "+feature+"\n"), 0644))
++			internal.Must(os.WriteFile(filepath.Join(root, "CLAUDE.local.md"), []byte("# "+feature+" - CLAUDE shared context\n"), 0644))
++
++			fmt.Println("Feature added:", feature)
++		},
+ 	}
+-
+-	feature := args[0]
+-	root := internal.FeaturePath(feature)
+-
+-	// Ensure .tws-workspace marker exists in workspace root
+-	wsRoot := internal.TwsRoot()
+-	internal.Must(os.MkdirAll(filepath.Join(wsRoot, ".tws-workspace"), 0755))
+-
+-	// TODO: make worktress a constant in internal package
+-	internal.Must(os.MkdirAll(filepath.Join(root, "worktrees"), 0755))
+-
+-	// TODO: either add a slug arg or pass the entire feature description and slugify it here
+-	internal.Must(os.WriteFile(filepath.Join(root, "FEATURE.md"), []byte("# "+feature+"\n"), 0644))
+-
+-	// TODO: Add a template for other files, here we just create a CLAUDE.local.md file
+-	internal.Must(os.WriteFile(filepath.Join(root, "CLAUDE.local.md"), []byte("# "+feature+" - CLAUDE shared context\n"), 0644))
+-
+-	fmt.Println("Feature added:", feature)
+ }
+diff --git a/internal/cli/archive.go b/internal/cli/archive.go
+index 3cddd24..26583ff 100644
+--- a/internal/cli/archive.go
++++ b/internal/cli/archive.go
+@@ -5,48 +5,47 @@ import (
+ 	"os"
+ 
+ 	"github.com/jdbencardinop/tesseraworkspaces/internal"
++	"github.com/spf13/cobra"
+ )
+ 
+-func Archive(args []string) {
+-	if len(args) < 2 {
+-		println("Usage: tws archive <feature> <branch>")
+-		return
++func archiveCmd() *cobra.Command {
++	return &cobra.Command{
++		Use:   "archive <feature> <branch>",
++		Short: "Remove worktree from disk, keep branch ref",
++		Args:  cobra.ExactArgs(2),
++		Run: func(cmd *cobra.Command, args []string) {
++			internal.RequireTool("git")
++
++			feature := args[0]
++			branch := args[1]
++
++			featurePath := internal.FeaturePath(feature)
++
++			stack, err := internal.LoadStack(featurePath)
++			if err != nil || !internal.HasBranch(stack, branch) {
++				fmt.Printf("Branch %q not found in feature %q stack\n", branch, feature)
++				os.Exit(1)
++			}
++
++			path := internal.WorktreePath(feature, branch)
++
++			if _, err := os.Stat(path); os.IsNotExist(err) {
++				fmt.Printf("Already archived: %s\n", branch)
++				return
++			}
++
++			err = internal.Run("git", "worktree", "remove", path)
++			if err != nil {
++				err = internal.Run("git", "worktree", "remove", "--force", path)
++				if err != nil {
++					fmt.Printf("Error removing worktree: %v\n", err)
++					os.Exit(1)
++				}
++			}
++
++			_ = internal.RunSilent("git", "worktree", "prune")
++
++			fmt.Printf("Archived: %s (branch preserved, restore with: tws new %s %s)\n", branch, feature, branch)
++		},
+ 	}
+-
+-	internal.RequireTool("git")
+-
+-	feature := args[0]
+-	branch := args[1]
+-
+-	featurePath := internal.FeaturePath(feature)
+-
+-	// Verify branch is in the stack
+-	stack, err := internal.LoadStack(featurePath)
+-	if err != nil || !internal.HasBranch(stack, branch) {
+-		fmt.Printf("Branch %q not found in feature %q stack\n", branch, feature)
+-		os.Exit(1)
+-	}
+-
+-	path := internal.WorktreePath(feature, branch)
+-
+-	if _, err := os.Stat(path); os.IsNotExist(err) {
+-		fmt.Printf("Already archived: %s\n", branch)
+-		return
+-	}
+-
+-	// Remove the worktree
+-	err = internal.Run("git", "worktree", "remove", path)
+-	if err != nil {
+-		// Try force remove if dirty
+-		err = internal.Run("git", "worktree", "remove", "--force", path)
+-		if err != nil {
+-			fmt.Printf("Error removing worktree: %v\n", err)
+-			os.Exit(1)
+-		}
+-	}
+-
+-	// Prune stale refs
+-	_ = internal.RunSilent("git", "worktree", "prune")
+-
+-	fmt.Printf("Archived: %s (branch preserved, restore with: tws new %s %s)\n", branch, feature, branch)
+ }
+diff --git a/internal/cli/delete.go b/internal/cli/delete.go
+index 248cb47..4622fce 100644
+--- a/internal/cli/delete.go
++++ b/internal/cli/delete.go
+@@ -5,50 +5,51 @@ import (
+ 	"os"
+ 
+ 	"github.com/jdbencardinop/tesseraworkspaces/internal"
++	"github.com/spf13/cobra"
+ )
+ 
+-func Delete(args []string) {
+-	if len(args) < 1 {
+-		println("Usage: tws delete <feature>")
+-		return
+-	}
+-
+-	internal.RequireTool("git")
++func deleteCmd() *cobra.Command {
++	return &cobra.Command{
++		Use:     "delete <feature>",
++		Aliases: []string{"rm"},
++		Short:   "Remove feature and all worktrees",
++		Args:    cobra.ExactArgs(1),
++		Run: func(cmd *cobra.Command, args []string) {
++			internal.RequireTool("git")
++
++			feature := args[0]
++			featurePath := internal.FeaturePath(feature)
++
++			if _, err := os.Stat(featurePath); os.IsNotExist(err) {
++				fmt.Printf("Feature not found: %s\n", feature)
++				os.Exit(1)
++			}
+ 
+-	feature := args[0]
+-	featurePath := internal.FeaturePath(feature)
++			stack, err := internal.LoadStack(featurePath)
++			if err == nil {
++				for _, entry := range stack.Branches {
++					path := internal.WorktreePath(feature, entry.Name)
++					if _, err := os.Stat(path); os.IsNotExist(err) {
++						fmt.Printf("  Worktree already removed: %s\n", entry.Name)
++						continue
++					}
++					err := internal.Run("git", "worktree", "remove", "--force", path)
++					if err != nil {
++						fmt.Printf("  Warning: failed to remove worktree %s: %v\n", entry.Name, err)
++					} else {
++						fmt.Printf("  Removed worktree: %s\n", entry.Name)
++					}
++				}
++			}
+ 
+-	if _, err := os.Stat(featurePath); os.IsNotExist(err) {
+-		fmt.Printf("Feature not found: %s\n", feature)
+-		os.Exit(1)
+-	}
++			_ = internal.Run("git", "worktree", "prune")
+ 
+-	// Remove worktrees tracked in stack.yaml
+-	stack, err := internal.LoadStack(featurePath)
+-	if err == nil {
+-		for _, entry := range stack.Branches {
+-			path := internal.WorktreePath(feature, entry.Name)
+-			if _, err := os.Stat(path); os.IsNotExist(err) {
+-				fmt.Printf("  Worktree already removed: %s\n", entry.Name)
+-				continue
++			if err := os.RemoveAll(featurePath); err != nil {
++				fmt.Printf("Error removing feature directory: %v\n", err)
++				os.Exit(1)
+ 			}
+-			err := internal.Run("git", "worktree", "remove", "--force", path)
+-			if err != nil {
+-				fmt.Printf("  Warning: failed to remove worktree %s: %v\n", entry.Name, err)
+-			} else {
+-				fmt.Printf("  Removed worktree: %s\n", entry.Name)
+-			}
+-		}
+-	}
+ 
+-	// Prune stale worktree refs
+-	_ = internal.Run("git", "worktree", "prune")
+-
+-	// Remove the feature directory
+-	if err := os.RemoveAll(featurePath); err != nil {
+-		fmt.Printf("Error removing feature directory: %v\n", err)
+-		os.Exit(1)
++			fmt.Printf("Feature deleted: %s (branches preserved in git)\n", feature)
++		},
+ 	}
+-
+-	fmt.Printf("Feature deleted: %s (branches preserved in git)\n", feature)
+ }
+diff --git a/internal/cli/init.go b/internal/cli/init.go
+index 2e00478..b3f15bd 100644
+--- a/internal/cli/init.go
++++ b/internal/cli/init.go
+@@ -6,48 +6,48 @@ import (
+ 	"path/filepath"
+ 
+ 	skills "github.com/jdbencardinop/tesseraworkspaces/assets/skills"
++	"github.com/spf13/cobra"
+ )
+ 
+-func Init(args []string) {
+-	agent := ""
+-	force := false
++func initCmd() *cobra.Command {
++	var agent string
++	var force bool
+ 
+-	for i := 0; i < len(args); i++ {
+-		switch args[i] {
+-		case "--agent":
+-			if i+1 < len(args) {
+-				agent = args[i+1]
+-				i++
++	cmd := &cobra.Command{
++		Use:   "init",
++		Short: "Install agent skills (claude, copilot)",
++		Run: func(cmd *cobra.Command, args []string) {
++			installed := 0
++
++			if agent == "" || agent == "claude" {
++				if installFile(".claude/skills/tesseraworkspaces/SKILL.md", skills.ClaudeSkill, force) {
++					installed++
++				}
+ 			}
+-		case "--force":
+-			force = true
+-		}
+-	}
+ 
+-	installed := 0
++			if agent == "" || agent == "copilot" {
++				if installFile(".github/prompts/tws.prompt.md", skills.CopilotSkill, force) {
++					installed++
++				}
++			}
+ 
+-	if agent == "" || agent == "claude" {
+-		if installFile(".claude/skills/tesseraworkspaces/SKILL.md", skills.ClaudeSkill, force) {
+-			installed++
+-		}
+-	}
++			if agent != "" && agent != "claude" && agent != "copilot" {
++				fmt.Printf("Unknown agent: %s (supported: claude, copilot)\n", agent)
++				os.Exit(1)
++			}
+ 
+-	if agent == "" || agent == "copilot" {
+-		if installFile(".github/prompts/tws.prompt.md", skills.CopilotSkill, force) {
+-			installed++
+-		}
++			if installed == 0 {
++				fmt.Println("No files installed (already exist, use --force to overwrite)")
++			} else {
++				fmt.Printf("Installed %d skill file(s)\n", installed)
++			}
++		},
+ 	}
+ 
+-	if agent != "" && agent != "claude" && agent != "copilot" {
+-		fmt.Printf("Unknown agent: %s (supported: claude, copilot)\n", agent)
+-		os.Exit(1)
+-	}
++	cmd.Flags().StringVar(&agent, "agent", "", "Target agent (claude, copilot)")
++	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing files")
+ 
+-	if installed == 0 {
+-		fmt.Println("No files installed (already exist, use --force to overwrite)")
+-	} else {
+-		fmt.Printf("Installed %d skill file(s)\n", installed)
+-	}
++	return cmd
+ }
+ 
+ func installFile(relPath string, content []byte, force bool) bool {
+diff --git a/internal/cli/list.go b/internal/cli/list.go
+index fdfa416..94f1e79 100644
+--- a/internal/cli/list.go
++++ b/internal/cli/list.go
+@@ -6,81 +6,87 @@ import (
+ 	"path/filepath"
+ 
+ 	"github.com/jdbencardinop/tesseraworkspaces/internal"
++	"github.com/spf13/cobra"
+ )
+ 
+-func List(args []string) {
+-	wsRoot := internal.TwsRoot()
++func listCmd() *cobra.Command {
++	return &cobra.Command{
++		Use:     "list",
++		Aliases: []string{"ls"},
++		Short:   "List features and branches",
++		Args:    cobra.NoArgs,
++		Run: func(cmd *cobra.Command, args []string) {
++			wsRoot := internal.TwsRoot()
+ 
+-	if _, err := os.Stat(wsRoot); os.IsNotExist(err) {
+-		fmt.Println("No workspace found at:", wsRoot)
+-		return
+-	}
++			if _, err := os.Stat(wsRoot); os.IsNotExist(err) {
++				fmt.Println("No workspace found at:", wsRoot)
++				return
++			}
+ 
+-	entries, err := os.ReadDir(wsRoot)
+-	if err != nil {
+-		fmt.Printf("Error reading workspace: %v\n", err)
+-		os.Exit(1)
+-	}
++			entries, err := os.ReadDir(wsRoot)
++			if err != nil {
++				fmt.Printf("Error reading workspace: %v\n", err)
++				os.Exit(1)
++			}
+ 
+-	// Filter to feature directories (skip .tws-workspace marker and files)
+-	var features []string
+-	for _, e := range entries {
+-		if !e.IsDir() || e.Name() == ".tws-workspace" {
+-			continue
+-		}
+-		features = append(features, e.Name())
+-	}
++			var features []string
++			for _, e := range entries {
++				if !e.IsDir() || e.Name() == ".tws-workspace" {
++					continue
++				}
++				features = append(features, e.Name())
++			}
+ 
+-	if len(features) == 0 {
+-		fmt.Println("No features found. Use 'tws add <feature>' to create one.")
+-		return
+-	}
++			if len(features) == 0 {
++				fmt.Println("No features found. Use 'tws add <feature>' to create one.")
++				return
++			}
+ 
+-	fmt.Printf("Workspace: %s\n\n", wsRoot)
++			fmt.Printf("Workspace: %s\n\n", wsRoot)
+ 
+-	for _, feature := range features {
+-		featurePath := filepath.Join(wsRoot, feature)
+-		fmt.Printf("%s\n", feature)
++			for _, feature := range features {
++				featurePath := filepath.Join(wsRoot, feature)
++				fmt.Printf("%s\n", feature)
+ 
+-		stack, err := internal.LoadStack(featurePath)
+-		if err == nil && len(stack.Branches) > 0 {
+-			// Show branches from stack.yaml with base info
+-			for i, entry := range stack.Branches {
+-				wtPath := filepath.Join(featurePath, "worktrees", entry.Name)
+-				status := "active"
+-				if _, err := os.Stat(wtPath); os.IsNotExist(err) {
+-					if internal.IsPrunableWorktree(entry.Name) {
+-						status = "missing"
+-					} else {
+-						status = "archived"
+-					}
+-				}
++				stack, err := internal.LoadStack(featurePath)
++				if err == nil && len(stack.Branches) > 0 {
++					for i, entry := range stack.Branches {
++						wtPath := filepath.Join(featurePath, "worktrees", entry.Name)
++						status := "active"
++						if _, err := os.Stat(wtPath); os.IsNotExist(err) {
++							if internal.IsPrunableWorktree(entry.Name) {
++								status = "missing"
++							} else {
++								status = "archived"
++							}
++						}
+ 
+-				connector := "├──"
+-				if i == len(stack.Branches)-1 {
+-					connector = "└──"
+-				}
+-				fmt.Printf("  %s %s (base: %s) [%s]\n", connector, entry.Name, entry.Base, status)
+-			}
+-		} else {
+-			// No stack.yaml — list worktree dirs directly
+-			wtDir := filepath.Join(featurePath, "worktrees")
+-			wts, err := os.ReadDir(wtDir)
+-			if err != nil || len(wts) == 0 {
+-				fmt.Println("  (no branches)")
+-			} else {
+-				for i, wt := range wts {
+-					if !wt.IsDir() {
+-						continue
++						connector := "├──"
++						if i == len(stack.Branches)-1 {
++							connector = "└──"
++						}
++						fmt.Printf("  %s %s (base: %s) [%s]\n", connector, entry.Name, entry.Base, status)
+ 					}
+-					connector := "├──"
+-					if i == len(wts)-1 {
+-						connector = "└──"
++				} else {
++					wtDir := filepath.Join(featurePath, "worktrees")
++					wts, err := os.ReadDir(wtDir)
++					if err != nil || len(wts) == 0 {
++						fmt.Println("  (no branches)")
++					} else {
++						for i, wt := range wts {
++							if !wt.IsDir() {
++								continue
++							}
++							connector := "├──"
++							if i == len(wts)-1 {
++								connector = "└──"
++							}
++							fmt.Printf("  %s %s\n", connector, wt.Name())
++						}
+ 					}
+-					fmt.Printf("  %s %s\n", connector, wt.Name())
+ 				}
++				fmt.Println()
+ 			}
+-		}
+-		fmt.Println()
++		},
+ 	}
+ }
+diff --git a/internal/cli/new.go b/internal/cli/new.go
+index e2f22c5..ba1bbbb 100644
+--- a/internal/cli/new.go
++++ b/internal/cli/new.go
+@@ -7,74 +7,65 @@ import (
+ 	"strings"
+ 
+ 	"github.com/jdbencardinop/tesseraworkspaces/internal"
++	"github.com/spf13/cobra"
+ )
+ 
+-func New(args []string) {
+-	if len(args) < 2 {
+-		println("Usage: tws new <feature> <branch> [--base <parent>] [--force]")
+-		return
+-	}
++func newCmd() *cobra.Command {
++	var base string
++	var force bool
+ 
+-	internal.RequireTool("git")
++	cmd := &cobra.Command{
++		Use:   "new <feature> <branch>",
++		Short: "Create a worktree branch",
++		Args:  cobra.ExactArgs(2),
++		Run: func(cmd *cobra.Command, args []string) {
++			internal.RequireTool("git")
+ 
+-	feature := args[0]
+-	branch := args[1]
+-	base := "main"
+-	force := false
++			feature := args[0]
++			branch := args[1]
+ 
+-	// Parse flags
+-	for i := 2; i < len(args); i++ {
+-		switch args[i] {
+-		case "--base":
+-			if i+1 < len(args) {
+-				base = args[i+1]
+-				i++
+-			}
+-		case "--force", "-f":
+-			force = true
+-		}
+-	}
++			featurePath := internal.FeaturePath(feature)
++			path := internal.WorktreePath(feature, branch)
+ 
+-	featurePath := internal.FeaturePath(feature)
+-	path := internal.WorktreePath(feature, branch)
++			internal.Must(os.MkdirAll(featurePath, 0755))
+ 
+-	// Ensure parent directory exists
+-	internal.Must(os.MkdirAll(featurePath, 0755))
++			repoRoot, err := internal.MainRepoRoot()
++			if err != nil {
++				fmt.Println("Error: must be run from inside a git repository")
++				os.Exit(1)
++			}
+ 
+-	// Create the worktree at the feature-scoped path
+-	repoRoot, err := internal.MainRepoRoot()
+-	if err != nil {
+-		fmt.Println("Error: must be run from inside a git repository")
+-		os.Exit(1)
+-	}
++			if internal.BranchExists(branch) {
++				if isCheckedOut(branch) && !force {
++					fmt.Printf("Warning: branch %q is already checked out in another worktree.\n", branch)
++					fmt.Println("Use --force to check it out anyway.")
++					os.Exit(1)
++				}
+ 
+-	if internal.BranchExists(branch) {
+-		// Check if it's currently checked out somewhere
+-		if isCheckedOut(branch) && !force {
+-			fmt.Printf("Warning: branch %q is already checked out in another worktree.\n", branch)
+-			fmt.Println("Use --force to check it out anyway.")
+-			os.Exit(1)
+-		}
++				gitArgs := []string{"worktree", "add"}
++				if force {
++					gitArgs = append(gitArgs, "--force")
++				}
++				gitArgs = append(gitArgs, path, branch)
++				internal.Must(internal.RunDir(repoRoot, "git", gitArgs...))
++			} else {
++				internal.Must(internal.RunDir(repoRoot, "git", "worktree", "add", path, "-b", branch))
++			}
+ 
+-		gitArgs := []string{"worktree", "add"}
+-		if force {
+-			gitArgs = append(gitArgs, "--force")
+-		}
+-		gitArgs = append(gitArgs, path, branch)
+-		internal.Must(internal.RunDir(repoRoot, "git", gitArgs...))
+-	} else {
+-		// New branch
+-		internal.Must(internal.RunDir(repoRoot, "git", "worktree", "add", path, "-b", branch))
+-	}
++			stack, _ := internal.LoadStack(featurePath)
++			if !internal.HasBranch(stack, branch) {
++				stack.Branches = append(stack.Branches, internal.StackEntry{Name: branch, Base: base})
++				internal.Must(internal.SaveStack(featurePath, stack))
++			}
+ 
+-	// Register branch in stack.yaml (idempotent — skip if already tracked)
+-	stack, _ := internal.LoadStack(featurePath)
+-	if !internal.HasBranch(stack, branch) {
+-		stack.Branches = append(stack.Branches, internal.StackEntry{Name: branch, Base: base})
+-		internal.Must(internal.SaveStack(featurePath, stack))
++			fmt.Printf("Worktree created: %s (base: %s)\n", path, base)
++		},
+ 	}
+ 
+-	fmt.Printf("Worktree created: %s (base: %s)\n", path, base)
++	cmd.Flags().StringVar(&base, "base", "main", "Parent branch for stacking")
++	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force checkout of already checked-out branch")
++
++	return cmd
+ }
+ 
+ // isCheckedOut checks if a branch is currently checked out in any worktree.
+diff --git a/internal/cli/open.go b/internal/cli/open.go
+index c7a64a1..a9f9684 100644
+--- a/internal/cli/open.go
++++ b/internal/cli/open.go
+@@ -9,74 +9,70 @@ import (
+ 	"syscall"
+ 
+ 	"github.com/jdbencardinop/tesseraworkspaces/internal"
++	"github.com/spf13/cobra"
+ )
+ 
+-func Open(args []string) {
+-	if len(args) < 2 {
+-		println("Usage: tws open <feature> <branch> [--tmux] [--no-tmux] [--no-agent]")
+-		return
+-	}
+-
+-	feature := args[0]
+-	branch := args[1]
+-
+-	// Parse flags
+-	useTmux := false
+-	tmuxFlagSet := false
+-	noAgent := false
+-
+-	for i := 2; i < len(args); i++ {
+-		switch args[i] {
+-		case "--tmux":
+-			useTmux = true
+-			tmuxFlagSet = true
+-		case "--no-tmux":
+-			useTmux = false
+-			tmuxFlagSet = true
+-		case "--no-agent":
+-			noAgent = true
+-		}
+-	}
+-
+-	// If no flag, check config
+-	if !tmuxFlagSet {
+-		cfg := internal.LoadConfig()
+-		if cfg.UseTmux != nil {
+-			useTmux = *cfg.UseTmux
+-		}
+-	}
+-
+-	path := internal.WorktreePath(feature, branch)
+-
+-	if _, err := os.Stat(path); os.IsNotExist(err) {
+-		fmt.Printf("Worktree not found: %s\n", path)
+-		os.Exit(1)
++func openCmd() *cobra.Command {
++	var useTmux bool
++	var noTmux bool
++	var noAgent bool
++
++	cmd := &cobra.Command{
++		Use:   "open <feature> <branch>",
++		Short: "Open worktree and run agent",
++		Args:  cobra.ExactArgs(2),
++		Run: func(cmd *cobra.Command, args []string) {
++			feature := args[0]
++			branch := args[1]
++
++			path := internal.WorktreePath(feature, branch)
++
++			if _, err := os.Stat(path); os.IsNotExist(err) {
++				fmt.Printf("Worktree not found: %s\n", path)
++				os.Exit(1)
++			}
++
++			if noAgent {
++				fmt.Printf("cd %s\n", path)
++				fmt.Println("Run your agent manually from there.")
++				return
++			}
++
++			// Resolve tmux preference
++			tmux := useTmux
++			if !cmd.Flags().Changed("tmux") && !noTmux {
++				cfg := internal.LoadConfig()
++				if cfg.UseTmux != nil {
++					tmux = *cfg.UseTmux
++				}
++			}
++			if noTmux {
++				tmux = false
++			}
++
++			if tmux {
++				openWithTmux(feature, branch, path)
++			} else {
++				openDirect(path)
++			}
++		},
+ 	}
+ 
+-	if noAgent {
+-		fmt.Printf("cd %s\n", path)
+-		fmt.Println("Run your agent manually from there.")
+-		return
+-	}
++	cmd.Flags().BoolVar(&useTmux, "tmux", false, "Wrap in tmux session")
++	cmd.Flags().BoolVar(&noTmux, "no-tmux", false, "Skip tmux even if configured")
++	cmd.Flags().BoolVar(&noAgent, "no-agent", false, "Just print the worktree path")
+ 
+-	if useTmux {
+-		openWithTmux(feature, branch, path)
+-	} else {
+-		openDirect(path)
+-	}
++	return cmd
+ }
+ 
+-// openDirect changes into the worktree directory and execs the agent.
+ func openDirect(path string) {
+ 	cfg := internal.LoadConfig()
+ 	agentCmd := cfg.GetAgentCommand()
+ 
+-	// Claude-specific: use -c if session exists
+ 	if isClaudeAgent(agentCmd) && hasClaudeSession(path) {
+ 		agentCmd = agentCmd + " -c"
+ 	}
+ 
+-	// Find the agent binary
+ 	parts := strings.Fields(agentCmd)
+ 	binary, err := exec.LookPath(parts[0])
+ 	if err != nil {
+@@ -86,26 +82,22 @@ func openDirect(path string) {
+ 
+ 	fmt.Printf("Opening: %s\nRunning: %s\n", path, agentCmd)
+ 
+-	// Change to worktree dir and exec the agent (replaces this process)
+ 	if err := os.Chdir(path); err != nil {
+ 		fmt.Printf("Error: could not cd to %s: %v\n", path, err)
+ 		os.Exit(1)
+ 	}
+ 
+-	// syscall.Exec replaces the current process
+ 	if err := syscall.Exec(binary, parts, os.Environ()); err != nil {
+ 		fmt.Printf("Error: could not exec %s: %v\n", agentCmd, err)
+ 		os.Exit(1)
+ 	}
+ }
+ 
+-// openWithTmux wraps the agent in a tmux session.
+ func openWithTmux(feature, branch, path string) {
+ 	internal.RequireTool("tmux")
+ 
+ 	session := sanitizeSessionName(feature + "/" + branch)
+ 
+-	// Check if session already exists
+ 	if sessionExists(session) {
+ 		fmt.Printf("Attaching to existing session: %s\n", session)
+ 		internal.Must(internal.Run("tmux", "attach", "-t", session))
+diff --git a/internal/cli/root.go b/internal/cli/root.go
+new file mode 100644
+index 0000000..66446fc
+--- /dev/null
++++ b/internal/cli/root.go
+@@ -0,0 +1,40 @@
++package cli
++
++import (
++	"fmt"
++	"os"
++
++	"github.com/spf13/cobra"
++)
++
++var version = "dev"
++
++func SetVersion(v string) {
++	version = v
++}
++
++func Execute() int {
++	rootCmd := &cobra.Command{
++		Use:     "tws",
++		Short:   "tesseraworkspaces — feature-scoped workspaces with stacked git worktrees",
++		Version: version,
++	}
++
++	rootCmd.AddCommand(
++		addCmd(),
++		newCmd(),
++		openCmd(),
++		syncCmd(),
++		stackCmd(),
++		deleteCmd(),
++		listCmd(),
++		archiveCmd(),
++		initCmd(),
++	)
++
++	if err := rootCmd.Execute(); err != nil {
++		fmt.Fprintln(os.Stderr, err)
++		return 1
++	}
++	return 0
++}
+diff --git a/internal/cli/stack.go b/internal/cli/stack.go
+index a9aa153..11cdff4 100644
+--- a/internal/cli/stack.go
++++ b/internal/cli/stack.go
+@@ -5,26 +5,29 @@ import (
+ 	"os"
+ 
+ 	"github.com/jdbencardinop/tesseraworkspaces/internal"
++	"github.com/spf13/cobra"
+ )
+ 
+-func StackCmd(args []string) {
+-	if len(args) < 1 {
+-		println("Usage: tws stack <feature>")
+-		return
+-	}
++func stackCmd() *cobra.Command {
++	return &cobra.Command{
++		Use:   "stack <feature>",
++		Short: "Show branch dependency tree",
++		Args:  cobra.ExactArgs(1),
++		Run: func(cmd *cobra.Command, args []string) {
++			feature := args[0]
++			featurePath := internal.FeaturePath(feature)
+ 
+-	feature := args[0]
+-	featurePath := internal.FeaturePath(feature)
++			stack, err := internal.LoadStack(featurePath)
++			if err != nil {
++				fmt.Println("No stack.yaml found for feature:", feature)
++				os.Exit(1)
++			}
+ 
+-	stack, err := internal.LoadStack(featurePath)
+-	if err != nil {
+-		fmt.Println("No stack.yaml found for feature:", feature)
+-		os.Exit(1)
+-	}
++			if _, err := internal.TopoSort(stack); err != nil {
++				fmt.Printf("Warning: %v\n", err)
++			}
+ 
+-	if _, err := internal.TopoSort(stack); err != nil {
+-		fmt.Printf("Warning: %v\n", err)
++			internal.PrintTree(stack)
++		},
+ 	}
+-
+-	internal.PrintTree(stack)
+ }
+diff --git a/internal/cli/sync.go b/internal/cli/sync.go
+index d2a5e64..c69b385 100644
+--- a/internal/cli/sync.go
++++ b/internal/cli/sync.go
+@@ -2,21 +2,24 @@ package cli
+ 
+ import (
+ 	"fmt"
+-	"os"
+-	"path/filepath"
+ 
+ 	"github.com/jdbencardinop/tesseraworkspaces/internal"
++	"github.com/spf13/cobra"
+ )
+ 
+-func Sync(args []string) {
+-	if len(args) < 1 {
+-		println("Usage: tws sync <feature>")
+-		return
++func syncCmd() *cobra.Command {
++	return &cobra.Command{
++		Use:   "sync <feature>",
++		Short: "Rebase worktrees in dependency order",
++		Args:  cobra.ExactArgs(1),
++		Run: func(cmd *cobra.Command, args []string) {
++			internal.RequireTool("git")
++			syncFeature(args[0])
++		},
+ 	}
++}
+ 
+-	internal.RequireTool("git")
+-
+-	feature := args[0]
++func syncFeature(feature string) {
+ 	featurePath := internal.FeaturePath(feature)
+ 
+ 	internal.Must(internal.Run("git", "fetch"))
+@@ -30,140 +33,8 @@ func Sync(args []string) {
+ 	sorted, err := internal.TopoSort(stack)
+ 	if err != nil {
+ 		fmt.Printf("Error: %v\n", err)
+-		os.Exit(1)
+-	}
+-
+-	skipped := make(map[string]bool)
+-	updatedByRef := make(map[string]bool)
+-
+-	// Pass 1: rebase active branches with --update-refs
+-	for _, entry := range sorted {
+-		if skipped[entry.Name] {
+-			continue
+-		}
+-
+-		path := internal.WorktreePath(feature, entry.Name)
+-		if _, err := os.Stat(path); os.IsNotExist(err) {
+-			// Archived — handle in pass 2
+-			continue
+-		}
+-
+-		base := resolveBase(entry.Base)
+-
+-		err := internal.RunDir(path, "git", "rebase", "--update-refs", base)
+-		if err != nil {
+-			fmt.Println(formatSyncStatus(entry.Name, "active", "failed"))
+-			skipDescendants(stack, entry.Name, skipped)
+-		} else {
+-			fmt.Println(formatSyncStatus(entry.Name, "active", "synced"))
+-			markUpdatedAncestors(stack, entry.Name, featurePath, updatedByRef)
+-		}
+-	}
+-
+-	// Pass 2: handle archived/missing branches not yet updated
+-	for _, entry := range sorted {
+-		if skipped[entry.Name] {
+-			fmt.Println(formatSyncStatus(entry.Name, "skipped", "skipped"))
+-			continue
+-		}
+-
+-		path := internal.WorktreePath(feature, entry.Name)
+-		if _, err := os.Stat(path); err == nil {
+-			// Active — already handled in pass 1
+-			continue
+-		}
+-
+-		// Detect missing (stale) vs archived (clean)
+-		if internal.IsPrunableWorktree(entry.Name) {
+-			fmt.Printf("  [?] %s (missing — stale worktree ref, run: tws archive %s %s or tws new %s %s)\n",
+-				entry.Name, feature, entry.Name, feature, entry.Name)
+-			continue
+-		}
+-
+-		if updatedByRef[entry.Name] {
+-			fmt.Println(formatSyncStatus(entry.Name, "archived", "synced"))
+-			continue
+-		}
+-
+-		// Optimistic rebase without worktree
+-		base := resolveBase(entry.Base)
+-		err := internal.RunSilent("git", "rebase", base, entry.Name)
+-		if err != nil {
+-			_ = internal.RunSilent("git", "rebase", "--abort")
+-			fmt.Println(formatSyncStatus(entry.Name, "archived", "conflict"))
+-			fmt.Printf("    Restore with: tws new %s %s\n", feature, entry.Name)
+-			skipDescendants(stack, entry.Name, skipped)
+-		} else {
+-			fmt.Println(formatSyncStatus(entry.Name, "archived", "synced"))
+-		}
+-	}
+-}
+-
+-func resolveBase(base string) string {
+-	if base == "main" {
+-		return "origin/main"
+-	}
+-	return base
+-}
+-
+-// markUpdatedAncestors walks up the stack from a branch and marks any archived
+-// ancestors as updated (they were handled by --update-refs).
+-func markUpdatedAncestors(stack internal.Stack, branch string, featurePath string, updated map[string]bool) {
+-	entryMap := make(map[string]internal.StackEntry)
+-	for _, e := range stack.Branches {
+-		entryMap[e.Name] = e
+-	}
+-
+-	current := branch
+-	for {
+-		entry, ok := entryMap[current]
+-		if !ok {
+-			break
+-		}
+-		parent, ok := entryMap[entry.Base]
+-		if !ok {
+-			break
+-		}
+-		parentPath := filepath.Join(featurePath, "worktrees", parent.Name)
+-		if _, err := os.Stat(parentPath); os.IsNotExist(err) {
+-			updated[parent.Name] = true
+-		}
+-		current = parent.Name
+-	}
+-}
+-
+-func skipDescendants(stack internal.Stack, branch string, skipped map[string]bool) {
+-	descs := internal.Descendants(stack, branch)
+-	for d := range descs {
+-		skipped[d] = true
+-	}
+-	if len(descs) > 0 {
+-		fmt.Printf("    Skipping descendants: %s\n", internal.DescendantsList(stack, branch))
+-	}
+-}
+-
+-func formatSyncStatus(name, mode, status string) string {
+-	symbols := map[string]string{
+-		"synced":   "+",
+-		"failed":   "x",
+-		"skipped":  "-",
+-		"conflict": "!",
+-	}
+-	sym := symbols[status]
+-	if sym == "" {
+-		sym = "?"
++		return
+ 	}
+-	return fmt.Sprintf("  [%s] %s (%s)", sym, name, mode)
+-}
+ 
+-func syncFallback(featurePath string) {
+-	entries, _ := os.ReadDir(filepath.Join(featurePath, "worktrees"))
+-	for _, e := range entries {
+-		if !e.IsDir() {
+-			continue
+-		}
+-		path := filepath.Join(featurePath, "worktrees", e.Name())
+-		fmt.Printf("Syncing worktree: %s\n", path)
+-		internal.Must(internal.RunDir(path, "git", "rebase", "--update-refs", "origin/main"))
+-	}
++	syncWithStack(feature, featurePath, stack, sorted)
+ }
+diff --git a/internal/cli/sync_helpers.go b/internal/cli/sync_helpers.go
+new file mode 100644
+index 0000000..0e1d2a4
+--- /dev/null
++++ b/internal/cli/sync_helpers.go
+@@ -0,0 +1,139 @@
++package cli
++
++import (
++	"fmt"
++	"os"
++	"path/filepath"
++
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
++)
++
++func syncWithStack(feature, featurePath string, stack internal.Stack, sorted []internal.StackEntry) {
++	skipped := make(map[string]bool)
++	updatedByRef := make(map[string]bool)
++
++	// Pass 1: rebase active branches with --update-refs
++	for _, entry := range sorted {
++		if skipped[entry.Name] {
++			continue
++		}
++
++		path := internal.WorktreePath(feature, entry.Name)
++		if _, err := os.Stat(path); os.IsNotExist(err) {
++			continue
++		}
++
++		base := resolveBase(entry.Base)
++
++		err := internal.RunDir(path, "git", "rebase", "--update-refs", base)
++		if err != nil {
++			fmt.Println(formatSyncStatus(entry.Name, "active", "failed"))
++			skipDescendants(stack, entry.Name, skipped)
++		} else {
++			fmt.Println(formatSyncStatus(entry.Name, "active", "synced"))
++			markUpdatedAncestors(stack, entry.Name, featurePath, updatedByRef)
++		}
++	}
++
++	// Pass 2: handle archived/missing branches
++	for _, entry := range sorted {
++		if skipped[entry.Name] {
++			fmt.Println(formatSyncStatus(entry.Name, "skipped", "skipped"))
++			continue
++		}
++
++		path := internal.WorktreePath(feature, entry.Name)
++		if _, err := os.Stat(path); err == nil {
++			continue
++		}
++
++		if internal.IsPrunableWorktree(entry.Name) {
++			fmt.Printf("  [?] %s (missing — stale worktree ref, run: tws archive %s %s or tws new %s %s)\n",
++				entry.Name, feature, entry.Name, feature, entry.Name)
++			continue
++		}
++
++		if updatedByRef[entry.Name] {
++			fmt.Println(formatSyncStatus(entry.Name, "archived", "synced"))
++			continue
++		}
++
++		base := resolveBase(entry.Base)
++		err := internal.RunSilent("git", "rebase", base, entry.Name)
++		if err != nil {
++			_ = internal.RunSilent("git", "rebase", "--abort")
++			fmt.Println(formatSyncStatus(entry.Name, "archived", "conflict"))
++			fmt.Printf("    Restore with: tws new %s %s\n", feature, entry.Name)
++			skipDescendants(stack, entry.Name, skipped)
++		} else {
++			fmt.Println(formatSyncStatus(entry.Name, "archived", "synced"))
++		}
++	}
++}
++
++func resolveBase(base string) string {
++	if base == "main" {
++		return "origin/main"
++	}
++	return base
++}
++
++func markUpdatedAncestors(stack internal.Stack, branch string, featurePath string, updated map[string]bool) {
++	entryMap := make(map[string]internal.StackEntry)
++	for _, e := range stack.Branches {
++		entryMap[e.Name] = e
++	}
++
++	current := branch
++	for {
++		entry, ok := entryMap[current]
++		if !ok {
++			break
++		}
++		parent, ok := entryMap[entry.Base]
++		if !ok {
++			break
++		}
++		parentPath := filepath.Join(featurePath, "worktrees", parent.Name)
++		if _, err := os.Stat(parentPath); os.IsNotExist(err) {
++			updated[parent.Name] = true
++		}
++		current = parent.Name
++	}
++}
++
++func skipDescendants(stack internal.Stack, branch string, skipped map[string]bool) {
++	descs := internal.Descendants(stack, branch)
++	for d := range descs {
++		skipped[d] = true
++	}
++	if len(descs) > 0 {
++		fmt.Printf("    Skipping descendants: %s\n", internal.DescendantsList(stack, branch))
++	}
++}
++
++func formatSyncStatus(name, mode, status string) string {
++	symbols := map[string]string{
++		"synced":   "+",
++		"failed":   "x",
++		"skipped":  "-",
++		"conflict": "!",
++	}
++	sym := symbols[status]
++	if sym == "" {
++		sym = "?"
++	}
++	return fmt.Sprintf("  [%s] %s (%s)", sym, name, mode)
++}
++
++func syncFallback(featurePath string) {
++	entries, _ := os.ReadDir(filepath.Join(featurePath, "worktrees"))
++	for _, e := range entries {
++		if !e.IsDir() {
++			continue
++		}
++		path := filepath.Join(featurePath, "worktrees", e.Name())
++		fmt.Printf("Syncing worktree: %s\n", path)
++		internal.Must(internal.RunDir(path, "git", "rebase", "--update-refs", "origin/main"))
++	}
++}
