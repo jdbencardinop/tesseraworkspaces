@@ -19,6 +19,14 @@ tws add auth                 # creates ../myapp.tws/auth/
 tws new auth auth-models                          # first branch (base: main)
 tws new auth auth-middleware --base auth-models    # stacks on auth-models
 tws new auth auth-routes --base auth-middleware    # stacks on auth-middleware
+tws new auth auth-tests --base auth-models         # diverges (parallel to middleware)
+
+# Result:
+# (main)
+# └── auth-models
+#     ├── auth-middleware
+#     │   └── auth-routes
+#     └── auth-tests
 ```
 
 ## Migrate an existing branch

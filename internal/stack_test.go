@@ -155,6 +155,105 @@ func TestHasBranch(t *testing.T) {
 	}
 }
 
+// --- Divergent stack (DAG) tests ---
+
+func TestTopoSort_DiamondDAG(t *testing.T) {
+	// Diamond: A→B, A→C, B→D, C→D
+	s := Stack{Branches: []StackEntry{
+		{Name: "a", Base: "main"},
+		{Name: "b", Base: "a"},
+		{Name: "c", Base: "a"},
+		{Name: "d", Base: "b"}, // d only depends on b, not c
+	}}
+
+	sorted, err := TopoSort(s)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	indexOf := func(name string) int {
+		for i, e := range sorted {
+			if e.Name == name {
+				return i
+			}
+		}
+		return -1
+	}
+
+	if indexOf("a") > indexOf("b") || indexOf("a") > indexOf("c") {
+		t.Error("a must come before b and c")
+	}
+	if indexOf("b") > indexOf("d") {
+		t.Error("b must come before d")
+	}
+}
+
+func TestDescendants_DivergentDoesNotCrossLineage(t *testing.T) {
+	// A has children B and C. Failing B should NOT skip C.
+	s := Stack{Branches: []StackEntry{
+		{Name: "a", Base: "main"},
+		{Name: "b", Base: "a"},
+		{Name: "c", Base: "a"},
+		{Name: "d", Base: "b"},
+	}}
+
+	// Descendants of b should be d, not c
+	descsB := Descendants(s, "b")
+	if !descsB["d"] {
+		t.Error("d should be descendant of b")
+	}
+	if descsB["c"] {
+		t.Error("c should NOT be descendant of b (sibling lineage)")
+	}
+	if descsB["a"] {
+		t.Error("a should NOT be descendant of b (it's the parent)")
+	}
+
+	// Descendants of a should be b, c, d
+	descsA := Descendants(s, "a")
+	if !descsA["b"] || !descsA["c"] || !descsA["d"] {
+		t.Errorf("all of b,c,d should be descendants of a, got %v", descsA)
+	}
+}
+
+func TestHasBranch_DAG(t *testing.T) {
+	s := Stack{Branches: []StackEntry{
+		{Name: "models", Base: "main"},
+		{Name: "middleware", Base: "models"},
+		{Name: "tests", Base: "models"},
+	}}
+
+	if !HasBranch(s, "tests") {
+		t.Error("should find tests in divergent stack")
+	}
+	if HasBranch(s, "nonexistent") {
+		t.Error("should not find nonexistent")
+	}
+}
+
+func TestTopoSort_WideDAG(t *testing.T) {
+	// One parent with 4 children — all should come after parent
+	s := Stack{Branches: []StackEntry{
+		{Name: "root", Base: "main"},
+		{Name: "child-a", Base: "root"},
+		{Name: "child-b", Base: "root"},
+		{Name: "child-c", Base: "root"},
+		{Name: "child-d", Base: "root"},
+	}}
+
+	sorted, err := TopoSort(s)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if sorted[0].Name != "root" {
+		t.Errorf("root should be first, got %s", sorted[0].Name)
+	}
+	if len(sorted) != 5 {
+		t.Errorf("expected 5 entries, got %d", len(sorted))
+	}
+}
+
 func TestLoadSaveStack(t *testing.T) {
 	tmp := t.TempDir()
 

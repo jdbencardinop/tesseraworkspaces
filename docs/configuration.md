@@ -111,3 +111,33 @@ tws new auth auth-routes --base auth-middleware
 ```
 
 Features without a `stack.yaml` fall back to rebasing all worktrees against `origin/main`.
+
+### Divergent stacks
+
+Multiple branches can share the same parent, creating a tree structure:
+
+```yaml
+branches:
+  - name: auth-models
+    base: main
+  - name: auth-middleware
+    base: auth-models
+  - name: auth-routes
+    base: auth-middleware
+  - name: auth-tests
+    base: auth-models       # diverges from middleware
+```
+
+```sh
+tws new auth auth-tests --base auth-models
+```
+
+```
+(main)
+└── auth-models
+    ├── auth-middleware
+    │   └── auth-routes
+    └── auth-tests
+```
+
+Sync handles divergent stacks correctly — each lineage is rebased independently. A failure in `auth-middleware` skips `auth-routes` but does NOT skip `auth-tests` (different lineage).
