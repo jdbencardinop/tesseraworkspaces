@@ -9,74 +9,70 @@ import (
 	"syscall"
 
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
+	"github.com/spf13/cobra"
 )
 
-func Open(args []string) {
-	if len(args) < 2 {
-		println("Usage: tws open <feature> <branch> [--tmux] [--no-tmux] [--no-agent]")
-		return
+func openCmd() *cobra.Command {
+	var useTmux bool
+	var noTmux bool
+	var noAgent bool
+
+	cmd := &cobra.Command{
+		Use:   "open <feature> <branch>",
+		Short: "Open worktree and run agent",
+		Args:  cobra.ExactArgs(2),
+		Run: func(cmd *cobra.Command, args []string) {
+			feature := args[0]
+			branch := args[1]
+
+			path := internal.WorktreePath(feature, branch)
+
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				fmt.Printf("Worktree not found: %s\n", path)
+				os.Exit(1)
+			}
+
+			if noAgent {
+				fmt.Printf("cd %s\n", path)
+				fmt.Println("Run your agent manually from there.")
+				return
+			}
+
+			// Resolve tmux preference
+			tmux := useTmux
+			if !cmd.Flags().Changed("tmux") && !noTmux {
+				cfg := internal.LoadConfig()
+				if cfg.UseTmux != nil {
+					tmux = *cfg.UseTmux
+				}
+			}
+			if noTmux {
+				tmux = false
+			}
+
+			if tmux {
+				openWithTmux(feature, branch, path)
+			} else {
+				openDirect(path)
+			}
+		},
 	}
 
-	feature := args[0]
-	branch := args[1]
+	cmd.Flags().BoolVar(&useTmux, "tmux", false, "Wrap in tmux session")
+	cmd.Flags().BoolVar(&noTmux, "no-tmux", false, "Skip tmux even if configured")
+	cmd.Flags().BoolVar(&noAgent, "no-agent", false, "Just print the worktree path")
 
-	// Parse flags
-	useTmux := false
-	tmuxFlagSet := false
-	noAgent := false
-
-	for i := 2; i < len(args); i++ {
-		switch args[i] {
-		case "--tmux":
-			useTmux = true
-			tmuxFlagSet = true
-		case "--no-tmux":
-			useTmux = false
-			tmuxFlagSet = true
-		case "--no-agent":
-			noAgent = true
-		}
-	}
-
-	// If no flag, check config
-	if !tmuxFlagSet {
-		cfg := internal.LoadConfig()
-		if cfg.UseTmux != nil {
-			useTmux = *cfg.UseTmux
-		}
-	}
-
-	path := internal.WorktreePath(feature, branch)
-
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		fmt.Printf("Worktree not found: %s\n", path)
-		os.Exit(1)
-	}
-
-	if noAgent {
-		fmt.Printf("cd %s\n", path)
-		fmt.Println("Run your agent manually from there.")
-		return
-	}
-
-	if useTmux {
-		openWithTmux(feature, branch, path)
-	} else {
-		openDirect(path)
-	}
+	return cmd
 }
 
-// openDirect changes into the worktree directory and execs the agent.
 func openDirect(path string) {
 	cfg := internal.LoadConfig()
 	agentCmd := cfg.GetAgentCommand()
 
-	// Claude-specific: use -c if session exists
 	if isClaudeAgent(agentCmd) && hasClaudeSession(path) {
 		agentCmd = agentCmd + " -c"
 	}
 
-	// Find the agent binary
 	parts := strings.Fields(agentCmd)
 	binary, err := exec.LookPath(parts[0])
 	if err != nil {
@@ -86,26 +82,22 @@ func openDirect(path string) {
 
 	fmt.Printf("Opening: %s\nRunning: %s\n", path, agentCmd)
 
-	// Change to worktree dir and exec the agent (replaces this process)
 	if err := os.Chdir(path); err != nil {
 		fmt.Printf("Error: could not cd to %s: %v\n", path, err)
 		os.Exit(1)
 	}
 
-	// syscall.Exec replaces the current process
 	if err := syscall.Exec(binary, parts, os.Environ()); err != nil {
 		fmt.Printf("Error: could not exec %s: %v\n", agentCmd, err)
 		os.Exit(1)
 	}
 }
 
-// openWithTmux wraps the agent in a tmux session.
 func openWithTmux(feature, branch, path string) {
 	internal.RequireTool("tmux")
 
 	session := sanitizeSessionName(feature + "/" + branch)
 
-	// Check if session already exists
 	if sessionExists(session) {
 		fmt.Printf("Attaching to existing session: %s\n", session)
 		internal.Must(internal.Run("tmux", "attach", "-t", session))
