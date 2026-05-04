@@ -1,0 +1,17 @@
+{
+  "id": "go-module-version-fallback",
+  "slug": "go-module-version-fallback",
+  "title": "Make tws --version report the tagged module version when installed with go install github.com/jdbencardinop/tesseraworkspaces/cmd/tws@latest, while preserving ldflag-injected source builds and adding workflow coverage so dev cannot silently ship.",
+  "state": "applied",
+  "compatibility": "unknown",
+  "requested_at": "2026-05-04T20:00:04Z",
+  "updated_at": "2026-05-04T20:08:03Z",
+  "last_command": "record",
+  "notes": "Patch recorded",
+  "apply": {
+    "completed_at": "2026-05-04T20:07:37Z",
+    "base_commit": "d16b8dfe49fa89ac0d9d303bb3da42765d7a2e75",
+    "has_patch": true
+  },
+  "reconcile": {}
+}

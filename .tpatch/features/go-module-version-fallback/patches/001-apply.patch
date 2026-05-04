@@ -1,0 +1,107 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index ba71b1d..f5dbc45 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -54,6 +54,17 @@ jobs:
+           go install ./cmd/tws
+           "$(go env GOPATH)/bin/tws" --version
+ 
++      - name: Verify tag version
++        if: startsWith(github.ref, 'refs/tags/v')
++        run: |
++          make install
++          version_output="$("$(go env GOPATH)/bin/tws" --version)"
++          echo "$version_output"
++          if [ "$version_output" != "tws version ${GITHUB_REF_NAME}" ]; then
++            echo "::error::Expected tws version ${GITHUB_REF_NAME}, got: $version_output"
++            exit 1
++          fi
++
+   release:
+     name: release
+     needs: test
+diff --git a/cmd/tws/main.go b/cmd/tws/main.go
+index 523c3c7..5263f46 100644
+--- a/cmd/tws/main.go
++++ b/cmd/tws/main.go
+@@ -2,6 +2,7 @@ package main
+ 
+ import (
+ 	"os"
++	"runtime/debug"
+ 
+ 	"github.com/jdbencardinop/tesseraworkspaces/internal/cli"
+ )
+@@ -9,6 +10,23 @@ import (
+ var version = "dev"
+ 
+ func main() {
+-	cli.SetVersion(version)
++	cli.SetVersion(resolveVersion(version, readBuildInfo))
+ 	os.Exit(cli.Execute())
+ }
++
++func resolveVersion(injected string, readInfo func() (*debug.BuildInfo, bool)) string {
++	if injected != "dev" {
++		return injected
++	}
++
++	info, ok := readInfo()
++	if ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
++		return info.Main.Version
++	}
++
++	return injected
++}
++
++func readBuildInfo() (*debug.BuildInfo, bool) {
++	return debug.ReadBuildInfo()
++}
+diff --git a/cmd/tws/main_test.go b/cmd/tws/main_test.go
+new file mode 100644
+index 0000000..320de16
+--- /dev/null
++++ b/cmd/tws/main_test.go
+@@ -0,0 +1,42 @@
++package main
++
++import (
++	"runtime/debug"
++	"testing"
++)
++
++func TestResolveVersionPrefersInjectedVersion(t *testing.T) {
++	got := resolveVersion("v1.2.3", func() (*debug.BuildInfo, bool) {
++		return &debug.BuildInfo{Main: debug.Module{Version: "v9.9.9"}}, true
++	})
++	if got != "v1.2.3" {
++		t.Fatalf("resolveVersion() = %q, want %q", got, "v1.2.3")
++	}
++}
++
++func TestResolveVersionUsesModuleVersion(t *testing.T) {
++	got := resolveVersion("dev", func() (*debug.BuildInfo, bool) {
++		return &debug.BuildInfo{Main: debug.Module{Version: "v0.3.0"}}, true
++	})
++	if got != "v0.3.0" {
++		t.Fatalf("resolveVersion() = %q, want %q", got, "v0.3.0")
++	}
++}
++
++func TestResolveVersionKeepsDevForDevelBuild(t *testing.T) {
++	got := resolveVersion("dev", func() (*debug.BuildInfo, bool) {
++		return &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}}, true
++	})
++	if got != "dev" {
++		t.Fatalf("resolveVersion() = %q, want %q", got, "dev")
++	}
++}
++
++func TestResolveVersionKeepsDevWithoutBuildInfo(t *testing.T) {
++	got := resolveVersion("dev", func() (*debug.BuildInfo, bool) {
++		return nil, false
++	})
++	if got != "dev" {
++		t.Fatalf("resolveVersion() = %q, want %q", got, "dev")
++	}
++}

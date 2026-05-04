@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "operations": [
+    {
+      "type": "write-file",
+      "path": "cmd/tws/main.go",
+      "content": "package main\n\nimport (\n\t\"os\"\n\t\"runtime/debug\"\n\n\t\"github.com/jdbencardinop/tesseraworkspaces/internal/cli\"\n)\n\nvar version = \"dev\"\n\nfunc main() {\n\tcli.SetVersion(resolveVersion(version, readBuildInfo))\n\tos.Exit(cli.Execute())\n}\n\nfunc resolveVersion(injected string, readInfo func() (*debug.BuildInfo, bool)) string {\n\tif injected != \"dev\" {\n\t\treturn injected\n\t}\n\n\tinfo, ok := readInfo()\n\tif ok && info.Main.Version != \"\" && info.Main.Version != \"(devel)\" {\n\t\treturn info.Main.Version\n\t}\n\n\treturn injected\n}\n\nfunc readBuildInfo() (*debug.BuildInfo, bool) {\n\treturn debug.ReadBuildInfo()\n}\n"
+    },
+    {
+      "type": "write-file",
+      "path": "cmd/tws/main_test.go",
+      "content": "package main\n\nimport (\n\t\"runtime/debug\"\n\t\"testing\"\n)\n\nfunc TestResolveVersionPrefersInjectedVersion(t *testing.T) {\n\tgot := resolveVersion(\"v1.2.3\", func() (*debug.BuildInfo, bool) {\n\t\treturn &debug.BuildInfo{Main: debug.Module{Version: \"v9.9.9\"}}, true\n\t})\n\tif got != \"v1.2.3\" {\n\t\tt.Fatalf(\"resolveVersion() = %q, want %q\", got, \"v1.2.3\")\n\t}\n}\n\nfunc TestResolveVersionUsesModuleVersion(t *testing.T) {\n\tgot := resolveVersion(\"dev\", func() (*debug.BuildInfo, bool) {\n\t\treturn &debug.BuildInfo{Main: debug.Module{Version: \"v0.3.0\"}}, true\n\t})\n\tif got != \"v0.3.0\" {\n\t\tt.Fatalf(\"resolveVersion() = %q, want %q\", got, \"v0.3.0\")\n\t}\n}\n\nfunc TestResolveVersionKeepsDevForDevelBuild(t *testing.T) {\n\tgot := resolveVersion(\"dev\", func() (*debug.BuildInfo, bool) {\n\t\treturn &debug.BuildInfo{Main: debug.Module{Version: \"(devel)\"}}, true\n\t})\n\tif got != \"dev\" {\n\t\tt.Fatalf(\"resolveVersion() = %q, want %q\", got, \"dev\")\n\t}\n}\n\nfunc TestResolveVersionKeepsDevWithoutBuildInfo(t *testing.T) {\n\tgot := resolveVersion(\"dev\", func() (*debug.BuildInfo, bool) {\n\t\treturn nil, false\n\t})\n\tif got != \"dev\" {\n\t\tt.Fatalf(\"resolveVersion() = %q, want %q\", got, \"dev\")\n\t}\n}\n"
+    },
+    {
+      "type": "replace-in-file",
+      "path": "Makefile",
+      "search": "lint:\n\tgofmt -l . | tee /dev/stderr | (! read)\n\tgo vet ./...\n",
+      "replace": "lint:\n\tunformatted=$$(gofmt -l .); \\\n\tif [ -n \"$$unformatted\" ]; then \\\n\t\techo \"$$unformatted\"; \\\n\t\texit 1; \\\n\tfi\n\tgo vet ./...\n"
+    },
+    {
+      "type": "replace-in-file",
+      "path": ".github/workflows/ci.yml",
+      "search": "      - name: Install and smoke test\n        run: |\n          go install ./cmd/tws\n          \"$(go env GOPATH)/bin/tws\" --version\n\n  release:\n",
+      "replace": "      - name: Install and smoke test\n        run: |\n          go install ./cmd/tws\n          \"$(go env GOPATH)/bin/tws\" --version\n\n      - name: Verify tag version\n        if: startsWith(github.ref, 'refs/tags/v')\n        run: |\n          make install\n          version_output=\"$(\"$(go env GOPATH)/bin/tws\" --version)\"\n          echo \"$version_output\"\n          if [ \"$version_output\" != \"tws version ${GITHUB_REF_NAME}\" ]; then\n            echo \"::error::Expected tws version ${GITHUB_REF_NAME}, got: $version_output\"\n            exit 1\n          fi\n\n  release:\n"
+    }
+  ]
+}
