@@ -1,0 +1,280 @@
+diff --git a/assets/skills/claude/tesseraworkspaces/SKILL.md b/assets/skills/claude/tesseraworkspaces/SKILL.md
+new file mode 100644
+index 0000000..2bf48d9
+--- /dev/null
++++ b/assets/skills/claude/tesseraworkspaces/SKILL.md
+@@ -0,0 +1,91 @@
++---
++name: tesseraworkspaces
++description: Manage feature-scoped workspaces with stacked git worktrees for parallel agent workflows.
++---
++
++# tesseraworkspaces (tws) — Claude Code Skill
++
++## What This Is
++
++tesseraworkspaces is a CLI tool for creating feature-scoped workspaces with multiple git worktrees. It lets you work on parallel branches or stacked diffs within a single feature, each with its own coding agent.
++
++## CLI Reference
++
++`tws` is a compiled Go binary on PATH. Invoke it directly:
++
++```sh
++tws <command> [args]
++```
++
++### Commands
++
++| Command | Description |
++|---------|-------------|
++| `tws add <feature>` | Create a feature workspace |
++| `tws new <feature> <branch> [--base <parent>] [--force]` | Create a worktree branch |
++| `tws open <feature> <branch> [--tmux]` | Open worktree and run agent |
++| `tws sync <feature>` | Rebase worktrees in dependency order |
++| `tws stack <feature>` | Show branch dependency tree |
++| `tws list` / `tws ls` | List features and branches |
++| `tws delete <feature>` | Remove feature and all worktrees |
++| `tws archive <feature> <branch>` | Remove worktree, keep branch ref |
++| `tws init [--agent claude\|copilot]` | Install agent skills |
++| `tws --version` | Print version |
++
++### Stacked Branches
++
++When creating branches, use `--base` to declare dependencies:
++
++```sh
++tws new auth auth-models                          # base: main (default)
++tws new auth auth-middleware --base auth-models    # stacks on auth-models
++tws new auth auth-routes --base auth-middleware    # stacks on auth-middleware
++```
++
++This creates a `stack.yaml` in the feature directory:
++
++```yaml
++branches:
++  - name: auth-models
++    base: main
++  - name: auth-middleware
++    base: auth-models
++  - name: auth-routes
++    base: auth-middleware
++```
++
++`tws sync` rebases in topological order (parents first). If a rebase fails, dependent branches are skipped.
++
++### Workspace Layout
++
++```
++<workspace-root>/                    # e.g., ../myapp.tws/
++  .tws-workspace                     # workspace marker
++  <feature>/
++    FEATURE.md
++    CLAUDE.local.md                  # shared context across worktrees
++    stack.yaml                       # branch dependency graph
++    worktrees/
++      <branch>/                      # full git worktree checkout
++```
++
++### Configuration
++
++Global config at `~/.config/tws/config.yaml`:
++
++```yaml
++workspaces:
++  /path/to/repo: /custom/workspace/path
++agent_command: claude                # default agent for tws open
++use_tmux: false                      # wrap tws open in tmux
++```
++
++Environment variable `TWS_ROOT` overrides all config.
++
++## When to Use
++
++- When the user wants to work on multiple branches in parallel within a feature
++- When setting up stacked diffs/PRs
++- When managing worktrees for agent workflows
++- Run `tws list` to see current features and branches before suggesting actions
++- Run `tws stack <feature>` to understand branch dependencies before syncing
+diff --git a/assets/skills/copilot/tws.prompt.md b/assets/skills/copilot/tws.prompt.md
+new file mode 100644
+index 0000000..b9833cb
+--- /dev/null
++++ b/assets/skills/copilot/tws.prompt.md
+@@ -0,0 +1,63 @@
++---
++mode: agent
++description: Manage feature workspaces and stacked worktrees with tws
++tools: terminal, editFiles, readFile
++---
++
++# tesseraworkspaces (tws)
++
++You are working in a project that uses `tws` for feature-scoped workspaces with stacked git worktrees.
++
++## CLI Reference
++
++`tws` is a compiled Go binary on PATH. Invoke it directly:
++
++- `tws add <feature>` — Create a feature workspace
++- `tws new <feature> <branch> [--base <parent>] [--force]` — Create a worktree branch
++- `tws open <feature> <branch> [--tmux]` — Open worktree and run agent
++- `tws sync <feature>` — Rebase worktrees in dependency order
++- `tws stack <feature>` — Show branch dependency tree
++- `tws list` — List features and branches
++- `tws delete <feature>` — Remove feature and all worktrees
++- `tws archive <feature> <branch>` — Remove worktree, keep branch ref
++
++## Stacked Branches
++
++Use `--base` to declare dependencies between branches:
++
++```sh
++tws new auth auth-models                          # base: main
++tws new auth auth-middleware --base auth-models    # stacks on auth-models
++```
++
++`tws sync` rebases in topological order. If a parent fails, children are skipped.
++
++## Workspace Layout
++
++```
++<workspace-root>/
++  <feature>/
++    FEATURE.md
++    stack.yaml          # branch dependency graph
++    worktrees/<branch>/ # git worktree checkouts
++```
++
++## Configuration
++
++Config: `~/.config/tws/config.yaml`
++
++```yaml
++workspaces:
++  /path/to/repo: /custom/workspace/path
++agent_command: claude
++use_tmux: false
++```
++
++Override with `TWS_ROOT` env var.
++
++## Workflow
++
++1. Run `tws list` to see current state
++2. Run `tws stack <feature>` to understand dependencies
++3. Use `tws sync <feature>` to keep branches up to date
++4. Use `tws archive` to free disk space, `tws new` to restore
+diff --git a/assets/skills/embed.go b/assets/skills/embed.go
+new file mode 100644
+index 0000000..5670bed
+--- /dev/null
++++ b/assets/skills/embed.go
+@@ -0,0 +1,9 @@
++package skills
++
++import _ "embed"
++
++//go:embed claude/tesseraworkspaces/SKILL.md
++var ClaudeSkill []byte
++
++//go:embed copilot/tws.prompt.md
++var CopilotSkill []byte
+diff --git a/cmd/tws/main.go b/cmd/tws/main.go
+index 52d3571..a26202b 100644
+--- a/cmd/tws/main.go
++++ b/cmd/tws/main.go
+@@ -36,6 +36,8 @@ func main() {
+ 		cli.List(os.Args[2:])
+ 	case "archive":
+ 		cli.Archive(os.Args[2:])
++	case "init":
++		cli.Init(os.Args[2:])
+ 	default:
+ 		fmt.Printf("Unknown command: %s\n", os.Args[1])
+ 		printHelp()
+@@ -56,6 +58,7 @@ func printHelp() {
+ 	fmt.Println("  delete <feature>                     Remove feature and worktrees")
+ 	fmt.Println("  list, ls                             List features and branches")
+ 	fmt.Println("  archive <feature> <branch>           Remove worktree, keep branch")
++	fmt.Println("  init [--agent claude|copilot]         Install agent skills")
+ 	fmt.Println()
+ 	fmt.Println("Flags:")
+ 	fmt.Println("  --version, -v  Print version")
+diff --git a/internal/cli/init.go b/internal/cli/init.go
+new file mode 100644
+index 0000000..2e00478
+--- /dev/null
++++ b/internal/cli/init.go
+@@ -0,0 +1,72 @@
++package cli
++
++import (
++	"fmt"
++	"os"
++	"path/filepath"
++
++	skills "github.com/jdbencardinop/tesseraworkspaces/assets/skills"
++)
++
++func Init(args []string) {
++	agent := ""
++	force := false
++
++	for i := 0; i < len(args); i++ {
++		switch args[i] {
++		case "--agent":
++			if i+1 < len(args) {
++				agent = args[i+1]
++				i++
++			}
++		case "--force":
++			force = true
++		}
++	}
++
++	installed := 0
++
++	if agent == "" || agent == "claude" {
++		if installFile(".claude/skills/tesseraworkspaces/SKILL.md", skills.ClaudeSkill, force) {
++			installed++
++		}
++	}
++
++	if agent == "" || agent == "copilot" {
++		if installFile(".github/prompts/tws.prompt.md", skills.CopilotSkill, force) {
++			installed++
++		}
++	}
++
++	if agent != "" && agent != "claude" && agent != "copilot" {
++		fmt.Printf("Unknown agent: %s (supported: claude, copilot)\n", agent)
++		os.Exit(1)
++	}
++
++	if installed == 0 {
++		fmt.Println("No files installed (already exist, use --force to overwrite)")
++	} else {
++		fmt.Printf("Installed %d skill file(s)\n", installed)
++	}
++}
++
++func installFile(relPath string, content []byte, force bool) bool {
++	if _, err := os.Stat(relPath); err == nil && !force {
++		fmt.Printf("  skip: %s (exists, use --force)\n", relPath)
++		return false
++	}
++
++	dir := filepath.Dir(relPath)
++	if err := os.MkdirAll(dir, 0755); err != nil {
++		fmt.Printf("  error: could not create %s: %v\n", dir, err)
++		return false
++	}
++
++	if err := os.WriteFile(relPath, content, 0644); err != nil {
++		fmt.Printf("  error: could not write %s: %v\n", relPath, err)
++		return false
++	}
++
++	fmt.Printf("  installed: %s\n", relPath)
++	return true
++}

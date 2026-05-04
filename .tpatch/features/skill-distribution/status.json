@@ -1,0 +1,16 @@
+{
+  "id": "skill-distribution",
+  "slug": "skill-distribution",
+  "title": "Add a tws init command that installs agent skills teaching coding agents how to use tws. Supports Claude Code (.claude/skills/) and GitHub Copilot (.github/prompts/ and copilot-instructions.md). Skills are embedded in the Go binary via go:embed. Project-local install by default.",
+  "state": "applied",
+  "compatibility": "unknown",
+  "requested_at": "2026-05-04T06:05:45Z",
+  "updated_at": "2026-05-04T06:11:55Z",
+  "last_command": "record",
+  "notes": "Patch recorded",
+  "apply": {
+    "base_commit": "d701311d14306ba5a906622950abe44217259c21",
+    "has_patch": true
+  },
+  "reconcile": {}
+}
