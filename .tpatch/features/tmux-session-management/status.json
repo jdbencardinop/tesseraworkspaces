@@ -1,0 +1,12 @@
+{
+  "id": "tmux-session-management",
+  "slug": "tmux-session-management",
+  "title": "Add tws close command to kill tmux sessions for a worktree. Detect if a worktree has an associated tmux session (via session naming convention). Prevent conflicts between tmux mode and direct mode when a stale tmux session exists. Show tmux session status in tws list.",
+  "state": "requested",
+  "compatibility": "unknown",
+  "requested_at": "2026-05-05T06:49:11Z",
+  "updated_at": "2026-05-05T06:49:11Z",
+  "last_command": "add",
+  "apply": {},
+  "reconcile": {}
+}

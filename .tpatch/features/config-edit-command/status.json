@@ -1,0 +1,12 @@
+{
+  "id": "config-edit-command",
+  "slug": "config-edit-command",
+  "title": "Add tws config command to edit configuration from the CLI. Subcommands like tws config set agent_command opencode, tws config set use_tmux true, tws config show. Should support --repo flag to edit per-repo config vs global. Avoids users needing to remember YAML syntax.",
+  "state": "requested",
+  "compatibility": "unknown",
+  "requested_at": "2026-05-05T06:49:18Z",
+  "updated_at": "2026-05-05T06:49:18Z",
+  "last_command": "add",
+  "apply": {},
+  "reconcile": {}
+}

@@ -1,0 +1,12 @@
+{
+  "id": "fix-auto-select-behavior",
+  "slug": "fix-auto-select-behavior",
+  "title": "When tws open auto-selects a single feature and single branch, it should still print what was selected so the user knows what happened. Verify it's actually opening the worktree and not the current dir. Add a confirmation or at least a clear message before launching the agent.",
+  "state": "requested",
+  "compatibility": "unknown",
+  "requested_at": "2026-05-05T06:49:17Z",
+  "updated_at": "2026-05-05T06:49:17Z",
+  "last_command": "add",
+  "apply": {},
+  "reconcile": {}
+}
