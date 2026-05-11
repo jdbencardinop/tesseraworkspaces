@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
 	"github.com/spf13/cobra"
@@ -128,23 +127,37 @@ func openDirect(path string) {
 	}
 
 	parts := strings.Fields(agentCmd)
-	binary, err := exec.LookPath(parts[0])
-	if err != nil {
+	if _, err := exec.LookPath(parts[0]); err != nil {
 		fmt.Printf("Error: agent %q not found in PATH\n", parts[0])
 		os.Exit(1)
 	}
 
 	fmt.Printf("Opening: %s\nRunning: %s\n", path, agentCmd)
 
-	if err := os.Chdir(path); err != nil {
-		fmt.Printf("Error: could not cd to %s: %v\n", path, err)
-		os.Exit(1)
+	// Run agent as subprocess in the worktree directory
+	agent := exec.Command(parts[0], parts[1:]...)
+	agent.Dir = path
+	agent.Stdin = os.Stdin
+	agent.Stdout = os.Stdout
+	agent.Stderr = os.Stderr
+
+	if err := agent.Run(); err != nil {
+		fmt.Printf("Agent exited: %v\n", err)
 	}
 
-	if err := syscall.Exec(binary, parts, os.Environ()); err != nil {
-		fmt.Printf("Error: could not exec %s: %v\n", agentCmd, err)
-		os.Exit(1)
+	// Spawn an interactive shell in the worktree dir so the user stays there
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/sh"
 	}
+
+	fmt.Printf("Dropped into shell at: %s\n", path)
+	sh := exec.Command(shell)
+	sh.Dir = path
+	sh.Stdin = os.Stdin
+	sh.Stdout = os.Stdout
+	sh.Stderr = os.Stderr
+	_ = sh.Run()
 }
 
 func openWithTmux(feature, branch, path string) {

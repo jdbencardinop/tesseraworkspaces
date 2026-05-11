@@ -15,6 +15,7 @@ func pick(prompt string, options []string) (string, error) {
 		return "", fmt.Errorf("no options available")
 	}
 	if len(options) == 1 {
+		fmt.Printf("%s %s (auto-selected)\n", prompt, options[0])
 		return options[0], nil
 	}
 
