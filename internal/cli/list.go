@@ -61,11 +61,18 @@ func listCmd() *cobra.Command {
 							}
 						}
 
+						// Check for tmux session
+						tmuxTag := ""
+						session := sanitizeSessionName(feature + "/" + entry.Name)
+						if sessionExists(session) {
+							tmuxTag = " [tmux]"
+						}
+
 						connector := "├──"
 						if i == len(stack.Branches)-1 {
 							connector = "└──"
 						}
-						fmt.Printf("  %s %s (base: %s) [%s]\n", connector, entry.Name, entry.Base, status)
+						fmt.Printf("  %s %s (base: %s) [%s]%s\n", connector, entry.Name, entry.Base, status, tmuxTag)
 					}
 				} else {
 					wtDir := filepath.Join(featurePath, "worktrees")

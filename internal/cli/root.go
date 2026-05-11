@@ -30,6 +30,8 @@ func Execute() int {
 		listCmd(),
 		archiveCmd(),
 		initCmd(),
+		configCmd(),
+		closeCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {

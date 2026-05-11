@@ -66,6 +66,12 @@ func openCmd() *cobra.Command {
 			if tmux {
 				openWithTmux(feature, branch, path)
 			} else {
+				// Warn if there's a stale tmux session
+				session := sanitizeSessionName(feature + "/" + branch)
+				if sessionExists(session) {
+					fmt.Printf("Warning: tmux session %q exists for this worktree.\n", session)
+					fmt.Printf("  Run 'tws close %s %s' to kill it, or use --tmux to attach.\n", feature, branch)
+				}
 				openDirect(path)
 			}
 		},

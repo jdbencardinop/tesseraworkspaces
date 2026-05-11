@@ -72,3 +72,26 @@ func LoadConfig() Config {
 
 	return cfg
 }
+
+// SaveConfigFile writes a config to the given path.
+func SaveConfigFile(path string, cfg Config) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	data, err := yaml.Marshal(&cfg)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
+// RepoConfigPath exports the per-repo config path for the config command.
+func RepoConfigPath() string {
+	return repoConfigPath()
+}
+
+// LoadConfigFile loads a single config file (exported for the config command).
+func LoadConfigFile(path string) Config {
+	return loadConfigFile(path)
+}
