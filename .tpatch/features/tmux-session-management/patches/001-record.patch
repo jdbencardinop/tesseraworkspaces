@@ -1,0 +1,297 @@
+diff --git a/internal/cli/close.go b/internal/cli/close.go
+new file mode 100644
+index 0000000..4959541
+--- /dev/null
++++ b/internal/cli/close.go
+@@ -0,0 +1,51 @@
++package cli
++
++import (
++	"fmt"
++	"os"
++
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
++	"github.com/spf13/cobra"
++)
++
++func closeCmd() *cobra.Command {
++	return &cobra.Command{
++		Use:   "close <feature> <branch>",
++		Short: "Kill tmux session for a worktree",
++		Args:  cobra.ExactArgs(2),
++		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
++			switch len(args) {
++			case 0:
++				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
++			case 1:
++				return internal.ListBranches(args[0]), cobra.ShellCompDirectiveNoFileComp
++			default:
++				return nil, cobra.ShellCompDirectiveNoFileComp
++			}
++		},
++		Run: func(cmd *cobra.Command, args []string) {
++			feature := args[0]
++			branch := args[1]
++
++			session := sanitizeSessionName(feature + "/" + branch)
++
++			if !sessionExists(session) {
++				fmt.Printf("No tmux session found for %s/%s\n", feature, branch)
++				os.Exit(1)
++			}
++
++			err := internal.Run("tmux", "kill-session", "-t", session)
++			if err != nil {
++				fmt.Printf("Error killing session: %v\n", err)
++				os.Exit(1)
++			}
++
++			fmt.Printf("Closed tmux session: %s\n", session)
++		},
++	}
++}
++
++// TmuxSessionName returns the tmux session name for a feature/branch pair.
++func TmuxSessionName(feature, branch string) string {
++	return sanitizeSessionName(feature + "/" + branch)
++}
+diff --git a/internal/cli/config.go b/internal/cli/config.go
+new file mode 100644
+index 0000000..77c587c
+--- /dev/null
++++ b/internal/cli/config.go
+@@ -0,0 +1,149 @@
++package cli
++
++import (
++	"fmt"
++	"os"
++	"strconv"
++
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
++	"github.com/spf13/cobra"
++)
++
++func configCmd() *cobra.Command {
++	cmd := &cobra.Command{
++		Use:   "config",
++		Short: "Manage configuration",
++	}
++
++	cmd.AddCommand(configShowCmd())
++	cmd.AddCommand(configSetCmd())
++	cmd.AddCommand(configGetCmd())
++
++	return cmd
++}
++
++func configShowCmd() *cobra.Command {
++	return &cobra.Command{
++		Use:   "show",
++		Short: "Show resolved configuration",
++		Args:  cobra.NoArgs,
++		Run: func(cmd *cobra.Command, args []string) {
++			cfg := internal.LoadConfig()
++
++			fmt.Println("# Resolved configuration (global + per-repo)")
++			fmt.Printf("agent_command: %s\n", cfg.GetAgentCommand())
++			if cfg.UseTmux != nil {
++				fmt.Printf("use_tmux: %v\n", *cfg.UseTmux)
++			} else {
++				fmt.Println("use_tmux: false (default)")
++			}
++			if len(cfg.Workspaces) > 0 {
++				fmt.Println("workspaces:")
++				for k, v := range cfg.Workspaces {
++					fmt.Printf("  %s: %s\n", k, v)
++				}
++			}
++			fmt.Println()
++			fmt.Println("# Paths")
++			fmt.Printf("global: %s\n", internal.ConfigPath())
++			repoPath := internal.RepoConfigPath()
++			if repoPath != "" {
++				fmt.Printf("repo:   %s\n", repoPath)
++			}
++		},
++	}
++}
++
++func configSetCmd() *cobra.Command {
++	var repo bool
++
++	cmd := &cobra.Command{
++		Use:   "set <key> <value>",
++		Short: "Set a config value (keys: agent_command, use_tmux)",
++		Args:  cobra.ExactArgs(2),
++		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
++			if len(args) == 0 {
++				return []string{"agent_command", "use_tmux"}, cobra.ShellCompDirectiveNoFileComp
++			}
++			if len(args) == 1 && args[0] == "agent_command" {
++				return []string{"claude", "opencode", "aider", "copilot"}, cobra.ShellCompDirectiveNoFileComp
++			}
++			if len(args) == 1 && args[0] == "use_tmux" {
++				return []string{"true", "false"}, cobra.ShellCompDirectiveNoFileComp
++			}
++			return nil, cobra.ShellCompDirectiveNoFileComp
++		},
++		Run: func(cmd *cobra.Command, args []string) {
++			key, value := args[0], args[1]
++
++			path := internal.ConfigPath()
++			if repo {
++				path = internal.RepoConfigPath()
++				if path == "" {
++					fmt.Println("Error: not inside a git repository")
++					os.Exit(1)
++				}
++			}
++
++			cfg := internal.LoadConfigFile(path)
++
++			switch key {
++			case "agent_command":
++				cfg.AgentCommand = value
++			case "use_tmux":
++				b, err := strconv.ParseBool(value)
++				if err != nil {
++					fmt.Printf("Error: use_tmux must be true or false, got %q\n", value)
++					os.Exit(1)
++				}
++				cfg.UseTmux = &b
++			default:
++				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux)\n", key)
++				os.Exit(1)
++			}
++
++			if err := internal.SaveConfigFile(path, cfg); err != nil {
++				fmt.Printf("Error saving config: %v\n", err)
++				os.Exit(1)
++			}
++
++			scope := "global"
++			if repo {
++				scope = "repo"
++			}
++			fmt.Printf("Set %s = %s (%s: %s)\n", key, value, scope, path)
++		},
++	}
++
++	cmd.Flags().BoolVar(&repo, "repo", false, "Edit per-repo config instead of global")
++
++	return cmd
++}
++
++func configGetCmd() *cobra.Command {
++	return &cobra.Command{
++		Use:   "get <key>",
++		Short: "Get a resolved config value",
++		Args:  cobra.ExactArgs(1),
++		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
++			return []string{"agent_command", "use_tmux"}, cobra.ShellCompDirectiveNoFileComp
++		},
++		Run: func(cmd *cobra.Command, args []string) {
++			cfg := internal.LoadConfig()
++
++			switch args[0] {
++			case "agent_command":
++				fmt.Println(cfg.GetAgentCommand())
++			case "use_tmux":
++				if cfg.UseTmux != nil {
++					fmt.Println(*cfg.UseTmux)
++				} else {
++					fmt.Println("false")
++				}
++			default:
++				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux)\n", args[0])
++				os.Exit(1)
++			}
++		},
++	}
++}
+diff --git a/internal/cli/list.go b/internal/cli/list.go
+index 94f1e79..f1a3850 100644
+--- a/internal/cli/list.go
++++ b/internal/cli/list.go
+@@ -61,11 +61,18 @@ func listCmd() *cobra.Command {
+ 							}
+ 						}
+ 
++						// Check for tmux session
++						tmuxTag := ""
++						session := sanitizeSessionName(feature + "/" + entry.Name)
++						if sessionExists(session) {
++							tmuxTag = " [tmux]"
++						}
++
+ 						connector := "├──"
+ 						if i == len(stack.Branches)-1 {
+ 							connector = "└──"
+ 						}
+-						fmt.Printf("  %s %s (base: %s) [%s]\n", connector, entry.Name, entry.Base, status)
++						fmt.Printf("  %s %s (base: %s) [%s]%s\n", connector, entry.Name, entry.Base, status, tmuxTag)
+ 					}
+ 				} else {
+ 					wtDir := filepath.Join(featurePath, "worktrees")
+diff --git a/internal/cli/open.go b/internal/cli/open.go
+index 91ba7bc..c62ba33 100644
+--- a/internal/cli/open.go
++++ b/internal/cli/open.go
+@@ -66,6 +66,12 @@ func openCmd() *cobra.Command {
+ 			if tmux {
+ 				openWithTmux(feature, branch, path)
+ 			} else {
++				// Warn if there's a stale tmux session
++				session := sanitizeSessionName(feature + "/" + branch)
++				if sessionExists(session) {
++					fmt.Printf("Warning: tmux session %q exists for this worktree.\n", session)
++					fmt.Printf("  Run 'tws close %s %s' to kill it, or use --tmux to attach.\n", feature, branch)
++				}
+ 				openDirect(path)
+ 			}
+ 		},
+diff --git a/internal/cli/root.go b/internal/cli/root.go
+index 66446fc..e6dea1f 100644
+--- a/internal/cli/root.go
++++ b/internal/cli/root.go
+@@ -30,6 +30,8 @@ func Execute() int {
+ 		listCmd(),
+ 		archiveCmd(),
+ 		initCmd(),
++		configCmd(),
++		closeCmd(),
+ 	)
+ 
+ 	if err := rootCmd.Execute(); err != nil {
+diff --git a/internal/config.go b/internal/config.go
+index f01ad66..e2c5fe2 100644
+--- a/internal/config.go
++++ b/internal/config.go
+@@ -72,3 +72,26 @@ func LoadConfig() Config {
+ 
+ 	return cfg
+ }
++
++// SaveConfigFile writes a config to the given path.
++func SaveConfigFile(path string, cfg Config) error {
++	dir := filepath.Dir(path)
++	if err := os.MkdirAll(dir, 0755); err != nil {
++		return err
++	}
++	data, err := yaml.Marshal(&cfg)
++	if err != nil {
++		return err
++	}
++	return os.WriteFile(path, data, 0644)
++}
++
++// RepoConfigPath exports the per-repo config path for the config command.
++func RepoConfigPath() string {
++	return repoConfigPath()
++}
++
++// LoadConfigFile loads a single config file (exported for the config command).
++func LoadConfigFile(path string) Config {
++	return loadConfigFile(path)
++}

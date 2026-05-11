@@ -1,0 +1,4 @@
+ .tpatch/FEATURES.md                                  |  4 ++--
+ .tpatch/features/config-edit-command/status.json     | 12 ++++++++----
+ .tpatch/features/tmux-session-management/status.json |  7 ++++---
+ 3 files changed, 14 insertions(+), 9 deletions(-)
