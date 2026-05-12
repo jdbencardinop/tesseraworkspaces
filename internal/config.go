@@ -95,3 +95,26 @@ func RepoConfigPath() string {
 func LoadConfigFile(path string) Config {
 	return loadConfigFile(path)
 }
+
+// TemplatePath returns the template directory path.
+// Per-repo (.tws/templates/) takes priority over global (~/.config/tws/templates/).
+// Returns empty string if neither exists.
+func TemplatePath() string {
+	// Per-repo first
+	repoPath := repoConfigPath()
+	if repoPath != "" {
+		repoTemplates := filepath.Join(filepath.Dir(repoPath), "templates")
+		if info, err := os.Stat(repoTemplates); err == nil && info.IsDir() {
+			return repoTemplates
+		}
+	}
+
+	// Global
+	home, _ := os.UserHomeDir()
+	globalTemplates := filepath.Join(home, ".config", "tws", "templates")
+	if info, err := os.Stat(globalTemplates); err == nil && info.IsDir() {
+		return globalTemplates
+	}
+
+	return ""
+}

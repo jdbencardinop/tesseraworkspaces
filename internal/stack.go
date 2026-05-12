@@ -28,6 +28,21 @@ func HasBranch(s Stack, name string) bool {
 	return false
 }
 
+// RenameBranch renames a branch in the stack, updating both Name and Base references.
+func RenameBranch(s *Stack, oldName, newName string) bool {
+	found := false
+	for i := range s.Branches {
+		if s.Branches[i].Name == oldName {
+			s.Branches[i].Name = newName
+			found = true
+		}
+		if s.Branches[i].Base == oldName {
+			s.Branches[i].Base = newName
+		}
+	}
+	return found
+}
+
 func StackPath(featurePath string) string {
 	return filepath.Join(featurePath, "stack.yaml")
 }
