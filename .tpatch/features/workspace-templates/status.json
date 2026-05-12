@@ -2,12 +2,16 @@
   "id": "workspace-templates",
   "slug": "workspace-templates",
   "title": "Add configurable templates for new features. When tws add creates a feature, use a template directory (~/.config/tws/templates/ or .tws/templates/) to populate the inject/ folder with default files like CLAUDE.local.md, skills, etc. Users can customize what every new feature gets out of the box.",
-  "state": "requested",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-05-12T03:04:11Z",
-  "updated_at": "2026-05-12T03:04:11Z",
-  "last_command": "add",
-  "apply": {},
+  "updated_at": "2026-05-12T04:20:13Z",
+  "last_command": "record",
+  "notes": "Patch recorded",
+  "apply": {
+    "base_commit": "2d6235b4f7c24217b5a5a811406c2f6a910092c6",
+    "has_patch": true
+  },
   "reconcile": {},
   "depends_on": [
     {

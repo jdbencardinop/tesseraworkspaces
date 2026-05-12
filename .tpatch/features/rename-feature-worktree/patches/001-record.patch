@@ -1,0 +1,292 @@
+diff --git a/internal/cli/add.go b/internal/cli/add.go
+index 52d3edd..e090d19 100644
+--- a/internal/cli/add.go
++++ b/internal/cli/add.go
+@@ -2,6 +2,7 @@ package cli
+ 
+ import (
+ 	"fmt"
++	"io"
+ 	"os"
+ 	"path/filepath"
+ 
+@@ -23,9 +24,22 @@ func addCmd() *cobra.Command {
+ 			internal.Must(os.MkdirAll(filepath.Join(root, "worktrees"), 0755))
+ 			internal.Must(os.WriteFile(filepath.Join(root, "FEATURE.md"), []byte("# "+feature+"\n"), 0644))
+ 
+-			// Create inject/ dir with default CLAUDE.local.md
++			// Create inject/ dir
+ 			injectDir := internal.InjectPath(root)
+ 			internal.Must(os.MkdirAll(injectDir, 0755))
++
++			// Copy template into inject/ if available
++			templateDir := internal.TemplatePath()
++			if templateDir != "" {
++				count, err := copyDir(templateDir, injectDir)
++				if err != nil {
++					fmt.Printf("Warning: template copy failed: %v\n", err)
++				} else if count > 0 {
++					fmt.Printf("Copied %d file(s) from template\n", count)
++				}
++			}
++
++			// Add default CLAUDE.local.md if not provided by template
+ 			claudeLocal := filepath.Join(injectDir, "CLAUDE.local.md")
+ 			if _, err := os.Stat(claudeLocal); os.IsNotExist(err) {
+ 				internal.Must(os.WriteFile(claudeLocal, []byte("# "+feature+" - shared context\n\nThis file is symlinked into every worktree for this feature.\nEdit it in the workspace inject/ directory.\n"), 0644))
+@@ -35,3 +49,53 @@ func addCmd() *cobra.Command {
+ 		},
+ 	}
+ }
++
++// copyDir copies all files from src to dst, preserving directory structure.
++// Does not overwrite existing files. Returns the count of files copied.
++func copyDir(src, dst string) (int, error) {
++	count := 0
++	err := filepath.Walk(src, func(srcPath string, info os.FileInfo, err error) error {
++		if err != nil {
++			return err
++		}
++
++		relPath, err := filepath.Rel(src, srcPath)
++		if err != nil {
++			return err
++		}
++		if relPath == "." {
++			return nil
++		}
++
++		dstPath := filepath.Join(dst, relPath)
++
++		if info.IsDir() {
++			return os.MkdirAll(dstPath, 0755)
++		}
++
++		// Skip if exists
++		if _, err := os.Stat(dstPath); err == nil {
++			return nil
++		}
++
++		// Copy file
++		in, err := os.Open(srcPath)
++		if err != nil {
++			return err
++		}
++		defer in.Close() //nolint:errcheck
++
++		out, err := os.Create(dstPath)
++		if err != nil {
++			return err
++		}
++		defer out.Close() //nolint:errcheck
++
++		if _, err := io.Copy(out, in); err != nil {
++			return err
++		}
++		count++
++		return nil
++	})
++	return count, err
++}
+diff --git a/internal/cli/rename.go b/internal/cli/rename.go
+new file mode 100644
+index 0000000..fa63885
+--- /dev/null
++++ b/internal/cli/rename.go
+@@ -0,0 +1,127 @@
++package cli
++
++import (
++	"fmt"
++	"os"
++
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
++	"github.com/spf13/cobra"
++)
++
++func renameCmd() *cobra.Command {
++	cmd := &cobra.Command{
++		Use:   "rename",
++		Short: "Rename a feature or branch",
++	}
++
++	cmd.AddCommand(renameFeatureCmd())
++	cmd.AddCommand(renameBranchCmd())
++
++	return cmd
++}
++
++func renameFeatureCmd() *cobra.Command {
++	return &cobra.Command{
++		Use:   "feature <old-name> <new-name>",
++		Short: "Rename a feature",
++		Args:  cobra.ExactArgs(2),
++		Run: func(cmd *cobra.Command, args []string) {
++			oldName := args[0]
++			newName := args[1]
++
++			oldPath := internal.FeaturePath(oldName)
++			newPath := internal.FeaturePath(newName)
++
++			if _, err := os.Stat(oldPath); os.IsNotExist(err) {
++				fmt.Printf("Feature not found: %s\n", oldName)
++				os.Exit(1)
++			}
++
++			if _, err := os.Stat(newPath); err == nil {
++				fmt.Printf("Feature already exists: %s\n", newName)
++				os.Exit(1)
++			}
++
++			if err := os.Rename(oldPath, newPath); err != nil {
++				fmt.Printf("Error renaming: %v\n", err)
++				os.Exit(1)
++			}
++
++			fmt.Printf("Renamed feature: %s → %s\n", oldName, newName)
++		},
++	}
++}
++
++func renameBranchCmd() *cobra.Command {
++	return &cobra.Command{
++		Use:   "branch <feature> <old-name> <new-name>",
++		Short: "Rename a branch within a feature",
++		Args:  cobra.ExactArgs(3),
++		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
++			switch len(args) {
++			case 0:
++				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
++			case 1:
++				return internal.ListBranches(args[0]), cobra.ShellCompDirectiveNoFileComp
++			default:
++				return nil, cobra.ShellCompDirectiveNoFileComp
++			}
++		},
++		Run: func(cmd *cobra.Command, args []string) {
++			internal.RequireTool("git")
++
++			feature := args[0]
++			oldName := args[1]
++			newName := args[2]
++
++			featurePath := internal.FeaturePath(feature)
++
++			// Update stack.yaml
++			stack, err := internal.LoadStack(featurePath)
++			if err != nil {
++				fmt.Printf("No stack.yaml found for feature: %s\n", feature)
++				os.Exit(1)
++			}
++
++			if !internal.RenameBranch(&stack, oldName, newName) {
++				fmt.Printf("Branch %q not found in stack\n", oldName)
++				os.Exit(1)
++			}
++
++			internal.Must(internal.SaveStack(featurePath, stack))
++
++			// Rename worktree directory if active
++			oldPath := internal.WorktreePath(feature, oldName)
++			newPath := internal.WorktreePath(feature, newName)
++
++			if _, err := os.Stat(oldPath); err == nil {
++				// Remove worktree, rename git branch, re-add
++				internal.Must(internal.Run("git", "worktree", "remove", "--force", oldPath))
++				internal.Must(internal.Run("git", "branch", "-m", oldName, newName))
++				internal.Must(internal.Run("git", "worktree", "add", newPath, newName))
++			} else {
++				// Archived — just rename the git branch
++				internal.Must(internal.Run("git", "branch", "-m", oldName, newName))
++			}
++
++			// Kill stale tmux session
++			oldSession := sanitizeSessionName(feature + "/" + oldName)
++			if sessionExists(oldSession) {
++				_ = internal.RunSilent("tmux", "kill-session", "-t", oldSession)
++			}
++
++			// Update decisions.yaml branch references
++			decisions, err := internal.LoadDecisions(featurePath)
++			if err == nil {
++				for i := range decisions.Entries {
++					if decisions.Entries[i].Branch == oldName {
++						decisions.Entries[i].Branch = newName
++					}
++				}
++				_ = internal.SaveDecisions(featurePath, decisions)
++			}
++
++			fmt.Printf("Renamed branch: %s → %s (in feature %s)\n", oldName, newName, feature)
++		},
++	}
++}
+diff --git a/internal/cli/root.go b/internal/cli/root.go
+index c16f47b..f86cfe9 100644
+--- a/internal/cli/root.go
++++ b/internal/cli/root.go
+@@ -36,6 +36,7 @@ func Execute() int {
+ 		decisionsCmd(),
+ 		injectCmd(),
+ 		doctorCmd(),
++		renameCmd(),
+ 	)
+ 
+ 	if err := rootCmd.Execute(); err != nil {
+diff --git a/internal/config.go b/internal/config.go
+index e2c5fe2..06d7796 100644
+--- a/internal/config.go
++++ b/internal/config.go
+@@ -95,3 +95,26 @@ func RepoConfigPath() string {
+ func LoadConfigFile(path string) Config {
+ 	return loadConfigFile(path)
+ }
++
++// TemplatePath returns the template directory path.
++// Per-repo (.tws/templates/) takes priority over global (~/.config/tws/templates/).
++// Returns empty string if neither exists.
++func TemplatePath() string {
++	// Per-repo first
++	repoPath := repoConfigPath()
++	if repoPath != "" {
++		repoTemplates := filepath.Join(filepath.Dir(repoPath), "templates")
++		if info, err := os.Stat(repoTemplates); err == nil && info.IsDir() {
++			return repoTemplates
++		}
++	}
++
++	// Global
++	home, _ := os.UserHomeDir()
++	globalTemplates := filepath.Join(home, ".config", "tws", "templates")
++	if info, err := os.Stat(globalTemplates); err == nil && info.IsDir() {
++		return globalTemplates
++	}
++
++	return ""
++}
+diff --git a/internal/stack.go b/internal/stack.go
+index 0ab05ce..679c5cf 100644
+--- a/internal/stack.go
++++ b/internal/stack.go
+@@ -28,6 +28,21 @@ func HasBranch(s Stack, name string) bool {
+ 	return false
+ }
+ 
++// RenameBranch renames a branch in the stack, updating both Name and Base references.
++func RenameBranch(s *Stack, oldName, newName string) bool {
++	found := false
++	for i := range s.Branches {
++		if s.Branches[i].Name == oldName {
++			s.Branches[i].Name = newName
++			found = true
++		}
++		if s.Branches[i].Base == oldName {
++			s.Branches[i].Base = newName
++		}
++	}
++	return found
++}
++
+ func StackPath(featurePath string) string {
+ 	return filepath.Join(featurePath, "stack.yaml")
+ }
