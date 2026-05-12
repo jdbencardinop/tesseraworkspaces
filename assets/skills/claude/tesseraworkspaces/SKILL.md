@@ -82,6 +82,22 @@ use_tmux: false                      # wrap tws open in tmux
 
 Environment variable `TWS_ROOT` overrides all config.
 
+### Cross-Worktree Decisions
+
+When working in a feature with stacked branches, agents can broadcast decisions to sibling worktrees:
+
+```sh
+tws decide <feature> "Changed User.ID from string to uuid" --type breaking
+tws decide <feature> "Added UserRepository interface" --type info --details "Use internal.UserRepository instead of direct DB calls"
+tws decisions <feature>                    # list all decisions
+tws decisions <feature> --branch <name>    # filter by source branch
+```
+
+**Important workflow:**
+- Before starting work in a worktree, run `tws decisions <feature>` to check for breaking changes from sibling branches
+- After making a breaking change or important design decision, record it with `tws decide`
+- Decision types: `breaking` (must adapt), `info` (good to know), `deprecation` (will be removed)
+
 ## When to Use
 
 - When the user wants to work on multiple branches in parallel within a feature
@@ -89,3 +105,4 @@ Environment variable `TWS_ROOT` overrides all config.
 - When managing worktrees for agent workflows
 - Run `tws list` to see current features and branches before suggesting actions
 - Run `tws stack <feature>` to understand branch dependencies before syncing
+- **Run `tws decisions <feature>` at the start of each session** to check for updates from sibling branches

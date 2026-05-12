@@ -45,6 +45,12 @@ func openCmd() *cobra.Command {
 				os.Exit(1)
 			}
 
+			// Show decisions count
+			featurePath := internal.FeaturePath(feature)
+			if decisions, err := internal.LoadDecisions(featurePath); err == nil && len(decisions.Entries) > 0 {
+				fmt.Printf("  %d decision(s) for this feature (run: tws decisions %s)\n", len(decisions.Entries), feature)
+			}
+
 			if noAgent {
 				fmt.Printf("cd %s\n", path)
 				fmt.Println("Run your agent manually from there.")

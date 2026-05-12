@@ -58,6 +58,8 @@ Override with `TWS_ROOT` env var.
 ## Workflow
 
 1. Run `tws list` to see current state
-2. Run `tws stack <feature>` to understand dependencies
-3. Use `tws sync <feature>` to keep branches up to date
-4. Use `tws archive` to free disk space, `tws new` to restore
+2. Run `tws decisions <feature>` to check for breaking changes from sibling branches
+3. Run `tws stack <feature>` to understand dependencies
+4. Use `tws sync <feature>` to keep branches up to date
+5. After making breaking changes, run `tws decide <feature> "summary" --type breaking`
+6. Use `tws archive` to free disk space, `tws new` to restore
