@@ -45,8 +45,13 @@ func openCmd() *cobra.Command {
 				os.Exit(1)
 			}
 
-			// Show decisions count
+			// Re-sync inject files
 			featurePath := internal.FeaturePath(feature)
+			if err := internal.InjectFiles(featurePath, path); err != nil {
+				fmt.Printf("Warning: inject sync failed: %v\n", err)
+			}
+
+			// Show decisions count
 			if decisions, err := internal.LoadDecisions(featurePath); err == nil && len(decisions.Entries) > 0 {
 				fmt.Printf("  %d decision(s) for this feature (run: tws decisions %s)\n", len(decisions.Entries), feature)
 			}

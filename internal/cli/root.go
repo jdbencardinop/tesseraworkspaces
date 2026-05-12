@@ -34,6 +34,7 @@ func Execute() int {
 		closeCmd(),
 		decideCmd(),
 		decisionsCmd(),
+		injectCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {

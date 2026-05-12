@@ -58,6 +58,11 @@ func newCmd() *cobra.Command {
 				internal.Must(internal.SaveStack(featurePath, stack))
 			}
 
+			// Inject shared files into the worktree
+			if err := internal.InjectFiles(featurePath, path); err != nil {
+				fmt.Printf("Warning: inject failed: %v\n", err)
+			}
+
 			fmt.Printf("Worktree created: %s (base: %s)\n", path, base)
 		},
 	}
