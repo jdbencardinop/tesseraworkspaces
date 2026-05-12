@@ -1,0 +1,231 @@
+diff --git a/internal/cli/add.go b/internal/cli/add.go
+index 2849168..52d3edd 100644
+--- a/internal/cli/add.go
++++ b/internal/cli/add.go
+@@ -22,7 +22,14 @@ func addCmd() *cobra.Command {
+ 			internal.Must(os.MkdirAll(filepath.Join(wsRoot, ".tws-workspace"), 0755))
+ 			internal.Must(os.MkdirAll(filepath.Join(root, "worktrees"), 0755))
+ 			internal.Must(os.WriteFile(filepath.Join(root, "FEATURE.md"), []byte("# "+feature+"\n"), 0644))
+-			internal.Must(os.WriteFile(filepath.Join(root, "CLAUDE.local.md"), []byte("# "+feature+" - CLAUDE shared context\n"), 0644))
++
++			// Create inject/ dir with default CLAUDE.local.md
++			injectDir := internal.InjectPath(root)
++			internal.Must(os.MkdirAll(injectDir, 0755))
++			claudeLocal := filepath.Join(injectDir, "CLAUDE.local.md")
++			if _, err := os.Stat(claudeLocal); os.IsNotExist(err) {
++				internal.Must(os.WriteFile(claudeLocal, []byte("# "+feature+" - shared context\n\nThis file is symlinked into every worktree for this feature.\nEdit it in the workspace inject/ directory.\n"), 0644))
++			}
+ 
+ 			fmt.Println("Feature added:", feature)
+ 		},
+diff --git a/internal/cli/inject.go b/internal/cli/inject.go
+new file mode 100644
+index 0000000..90c1051
+--- /dev/null
++++ b/internal/cli/inject.go
+@@ -0,0 +1,67 @@
++package cli
++
++import (
++	"fmt"
++	"os"
++
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
++	"github.com/spf13/cobra"
++)
++
++func injectCmd() *cobra.Command {
++	return &cobra.Command{
++		Use:   "inject <feature> [branch]",
++		Short: "Sync inject/ files into worktrees",
++		Long:  "Re-sync shared files from inject/ into worktrees. With no branch, syncs all worktrees.",
++		Args:  cobra.RangeArgs(1, 2),
++		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
++			switch len(args) {
++			case 0:
++				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
++			case 1:
++				return internal.ListBranches(args[0]), cobra.ShellCompDirectiveNoFileComp
++			default:
++				return nil, cobra.ShellCompDirectiveNoFileComp
++			}
++		},
++		Run: func(cmd *cobra.Command, args []string) {
++			feature := args[0]
++			featurePath := internal.FeaturePath(feature)
++
++			if _, err := os.Stat(featurePath); os.IsNotExist(err) {
++				fmt.Printf("Feature not found: %s\n", feature)
++				os.Exit(1)
++			}
++
++			injectDir := internal.InjectPath(featurePath)
++			if _, err := os.Stat(injectDir); os.IsNotExist(err) {
++				fmt.Printf("No inject/ directory found for feature: %s\n", feature)
++				fmt.Printf("Create it at: %s\n", injectDir)
++				os.Exit(1)
++			}
++
++			if len(args) == 2 {
++				// Single branch
++				branch := args[1]
++				path := internal.WorktreePath(feature, branch)
++				if _, err := os.Stat(path); os.IsNotExist(err) {
++					fmt.Printf("Worktree not found: %s/%s\n", feature, branch)
++					os.Exit(1)
++				}
++				if err := internal.InjectFiles(featurePath, path); err != nil {
++					fmt.Printf("Error: %v\n", err)
++					os.Exit(1)
++				}
++				fmt.Printf("Injected files into: %s/%s\n", feature, branch)
++			} else {
++				// All worktrees
++				count, err := internal.InjectFilesForFeature(featurePath)
++				if err != nil {
++					fmt.Printf("Error: %v\n", err)
++					os.Exit(1)
++				}
++				fmt.Printf("Injected files into %d worktree(s)\n", count)
++			}
++		},
++	}
++}
+diff --git a/internal/cli/new.go b/internal/cli/new.go
+index ba1bbbb..8c3ce5e 100644
+--- a/internal/cli/new.go
++++ b/internal/cli/new.go
+@@ -58,6 +58,11 @@ func newCmd() *cobra.Command {
+ 				internal.Must(internal.SaveStack(featurePath, stack))
+ 			}
+ 
++			// Inject shared files into the worktree
++			if err := internal.InjectFiles(featurePath, path); err != nil {
++				fmt.Printf("Warning: inject failed: %v\n", err)
++			}
++
+ 			fmt.Printf("Worktree created: %s (base: %s)\n", path, base)
+ 		},
+ 	}
+diff --git a/internal/cli/open.go b/internal/cli/open.go
+index b20fae2..ab46f15 100644
+--- a/internal/cli/open.go
++++ b/internal/cli/open.go
+@@ -45,8 +45,13 @@ func openCmd() *cobra.Command {
+ 				os.Exit(1)
+ 			}
+ 
+-			// Show decisions count
++			// Re-sync inject files
+ 			featurePath := internal.FeaturePath(feature)
++			if err := internal.InjectFiles(featurePath, path); err != nil {
++				fmt.Printf("Warning: inject sync failed: %v\n", err)
++			}
++
++			// Show decisions count
+ 			if decisions, err := internal.LoadDecisions(featurePath); err == nil && len(decisions.Entries) > 0 {
+ 				fmt.Printf("  %d decision(s) for this feature (run: tws decisions %s)\n", len(decisions.Entries), feature)
+ 			}
+diff --git a/internal/cli/root.go b/internal/cli/root.go
+index 50e5e20..6693f7f 100644
+--- a/internal/cli/root.go
++++ b/internal/cli/root.go
+@@ -34,6 +34,7 @@ func Execute() int {
+ 		closeCmd(),
+ 		decideCmd(),
+ 		decisionsCmd(),
++		injectCmd(),
+ 	)
+ 
+ 	if err := rootCmd.Execute(); err != nil {
+diff --git a/internal/inject.go b/internal/inject.go
+new file mode 100644
+index 0000000..14a42da
+--- /dev/null
++++ b/internal/inject.go
+@@ -0,0 +1,85 @@
++package internal
++
++import (
++	"fmt"
++	"os"
++	"path/filepath"
++)
++
++const InjectDir = "inject"
++
++// InjectPath returns the inject directory path for a feature.
++func InjectPath(featurePath string) string {
++	return filepath.Join(featurePath, InjectDir)
++}
++
++// InjectFiles symlinks all files from the feature's inject/ directory
++// into the target worktree. Uses relative symlinks so they work
++// regardless of absolute path. Skips existing files.
++func InjectFiles(featurePath, worktreePath string) error {
++	injectDir := InjectPath(featurePath)
++
++	if _, err := os.Stat(injectDir); os.IsNotExist(err) {
++		return nil // no inject dir, nothing to do
++	}
++
++	return filepath.Walk(injectDir, func(srcPath string, info os.FileInfo, err error) error {
++		if err != nil {
++			return err
++		}
++
++		// Get relative path from inject/ dir
++		relPath, err := filepath.Rel(injectDir, srcPath)
++		if err != nil {
++			return err
++		}
++
++		// Skip the root inject/ dir itself
++		if relPath == "." {
++			return nil
++		}
++
++		destPath := filepath.Join(worktreePath, relPath)
++
++		if info.IsDir() {
++			// Create directory in worktree if it doesn't exist
++			return os.MkdirAll(destPath, 0755)
++		}
++
++		// Skip if destination already exists (don't overwrite)
++		if _, err := os.Lstat(destPath); err == nil {
++			return nil
++		}
++
++		// Compute relative symlink target from dest to source
++		relTarget, err := filepath.Rel(filepath.Dir(destPath), srcPath)
++		if err != nil {
++			return fmt.Errorf("could not compute relative path: %w", err)
++		}
++
++		return os.Symlink(relTarget, destPath)
++	})
++}
++
++// InjectFilesForFeature re-syncs inject/ into all active worktrees for a feature.
++func InjectFilesForFeature(featurePath string) (int, error) {
++	wtDir := filepath.Join(featurePath, "worktrees")
++	entries, err := os.ReadDir(wtDir)
++	if err != nil {
++		return 0, nil // no worktrees dir
++	}
++
++	count := 0
++	for _, e := range entries {
++		if !e.IsDir() {
++			continue
++		}
++		wtPath := filepath.Join(wtDir, e.Name())
++		if err := InjectFiles(featurePath, wtPath); err != nil {
++			fmt.Printf("  Warning: inject failed for %s: %v\n", e.Name(), err)
++		} else {
++			count++
++		}
++	}
++	return count, nil
++}

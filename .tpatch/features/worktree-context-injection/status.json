@@ -2,12 +2,16 @@
   "id": "worktree-context-injection",
   "slug": "worktree-context-injection",
   "title": "Add a system to inject files from the feature workspace into each worktree's working directory. When tws new or tws open runs, copy or symlink configured files (e.g., CLAUDE.local.md, .claude/skills/, decisions.yaml) into the worktree so agents auto-discover them. Support a template system in the feature dir (e.g., a .tws-inject/ folder) where users place files that should appear in every worktree. Handle both symlinks (live updates from workspace) and copies (snapshot). Consider .gitignore implications — injected files inside the repo should probably be gitignored, but that's the user's choice. This bridges the gap between our workspace (outside repo) and the agent's working directory (inside the worktree).",
-  "state": "requested",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-05-12T00:58:08Z",
-  "updated_at": "2026-05-12T00:58:08Z",
-  "last_command": "add",
-  "apply": {},
+  "updated_at": "2026-05-12T03:17:43Z",
+  "last_command": "record",
+  "notes": "Patch recorded",
+  "apply": {
+    "base_commit": "19019b50e460af4467dd6667870148f9e789a8b3",
+    "has_patch": true
+  },
   "reconcile": {},
   "depends_on": [
     {
