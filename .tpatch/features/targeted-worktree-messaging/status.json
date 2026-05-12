@@ -1,0 +1,18 @@
+{
+  "id": "targeted-worktree-messaging",
+  "slug": "targeted-worktree-messaging",
+  "title": "Add targeted messaging between worktrees — one worktree can send a decision or question to a specific other worktree. Builds on top of cross-worktree-agent-context broadcast pattern. Enables review/implement cycles where Agent A sends feedback to Agent B. Need to design: read tracking, threading, and how agents discover messages addressed to them.",
+  "state": "requested",
+  "compatibility": "unknown",
+  "requested_at": "2026-05-11T05:38:19Z",
+  "updated_at": "2026-05-11T05:38:19Z",
+  "last_command": "add",
+  "apply": {},
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "cross-worktree-agent-context",
+      "kind": "hard"
+    }
+  ]
+}

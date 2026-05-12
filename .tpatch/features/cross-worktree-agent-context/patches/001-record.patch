@@ -1,0 +1,308 @@
+diff --git a/assets/skills/claude/tesseraworkspaces/SKILL.md b/assets/skills/claude/tesseraworkspaces/SKILL.md
+index 2bf48d9..48e965a 100644
+--- a/assets/skills/claude/tesseraworkspaces/SKILL.md
++++ b/assets/skills/claude/tesseraworkspaces/SKILL.md
+@@ -82,6 +82,22 @@ use_tmux: false                      # wrap tws open in tmux
+ 
+ Environment variable `TWS_ROOT` overrides all config.
+ 
++### Cross-Worktree Decisions
++
++When working in a feature with stacked branches, agents can broadcast decisions to sibling worktrees:
++
++```sh
++tws decide <feature> "Changed User.ID from string to uuid" --type breaking
++tws decide <feature> "Added UserRepository interface" --type info --details "Use internal.UserRepository instead of direct DB calls"
++tws decisions <feature>                    # list all decisions
++tws decisions <feature> --branch <name>    # filter by source branch
++```
++
++**Important workflow:**
++- Before starting work in a worktree, run `tws decisions <feature>` to check for breaking changes from sibling branches
++- After making a breaking change or important design decision, record it with `tws decide`
++- Decision types: `breaking` (must adapt), `info` (good to know), `deprecation` (will be removed)
++
+ ## When to Use
+ 
+ - When the user wants to work on multiple branches in parallel within a feature
+@@ -89,3 +105,4 @@ Environment variable `TWS_ROOT` overrides all config.
+ - When managing worktrees for agent workflows
+ - Run `tws list` to see current features and branches before suggesting actions
+ - Run `tws stack <feature>` to understand branch dependencies before syncing
++- **Run `tws decisions <feature>` at the start of each session** to check for updates from sibling branches
+diff --git a/assets/skills/copilot/tws.prompt.md b/assets/skills/copilot/tws.prompt.md
+index b9833cb..76ffb20 100644
+--- a/assets/skills/copilot/tws.prompt.md
++++ b/assets/skills/copilot/tws.prompt.md
+@@ -58,6 +58,8 @@ Override with `TWS_ROOT` env var.
+ ## Workflow
+ 
+ 1. Run `tws list` to see current state
+-2. Run `tws stack <feature>` to understand dependencies
+-3. Use `tws sync <feature>` to keep branches up to date
+-4. Use `tws archive` to free disk space, `tws new` to restore
++2. Run `tws decisions <feature>` to check for breaking changes from sibling branches
++3. Run `tws stack <feature>` to understand dependencies
++4. Use `tws sync <feature>` to keep branches up to date
++5. After making breaking changes, run `tws decide <feature> "summary" --type breaking`
++6. Use `tws archive` to free disk space, `tws new` to restore
+diff --git a/internal/cli/decide.go b/internal/cli/decide.go
+new file mode 100644
+index 0000000..02f0ee0
+--- /dev/null
++++ b/internal/cli/decide.go
+@@ -0,0 +1,71 @@
++package cli
++
++import (
++	"fmt"
++	"os"
++	"os/exec"
++	"strings"
++
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
++	"github.com/spf13/cobra"
++)
++
++func decideCmd() *cobra.Command {
++	var decisionType string
++	var details string
++	var branch string
++
++	cmd := &cobra.Command{
++		Use:   "decide <feature> <summary>",
++		Short: "Record a decision for sibling worktrees to see",
++		Args:  cobra.ExactArgs(2),
++		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
++			if len(args) == 0 {
++				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
++			}
++			return nil, cobra.ShellCompDirectiveNoFileComp
++		},
++		Run: func(cmd *cobra.Command, args []string) {
++			feature := args[0]
++			summary := args[1]
++
++			featurePath := internal.FeaturePath(feature)
++
++			if _, err := os.Stat(featurePath); os.IsNotExist(err) {
++				fmt.Printf("Feature not found: %s\n", feature)
++				os.Exit(1)
++			}
++
++			// Auto-detect branch from current worktree if not specified
++			if branch == "" {
++				if b, err := currentBranch(); err == nil {
++					branch = b
++				} else {
++					branch = "unknown"
++				}
++			}
++
++			entry, err := internal.AddDecision(featurePath, branch, summary, decisionType, details)
++			if err != nil {
++				fmt.Printf("Error recording decision: %v\n", err)
++				os.Exit(1)
++			}
++
++			fmt.Printf("Decision recorded:\n  %s\n", entry)
++		},
++	}
++
++	cmd.Flags().StringVar(&decisionType, "type", "info", "Decision type (breaking, info, deprecation)")
++	cmd.Flags().StringVar(&details, "details", "", "Longer explanation")
++	cmd.Flags().StringVar(&branch, "branch", "", "Source branch (auto-detected if omitted)")
++
++	return cmd
++}
++
++func currentBranch() (string, error) {
++	out, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
++	if err != nil {
++		return "", err
++	}
++	return strings.TrimSpace(string(out)), nil
++}
+diff --git a/internal/cli/decisions.go b/internal/cli/decisions.go
+new file mode 100644
+index 0000000..ed50e6b
+--- /dev/null
++++ b/internal/cli/decisions.go
+@@ -0,0 +1,57 @@
++package cli
++
++import (
++	"fmt"
++	"os"
++
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
++	"github.com/spf13/cobra"
++)
++
++func decisionsCmd() *cobra.Command {
++	var branch string
++
++	cmd := &cobra.Command{
++		Use:   "decisions <feature>",
++		Short: "List decisions for a feature",
++		Args:  cobra.ExactArgs(1),
++		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
++			if len(args) == 0 {
++				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
++			}
++			return nil, cobra.ShellCompDirectiveNoFileComp
++		},
++		Run: func(cmd *cobra.Command, args []string) {
++			feature := args[0]
++			featurePath := internal.FeaturePath(feature)
++
++			decisions, err := internal.LoadDecisions(featurePath)
++			if err != nil {
++				fmt.Printf("No decisions found for feature: %s\n", feature)
++				os.Exit(0)
++			}
++
++			if len(decisions.Entries) == 0 {
++				fmt.Println("No decisions recorded yet.")
++				return
++			}
++
++			count := 0
++			for _, entry := range decisions.Entries {
++				if branch != "" && entry.Branch != branch {
++					continue
++				}
++				fmt.Println(entry)
++				count++
++			}
++
++			if count == 0 && branch != "" {
++				fmt.Printf("No decisions from branch: %s\n", branch)
++			}
++		},
++	}
++
++	cmd.Flags().StringVar(&branch, "branch", "", "Filter by source branch")
++
++	return cmd
++}
+diff --git a/internal/cli/open.go b/internal/cli/open.go
+index c62ba33..b20fae2 100644
+--- a/internal/cli/open.go
++++ b/internal/cli/open.go
+@@ -45,6 +45,12 @@ func openCmd() *cobra.Command {
+ 				os.Exit(1)
+ 			}
+ 
++			// Show decisions count
++			featurePath := internal.FeaturePath(feature)
++			if decisions, err := internal.LoadDecisions(featurePath); err == nil && len(decisions.Entries) > 0 {
++				fmt.Printf("  %d decision(s) for this feature (run: tws decisions %s)\n", len(decisions.Entries), feature)
++			}
++
+ 			if noAgent {
+ 				fmt.Printf("cd %s\n", path)
+ 				fmt.Println("Run your agent manually from there.")
+diff --git a/internal/cli/root.go b/internal/cli/root.go
+index e6dea1f..50e5e20 100644
+--- a/internal/cli/root.go
++++ b/internal/cli/root.go
+@@ -32,6 +32,8 @@ func Execute() int {
+ 		initCmd(),
+ 		configCmd(),
+ 		closeCmd(),
++		decideCmd(),
++		decisionsCmd(),
+ 	)
+ 
+ 	if err := rootCmd.Execute(); err != nil {
+diff --git a/internal/decisions.go b/internal/decisions.go
+new file mode 100644
+index 0000000..7f99f38
+--- /dev/null
++++ b/internal/decisions.go
+@@ -0,0 +1,84 @@
++package internal
++
++import (
++	"fmt"
++	"os"
++	"path/filepath"
++	"time"
++
++	"gopkg.in/yaml.v3"
++)
++
++type Decision struct {
++	ID        int    `yaml:"id"`
++	Branch    string `yaml:"branch"`
++	Timestamp string `yaml:"timestamp"`
++	Type      string `yaml:"type"` // breaking, info, deprecation
++	Summary   string `yaml:"summary"`
++	Details   string `yaml:"details,omitempty"`
++}
++
++type Decisions struct {
++	Entries []Decision `yaml:"entries"`
++}
++
++func DecisionsPath(featurePath string) string {
++	return filepath.Join(featurePath, "decisions.yaml")
++}
++
++func LoadDecisions(featurePath string) (Decisions, error) {
++	data, err := os.ReadFile(DecisionsPath(featurePath))
++	if err != nil {
++		return Decisions{}, err
++	}
++	var d Decisions
++	if err := yaml.Unmarshal(data, &d); err != nil {
++		return Decisions{}, err
++	}
++	return d, nil
++}
++
++func SaveDecisions(featurePath string, d Decisions) error {
++	data, err := yaml.Marshal(&d)
++	if err != nil {
++		return err
++	}
++	return os.WriteFile(DecisionsPath(featurePath), data, 0644)
++}
++
++func AddDecision(featurePath, branch, summary, decisionType, details string) (Decision, error) {
++	decisions, _ := LoadDecisions(featurePath)
++
++	// Auto-increment ID
++	maxID := 0
++	for _, e := range decisions.Entries {
++		if e.ID > maxID {
++			maxID = e.ID
++		}
++	}
++
++	entry := Decision{
++		ID:        maxID + 1,
++		Branch:    branch,
++		Timestamp: time.Now().UTC().Format(time.RFC3339),
++		Type:      decisionType,
++		Summary:   summary,
++		Details:   details,
++	}
++
++	decisions.Entries = append(decisions.Entries, entry)
++
++	if err := SaveDecisions(featurePath, decisions); err != nil {
++		return Decision{}, err
++	}
++	return entry, nil
++}
++
++func (d Decision) String() string {
++	typeTag := fmt.Sprintf("[%s]", d.Type)
++	s := fmt.Sprintf("#%d %s %s (%s, %s)", d.ID, typeTag, d.Summary, d.Branch, d.Timestamp)
++	if d.Details != "" {
++		s += fmt.Sprintf("\n    %s", d.Details)
++	}
++	return s
++}
