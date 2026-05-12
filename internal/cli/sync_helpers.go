@@ -23,6 +23,15 @@ func syncWithStack(feature, featurePath string, stack internal.Stack, sorted []i
 			continue
 		}
 
+		// Health check: verify worktree is on the expected branch
+		if issue := internal.CheckWorktreeBranch(path, entry.Name); issue != nil {
+			fmt.Println(formatSyncStatus(entry.Name, "active", "wrong-branch"))
+			fmt.Printf("    %s\n", issue.Problem)
+			fmt.Printf("    %s\n", issue.Hint)
+			skipDescendants(stack, entry.Name, skipped)
+			continue
+		}
+
 		base := resolveBase(entry.Base)
 
 		err := internal.RunDir(path, "git", "rebase", "--update-refs", base)

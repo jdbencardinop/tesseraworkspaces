@@ -68,11 +68,19 @@ func listCmd() *cobra.Command {
 							tmuxTag = " [tmux]"
 						}
 
+						// Health warning for active worktrees
+						healthTag := ""
+						if status == "active" {
+							if issue := internal.CheckWorktreeBranch(wtPath, entry.Name); issue != nil {
+								healthTag = " [wrong-branch!]"
+							}
+						}
+
 						connector := "├──"
 						if i == len(stack.Branches)-1 {
 							connector = "└──"
 						}
-						fmt.Printf("  %s %s (base: %s) [%s]%s\n", connector, entry.Name, entry.Base, status, tmuxTag)
+						fmt.Printf("  %s %s (base: %s) [%s]%s%s\n", connector, entry.Name, entry.Base, status, tmuxTag, healthTag)
 					}
 				} else {
 					wtDir := filepath.Join(featurePath, "worktrees")
