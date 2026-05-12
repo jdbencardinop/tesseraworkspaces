@@ -1,0 +1,12 @@
+{
+  "id": "rename-feature-worktree",
+  "slug": "rename-feature-worktree",
+  "title": "Add tws rename command to rename a feature or a worktree/branch within a feature. For features: rename the directory in the workspace. For branches: update stack.yaml entry, rename the worktree directory, and optionally rename the git branch. Need to handle references from other stack entries (base pointers) and tmux sessions.",
+  "state": "requested",
+  "compatibility": "unknown",
+  "requested_at": "2026-05-12T01:07:14Z",
+  "updated_at": "2026-05-12T01:07:14Z",
+  "last_command": "add",
+  "apply": {},
+  "reconcile": {}
+}
