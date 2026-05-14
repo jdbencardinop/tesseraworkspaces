@@ -1,0 +1,176 @@
+diff --git a/internal/cli/decide.go b/internal/cli/decide.go
+index 02f0ee0..1295301 100644
+--- a/internal/cli/decide.go
++++ b/internal/cli/decide.go
+@@ -14,6 +14,7 @@ func decideCmd() *cobra.Command {
+ 	var decisionType string
+ 	var details string
+ 	var branch string
++	var to string
+ 
+ 	cmd := &cobra.Command{
+ 		Use:   "decide <feature> <summary>",
+@@ -45,7 +46,7 @@ func decideCmd() *cobra.Command {
+ 				}
+ 			}
+ 
+-			entry, err := internal.AddDecision(featurePath, branch, summary, decisionType, details)
++			entry, err := internal.AddDecision(featurePath, branch, to, summary, decisionType, details)
+ 			if err != nil {
+ 				fmt.Printf("Error recording decision: %v\n", err)
+ 				os.Exit(1)
+@@ -55,9 +56,10 @@ func decideCmd() *cobra.Command {
+ 		},
+ 	}
+ 
+-	cmd.Flags().StringVar(&decisionType, "type", "info", "Decision type (breaking, info, deprecation)")
++	cmd.Flags().StringVar(&decisionType, "type", "info", "Decision type (breaking, info, deprecation, review, question)")
+ 	cmd.Flags().StringVar(&details, "details", "", "Longer explanation")
+ 	cmd.Flags().StringVar(&branch, "branch", "", "Source branch (auto-detected if omitted)")
++	cmd.Flags().StringVar(&to, "to", "", "Target branch (empty = broadcast to all)")
+ 
+ 	return cmd
+ }
+diff --git a/internal/cli/decisions.go b/internal/cli/decisions.go
+index ed50e6b..9675348 100644
+--- a/internal/cli/decisions.go
++++ b/internal/cli/decisions.go
+@@ -10,6 +10,7 @@ import (
+ 
+ func decisionsCmd() *cobra.Command {
+ 	var branch string
++	var mine bool
+ 
+ 	cmd := &cobra.Command{
+ 		Use:   "decisions <feature>",
+@@ -36,22 +37,40 @@ func decisionsCmd() *cobra.Command {
+ 				return
+ 			}
+ 
++			// Auto-detect current branch for --mine
++			myBranch := ""
++			if mine {
++				if b, err := currentBranch(); err == nil {
++					myBranch = b
++				}
++			}
++
+ 			count := 0
+ 			for _, entry := range decisions.Entries {
++				// Filter by source branch
+ 				if branch != "" && entry.Branch != branch {
+ 					continue
+ 				}
++				// Filter by relevance to current branch
++				if mine && myBranch != "" && !entry.IsRelevantTo(myBranch) {
++					continue
++				}
+ 				fmt.Println(entry)
+ 				count++
+ 			}
+ 
+-			if count == 0 && branch != "" {
+-				fmt.Printf("No decisions from branch: %s\n", branch)
++			if count == 0 {
++				if mine {
++					fmt.Println("No decisions relevant to your branch.")
++				} else if branch != "" {
++					fmt.Printf("No decisions from branch: %s\n", branch)
++				}
+ 			}
+ 		},
+ 	}
+ 
+ 	cmd.Flags().StringVar(&branch, "branch", "", "Filter by source branch")
++	cmd.Flags().BoolVar(&mine, "mine", false, "Show only decisions relevant to current branch")
+ 
+ 	return cmd
+ }
+diff --git a/internal/cli/open.go b/internal/cli/open.go
+index ab46f15..84798c9 100644
+--- a/internal/cli/open.go
++++ b/internal/cli/open.go
+@@ -53,7 +53,25 @@ func openCmd() *cobra.Command {
+ 
+ 			// Show decisions count
+ 			if decisions, err := internal.LoadDecisions(featurePath); err == nil && len(decisions.Entries) > 0 {
+-				fmt.Printf("  %d decision(s) for this feature (run: tws decisions %s)\n", len(decisions.Entries), feature)
++				broadcast := 0
++				targeted := 0
++				for _, d := range decisions.Entries {
++					if d.IsRelevantTo(branch) {
++						if d.To == "" {
++							broadcast++
++						} else {
++							targeted++
++						}
++					}
++				}
++				if broadcast+targeted > 0 {
++					msg := fmt.Sprintf("  %d decision(s)", broadcast+targeted)
++					if targeted > 0 {
++						msg += fmt.Sprintf(" (%d for you)", targeted)
++					}
++					msg += fmt.Sprintf(" (run: tws decisions %s --mine)", feature)
++					fmt.Println(msg)
++				}
+ 			}
+ 
+ 			if noAgent {
+diff --git a/internal/decisions.go b/internal/decisions.go
+index 7f99f38..c6b0129 100644
+--- a/internal/decisions.go
++++ b/internal/decisions.go
+@@ -12,8 +12,9 @@ import (
+ type Decision struct {
+ 	ID        int    `yaml:"id"`
+ 	Branch    string `yaml:"branch"`
++	To        string `yaml:"to,omitempty"` // targeted recipient branch (empty = broadcast)
+ 	Timestamp string `yaml:"timestamp"`
+-	Type      string `yaml:"type"` // breaking, info, deprecation
++	Type      string `yaml:"type"` // breaking, info, deprecation, review, question
+ 	Summary   string `yaml:"summary"`
+ 	Details   string `yaml:"details,omitempty"`
+ }
+@@ -46,7 +47,7 @@ func SaveDecisions(featurePath string, d Decisions) error {
+ 	return os.WriteFile(DecisionsPath(featurePath), data, 0644)
+ }
+ 
+-func AddDecision(featurePath, branch, summary, decisionType, details string) (Decision, error) {
++func AddDecision(featurePath, branch, to, summary, decisionType, details string) (Decision, error) {
+ 	decisions, _ := LoadDecisions(featurePath)
+ 
+ 	// Auto-increment ID
+@@ -60,6 +61,7 @@ func AddDecision(featurePath, branch, summary, decisionType, details string) (De
+ 	entry := Decision{
+ 		ID:        maxID + 1,
+ 		Branch:    branch,
++		To:        to,
+ 		Timestamp: time.Now().UTC().Format(time.RFC3339),
+ 		Type:      decisionType,
+ 		Summary:   summary,
+@@ -76,9 +78,23 @@ func AddDecision(featurePath, branch, summary, decisionType, details string) (De
+ 
+ func (d Decision) String() string {
+ 	typeTag := fmt.Sprintf("[%s]", d.Type)
+-	s := fmt.Sprintf("#%d %s %s (%s, %s)", d.ID, typeTag, d.Summary, d.Branch, d.Timestamp)
++	target := ""
++	if d.To != "" {
++		target = fmt.Sprintf(" → %s", d.To)
++	}
++	s := fmt.Sprintf("#%d %s %s (%s%s, %s)", d.ID, typeTag, d.Summary, d.Branch, target, d.Timestamp)
+ 	if d.Details != "" {
+ 		s += fmt.Sprintf("\n    %s", d.Details)
+ 	}
+ 	return s
+ }
++
++// IsRelevantTo returns true if a decision should be seen by the given branch.
++// Broadcast decisions (empty To) are relevant to everyone.
++// Targeted decisions are only relevant to the specified branch.
++func (d Decision) IsRelevantTo(branch string) bool {
++	if d.To == "" {
++		return true // broadcast
++	}
++	return d.To == branch
++}
