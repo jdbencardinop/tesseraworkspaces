@@ -10,6 +10,7 @@ import (
 
 func decisionsCmd() *cobra.Command {
 	var branch string
+	var mine bool
 
 	cmd := &cobra.Command{
 		Use:   "decisions <feature>",
@@ -36,22 +37,40 @@ func decisionsCmd() *cobra.Command {
 				return
 			}
 
+			// Auto-detect current branch for --mine
+			myBranch := ""
+			if mine {
+				if b, err := currentBranch(); err == nil {
+					myBranch = b
+				}
+			}
+
 			count := 0
 			for _, entry := range decisions.Entries {
+				// Filter by source branch
 				if branch != "" && entry.Branch != branch {
+					continue
+				}
+				// Filter by relevance to current branch
+				if mine && myBranch != "" && !entry.IsRelevantTo(myBranch) {
 					continue
 				}
 				fmt.Println(entry)
 				count++
 			}
 
-			if count == 0 && branch != "" {
-				fmt.Printf("No decisions from branch: %s\n", branch)
+			if count == 0 {
+				if mine {
+					fmt.Println("No decisions relevant to your branch.")
+				} else if branch != "" {
+					fmt.Printf("No decisions from branch: %s\n", branch)
+				}
 			}
 		},
 	}
 
 	cmd.Flags().StringVar(&branch, "branch", "", "Filter by source branch")
+	cmd.Flags().BoolVar(&mine, "mine", false, "Show only decisions relevant to current branch")
 
 	return cmd
 }

@@ -53,7 +53,25 @@ func openCmd() *cobra.Command {
 
 			// Show decisions count
 			if decisions, err := internal.LoadDecisions(featurePath); err == nil && len(decisions.Entries) > 0 {
-				fmt.Printf("  %d decision(s) for this feature (run: tws decisions %s)\n", len(decisions.Entries), feature)
+				broadcast := 0
+				targeted := 0
+				for _, d := range decisions.Entries {
+					if d.IsRelevantTo(branch) {
+						if d.To == "" {
+							broadcast++
+						} else {
+							targeted++
+						}
+					}
+				}
+				if broadcast+targeted > 0 {
+					msg := fmt.Sprintf("  %d decision(s)", broadcast+targeted)
+					if targeted > 0 {
+						msg += fmt.Sprintf(" (%d for you)", targeted)
+					}
+					msg += fmt.Sprintf(" (run: tws decisions %s --mine)", feature)
+					fmt.Println(msg)
+				}
 			}
 
 			if noAgent {

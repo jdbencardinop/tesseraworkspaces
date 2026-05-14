@@ -14,6 +14,7 @@ func decideCmd() *cobra.Command {
 	var decisionType string
 	var details string
 	var branch string
+	var to string
 
 	cmd := &cobra.Command{
 		Use:   "decide <feature> <summary>",
@@ -45,7 +46,7 @@ func decideCmd() *cobra.Command {
 				}
 			}
 
-			entry, err := internal.AddDecision(featurePath, branch, summary, decisionType, details)
+			entry, err := internal.AddDecision(featurePath, branch, to, summary, decisionType, details)
 			if err != nil {
 				fmt.Printf("Error recording decision: %v\n", err)
 				os.Exit(1)
@@ -55,9 +56,10 @@ func decideCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&decisionType, "type", "info", "Decision type (breaking, info, deprecation)")
+	cmd.Flags().StringVar(&decisionType, "type", "info", "Decision type (breaking, info, deprecation, review, question)")
 	cmd.Flags().StringVar(&details, "details", "", "Longer explanation")
 	cmd.Flags().StringVar(&branch, "branch", "", "Source branch (auto-detected if omitted)")
+	cmd.Flags().StringVar(&to, "to", "", "Target branch (empty = broadcast to all)")
 
 	return cmd
 }

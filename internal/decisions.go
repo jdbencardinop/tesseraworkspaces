@@ -12,8 +12,9 @@ import (
 type Decision struct {
 	ID        int    `yaml:"id"`
 	Branch    string `yaml:"branch"`
+	To        string `yaml:"to,omitempty"` // targeted recipient branch (empty = broadcast)
 	Timestamp string `yaml:"timestamp"`
-	Type      string `yaml:"type"` // breaking, info, deprecation
+	Type      string `yaml:"type"` // breaking, info, deprecation, review, question
 	Summary   string `yaml:"summary"`
 	Details   string `yaml:"details,omitempty"`
 }
@@ -46,7 +47,7 @@ func SaveDecisions(featurePath string, d Decisions) error {
 	return os.WriteFile(DecisionsPath(featurePath), data, 0644)
 }
 
-func AddDecision(featurePath, branch, summary, decisionType, details string) (Decision, error) {
+func AddDecision(featurePath, branch, to, summary, decisionType, details string) (Decision, error) {
 	decisions, _ := LoadDecisions(featurePath)
 
 	// Auto-increment ID
@@ -60,6 +61,7 @@ func AddDecision(featurePath, branch, summary, decisionType, details string) (De
 	entry := Decision{
 		ID:        maxID + 1,
 		Branch:    branch,
+		To:        to,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Type:      decisionType,
 		Summary:   summary,
@@ -76,9 +78,23 @@ func AddDecision(featurePath, branch, summary, decisionType, details string) (De
 
 func (d Decision) String() string {
 	typeTag := fmt.Sprintf("[%s]", d.Type)
-	s := fmt.Sprintf("#%d %s %s (%s, %s)", d.ID, typeTag, d.Summary, d.Branch, d.Timestamp)
+	target := ""
+	if d.To != "" {
+		target = fmt.Sprintf(" → %s", d.To)
+	}
+	s := fmt.Sprintf("#%d %s %s (%s%s, %s)", d.ID, typeTag, d.Summary, d.Branch, target, d.Timestamp)
 	if d.Details != "" {
 		s += fmt.Sprintf("\n    %s", d.Details)
 	}
 	return s
+}
+
+// IsRelevantTo returns true if a decision should be seen by the given branch.
+// Broadcast decisions (empty To) are relevant to everyone.
+// Targeted decisions are only relevant to the specified branch.
+func (d Decision) IsRelevantTo(branch string) bool {
+	if d.To == "" {
+		return true // broadcast
+	}
+	return d.To == branch
 }
