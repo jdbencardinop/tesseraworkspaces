@@ -1,0 +1,19 @@
+{
+  "id": "template-sync-existing",
+  "slug": "template-sync-existing",
+  "title": "Add tws template sync command to backfill template files into existing features. Also add --template flag to tws add for specifying a template directory from anywhere on disk (not just ~/.config/tws/templates or .tws/templates). Support applying multiple templates to the same feature. When files conflict, prompt the user in an apt/dpkg style: keep existing, use new, edit to merge, or show diff.",
+  "state": "implementing",
+  "compatibility": "unknown",
+  "requested_at": "2026-05-15T20:52:22Z",
+  "updated_at": "2026-05-16T08:35:47Z",
+  "last_command": "apply --mode started",
+  "notes": "Implementation in progress",
+  "apply": {},
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "workspace-templates",
+      "kind": "hard"
+    }
+  ]
+}

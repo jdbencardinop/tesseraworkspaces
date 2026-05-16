@@ -11,7 +11,9 @@ import (
 )
 
 func addCmd() *cobra.Command {
-	return &cobra.Command{
+	var templates []string
+
+	cmd := &cobra.Command{
 		Use:   "add <feature>",
 		Short: "Create a feature workspace",
 		Args:  cobra.ExactArgs(1),
@@ -28,18 +30,10 @@ func addCmd() *cobra.Command {
 			injectDir := internal.InjectPath(root)
 			internal.Must(os.MkdirAll(injectDir, 0755))
 
-			// Copy template into inject/ if available
-			templateDir := internal.TemplatePath()
-			if templateDir != "" {
-				count, err := copyDir(templateDir, injectDir)
-				if err != nil {
-					fmt.Printf("Warning: template copy failed: %v\n", err)
-				} else if count > 0 {
-					fmt.Printf("Copied %d file(s) from template\n", count)
-				}
-			}
+			// Apply templates: configured default first, then --template flags
+			applyTemplates(injectDir, templates)
 
-			// Add default CLAUDE.local.md if not provided by template
+			// Add default CLAUDE.local.md if not provided by any template
 			claudeLocal := filepath.Join(injectDir, "CLAUDE.local.md")
 			if _, err := os.Stat(claudeLocal); os.IsNotExist(err) {
 				internal.Must(os.WriteFile(claudeLocal, []byte("# "+feature+" - shared context\n\nThis file is symlinked into every worktree for this feature.\nEdit it in the workspace inject/ directory.\n"), 0644))
@@ -47,6 +41,40 @@ func addCmd() *cobra.Command {
 
 			fmt.Println("Feature added:", feature)
 		},
+	}
+
+	cmd.Flags().StringArrayVar(&templates, "template", nil, "Template directory to copy into inject/ (can be specified multiple times)")
+
+	return cmd
+}
+
+// applyTemplates copies files from the configured template dir and any
+// explicit --template dirs into the inject directory.
+func applyTemplates(injectDir string, extraTemplates []string) {
+	// Configured default template first
+	defaultTemplate := internal.TemplatePath()
+	if defaultTemplate != "" {
+		count, err := copyDir(defaultTemplate, injectDir)
+		if err != nil {
+			fmt.Printf("Warning: default template copy failed: %v\n", err)
+		} else if count > 0 {
+			fmt.Printf("Copied %d file(s) from default template\n", count)
+		}
+	}
+
+	// Then explicit --template dirs (layered in order)
+	for _, tmplDir := range extraTemplates {
+		info, err := os.Stat(tmplDir)
+		if err != nil || !info.IsDir() {
+			fmt.Printf("Warning: template directory not found: %s\n", tmplDir)
+			continue
+		}
+		count, err := copyDir(tmplDir, injectDir)
+		if err != nil {
+			fmt.Printf("Warning: template copy failed for %s: %v\n", tmplDir, err)
+		} else if count > 0 {
+			fmt.Printf("Copied %d file(s) from %s\n", count, tmplDir)
+		}
 	}
 }
 
@@ -73,8 +101,9 @@ func copyDir(src, dst string) (int, error) {
 			return os.MkdirAll(dstPath, 0755)
 		}
 
-		// Skip if exists
+		// Skip if exists (conflict resolution is a separate feature)
 		if _, err := os.Stat(dstPath); err == nil {
+			fmt.Printf("  skip: %s (exists)\n", relPath)
 			return nil
 		}
 
