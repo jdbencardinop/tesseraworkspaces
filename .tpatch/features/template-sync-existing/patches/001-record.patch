@@ -1,0 +1,197 @@
+diff --git a/internal/cli/add.go b/internal/cli/add.go
+index e090d19..c507159 100644
+--- a/internal/cli/add.go
++++ b/internal/cli/add.go
+@@ -11,7 +11,9 @@ import (
+ )
+ 
+ func addCmd() *cobra.Command {
+-	return &cobra.Command{
++	var templates []string
++
++	cmd := &cobra.Command{
+ 		Use:   "add <feature>",
+ 		Short: "Create a feature workspace",
+ 		Args:  cobra.ExactArgs(1),
+@@ -28,18 +30,10 @@ func addCmd() *cobra.Command {
+ 			injectDir := internal.InjectPath(root)
+ 			internal.Must(os.MkdirAll(injectDir, 0755))
+ 
+-			// Copy template into inject/ if available
+-			templateDir := internal.TemplatePath()
+-			if templateDir != "" {
+-				count, err := copyDir(templateDir, injectDir)
+-				if err != nil {
+-					fmt.Printf("Warning: template copy failed: %v\n", err)
+-				} else if count > 0 {
+-					fmt.Printf("Copied %d file(s) from template\n", count)
+-				}
+-			}
++			// Apply templates: configured default first, then --template flags
++			applyTemplates(injectDir, templates)
+ 
+-			// Add default CLAUDE.local.md if not provided by template
++			// Add default CLAUDE.local.md if not provided by any template
+ 			claudeLocal := filepath.Join(injectDir, "CLAUDE.local.md")
+ 			if _, err := os.Stat(claudeLocal); os.IsNotExist(err) {
+ 				internal.Must(os.WriteFile(claudeLocal, []byte("# "+feature+" - shared context\n\nThis file is symlinked into every worktree for this feature.\nEdit it in the workspace inject/ directory.\n"), 0644))
+@@ -48,6 +42,40 @@ func addCmd() *cobra.Command {
+ 			fmt.Println("Feature added:", feature)
+ 		},
+ 	}
++
++	cmd.Flags().StringArrayVar(&templates, "template", nil, "Template directory to copy into inject/ (can be specified multiple times)")
++
++	return cmd
++}
++
++// applyTemplates copies files from the configured template dir and any
++// explicit --template dirs into the inject directory.
++func applyTemplates(injectDir string, extraTemplates []string) {
++	// Configured default template first
++	defaultTemplate := internal.TemplatePath()
++	if defaultTemplate != "" {
++		count, err := copyDir(defaultTemplate, injectDir)
++		if err != nil {
++			fmt.Printf("Warning: default template copy failed: %v\n", err)
++		} else if count > 0 {
++			fmt.Printf("Copied %d file(s) from default template\n", count)
++		}
++	}
++
++	// Then explicit --template dirs (layered in order)
++	for _, tmplDir := range extraTemplates {
++		info, err := os.Stat(tmplDir)
++		if err != nil || !info.IsDir() {
++			fmt.Printf("Warning: template directory not found: %s\n", tmplDir)
++			continue
++		}
++		count, err := copyDir(tmplDir, injectDir)
++		if err != nil {
++			fmt.Printf("Warning: template copy failed for %s: %v\n", tmplDir, err)
++		} else if count > 0 {
++			fmt.Printf("Copied %d file(s) from %s\n", count, tmplDir)
++		}
++	}
+ }
+ 
+ // copyDir copies all files from src to dst, preserving directory structure.
+@@ -73,8 +101,9 @@ func copyDir(src, dst string) (int, error) {
+ 			return os.MkdirAll(dstPath, 0755)
+ 		}
+ 
+-		// Skip if exists
++		// Skip if exists (conflict resolution is a separate feature)
+ 		if _, err := os.Stat(dstPath); err == nil {
++			fmt.Printf("  skip: %s (exists)\n", relPath)
+ 			return nil
+ 		}
+ 
+diff --git a/internal/cli/root.go b/internal/cli/root.go
+index f86cfe9..5c42816 100644
+--- a/internal/cli/root.go
++++ b/internal/cli/root.go
+@@ -37,6 +37,7 @@ func Execute() int {
+ 		injectCmd(),
+ 		doctorCmd(),
+ 		renameCmd(),
++		templateCmd(),
+ 	)
+ 
+ 	if err := rootCmd.Execute(); err != nil {
+diff --git a/internal/cli/template.go b/internal/cli/template.go
+new file mode 100644
+index 0000000..7eaf1a7
+--- /dev/null
++++ b/internal/cli/template.go
+@@ -0,0 +1,90 @@
++package cli
++
++import (
++	"fmt"
++	"os"
++
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
++	"github.com/spf13/cobra"
++)
++
++func templateCmd() *cobra.Command {
++	cmd := &cobra.Command{
++		Use:   "template",
++		Short: "Manage workspace templates",
++	}
++
++	cmd.AddCommand(templateSyncCmd())
++
++	return cmd
++}
++
++func templateSyncCmd() *cobra.Command {
++	var templates []string
++	var all bool
++
++	cmd := &cobra.Command{
++		Use:   "sync [feature]",
++		Short: "Apply template files to existing feature(s)",
++		Long:  "Copy template files into a feature's inject/ directory. Skips existing files. Use --all to sync all features.",
++		Args:  cobra.MaximumNArgs(1),
++		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
++			if len(args) == 0 {
++				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
++			}
++			return nil, cobra.ShellCompDirectiveNoFileComp
++		},
++		Run: func(cmd *cobra.Command, args []string) {
++			if all {
++				features := internal.ListFeatures()
++				if len(features) == 0 {
++					fmt.Println("No features found.")
++					return
++				}
++				for _, feature := range features {
++					syncFeatureTemplate(feature, templates)
++				}
++				return
++			}
++
++			if len(args) == 0 {
++				fmt.Println("Usage: tws template sync <feature> [--template <dir>]")
++				fmt.Println("       tws template sync --all")
++				os.Exit(1)
++			}
++
++			syncFeatureTemplate(args[0], templates)
++		},
++	}
++
++	cmd.Flags().StringArrayVar(&templates, "template", nil, "Template directory (can be specified multiple times)")
++	cmd.Flags().BoolVar(&all, "all", false, "Sync all features")
++
++	return cmd
++}
++
++func syncFeatureTemplate(feature string, extraTemplates []string) {
++	featurePath := internal.FeaturePath(feature)
++
++	if _, err := os.Stat(featurePath); os.IsNotExist(err) {
++		fmt.Printf("%s: not found\n", feature)
++		return
++	}
++
++	injectDir := internal.InjectPath(featurePath)
++	if err := os.MkdirAll(injectDir, 0755); err != nil {
++		fmt.Printf("%s: error creating inject dir: %v\n", feature, err)
++		return
++	}
++
++	fmt.Printf("%s:\n", feature)
++	applyTemplates(injectDir, extraTemplates)
++
++	// Re-sync inject into worktrees
++	count, err := internal.InjectFilesForFeature(featurePath)
++	if err != nil {
++		fmt.Printf("  Warning: worktree inject failed: %v\n", err)
++	} else if count > 0 {
++		fmt.Printf("  Synced inject to %d worktree(s)\n", count)
++	}
++}
