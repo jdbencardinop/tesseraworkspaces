@@ -2,12 +2,16 @@
   "id": "decision-read-tracking",
   "slug": "decision-read-tracking",
   "title": "Track which decisions each worktree has already seen. Store a last-read decision ID per branch (in the feature dir or worktree). tws decisions --mine only shows unread decisions. tws decisions ack marks all as read. tws open shows count of new (unread) decisions instead of total. Prevents agents and users from re-reading the same decisions every session.",
-  "state": "requested",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-05-19T20:44:27Z",
-  "updated_at": "2026-05-19T20:44:27Z",
-  "last_command": "add",
-  "apply": {},
+  "updated_at": "2026-05-19T22:47:53Z",
+  "last_command": "record",
+  "notes": "Patch recorded",
+  "apply": {
+    "base_commit": "b8c43d0de10d93724fac6ad9ab846c829e822be0",
+    "has_patch": true
+  },
   "reconcile": {},
   "depends_on": [
     {
