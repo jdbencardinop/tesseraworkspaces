@@ -4,13 +4,28 @@
 
 ```sh
 go install github.com/jdbencardinop/tesseraworkspaces/cmd/tws@latest
+
+# Enable shell completions (zsh)
+tws completion zsh > $(brew --prefix)/share/zsh/site-functions/_tws
 ```
 
-## Setup a feature workspace
+## Quick start (one command)
 
 ```sh
-cd ~/projects/myapp          # navigate to your repo
-tws add auth                 # creates ../myapp.tws/auth/
+cd ~/projects/myapp
+
+# Create feature + branch + open agent — all in one
+tws add auth -n auth-models --open
+
+# With an existing remote branch
+git fetch origin
+tws add auth -n feature/auth-api --open
+
+# With a custom template
+tws add auth -n auth-models --template ~/templates/go-project --open
+
+# Without opening (just setup)
+tws add auth -n auth-models
 ```
 
 ## Create branches (stacked diffs)
@@ -40,10 +55,46 @@ tws new auth main --force                         # force if already checked out
 
 ```sh
 tws open auth auth-models              # cd + run agent (default)
-                                       # first time: runs `claude`
-                                       # subsequent: runs `claude -c` (continue)
 tws open auth auth-models --tmux       # wrap in tmux session
 tws open auth auth-models --no-agent   # just print the path
+tws open                               # interactive picker (fzf if available)
+tws open auth                          # pick branch within feature
+```
+
+## Decisions (cross-worktree communication)
+
+```sh
+# Record a decision (broadcast to all worktrees)
+tws decide auth "Changed User.ID from string to uuid" --type breaking
+
+# Record a targeted decision (only for a specific branch)
+tws decide auth "Review the API surface" --type review --to auth-middleware
+
+# Add details
+tws decide auth "Added UserRepository" --type info \
+  --details "Use internal.UserRepository instead of direct DB calls"
+
+# View unread decisions (default — only shows new ones)
+tws decisions show auth
+
+# View all decisions (including already read)
+tws decisions show auth --all
+
+# Filter by source branch
+tws decisions show auth --branch auth-models
+
+# Show only decisions relevant to your branch
+tws decisions show auth --mine
+
+# Mark all as read
+tws decisions ack auth
+```
+
+Decision types: `breaking` | `info` | `deprecation` | `review` | `question`
+
+When you `tws open`, unread decisions are shown automatically:
+```
+  2 new decision(s) (1 for you) (run: tws decisions show auth)
 ```
 
 ## See what you have
@@ -51,12 +102,7 @@ tws open auth auth-models --no-agent   # just print the path
 ```sh
 tws list                     # all features and branches
 tws stack auth               # dependency tree for a feature
-
-# Example output of tws stack:
-# (main)
-# └── auth-models
-#     └── auth-middleware
-#         └── auth-routes
+tws doctor auth              # health checks (branch mismatch, dirty, etc.)
 ```
 
 ## Sync (rebase in dependency order)
@@ -64,25 +110,64 @@ tws stack auth               # dependency tree for a feature
 ```sh
 tws sync auth                # fetches, then rebases parent→child
                              # if auth-models fails, middleware+routes are skipped
+                             # archived branches synced via --update-refs or optimistic rebase
+```
+
+## Archive and restore
+
+```sh
+tws archive auth auth-middleware   # remove worktree, keep branch ref
+tws new auth auth-middleware       # restore (idempotent, no stack.yaml duplicate)
 ```
 
 ## Clean up
 
 ```sh
 tws delete auth              # removes all worktrees + feature dir
-                             # branches are preserved in git
+tws close auth auth-models   # kill tmux session for a worktree
+```
+
+## Context injection
+
+```sh
+# Files in inject/ are symlinked into every worktree
+ls ../myapp.tws/auth/inject/       # CLAUDE.local.md, .claude/skills/, etc.
+
+# Re-sync after adding new files to inject/
+tws inject auth                    # all worktrees
+tws inject auth auth-models        # single worktree
+
+# Backfill templates into existing features
+tws template sync auth --template ~/templates/base
+tws template sync --all            # all features
 ```
 
 ## Configuration
 
 ```sh
-# Override workspace root for this session
-TWS_ROOT=/custom/path tws add feature
+tws config show                              # show resolved config
+tws config set agent_command opencode        # change agent globally
+tws config set use_tmux true --repo          # per-repo setting
+tws config get agent_command                 # check current value
 
-# Global config: ~/.config/tws/config.yaml
-# workspaces:
-#   /path/to/repo: /custom/workspace/path
+# Config files:
+#   Global: ~/.config/tws/config.yaml
+#   Per-repo: .tws/config.yaml
+#   Env override: TWS_ROOT=/custom/path
+```
 
-# Default: workspace is at ../<repo-name>.tws/
-# Fallback: ~/tws
+## Rename
+
+```sh
+tws rename feature old-name new-name               # rename feature
+tws rename branch auth old-branch new-branch        # rename branch + update refs
+```
+
+## Agent skills
+
+```sh
+tws init                        # install Claude + Copilot skills
+tws init --agent claude         # Claude only
+tws init --agent copilot        # Copilot only
+tws init --force                # overwrite existing
 ```
