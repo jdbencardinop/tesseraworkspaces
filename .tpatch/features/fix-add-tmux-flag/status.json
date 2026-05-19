@@ -1,0 +1,22 @@
+{
+  "id": "fix-add-tmux-flag",
+  "slug": "fix-add-tmux-flag",
+  "title": "Add --tmux flag to tws add --open so quick start can open in a tmux session instead of only direct mode. Previously tws add -n branch --open always used openDirect.",
+  "state": "applied",
+  "compatibility": "unknown",
+  "requested_at": "2026-05-19T23:17:43Z",
+  "updated_at": "2026-05-19T23:18:20Z",
+  "last_command": "record",
+  "notes": "Patch recorded",
+  "apply": {
+    "base_commit": "f0fc2b166a25bc38d3e92dab4d3a4e47cc31bb19",
+    "has_patch": true
+  },
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "quick-start-add-and-open",
+      "kind": "hard"
+    }
+  ]
+}

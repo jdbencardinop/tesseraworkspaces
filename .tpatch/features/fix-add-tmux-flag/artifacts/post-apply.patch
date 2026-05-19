@@ -1,0 +1,33 @@
+diff --git a/internal/cli/add.go b/internal/cli/add.go
+index ef3911a..675f88a 100644
+--- a/internal/cli/add.go
++++ b/internal/cli/add.go
+@@ -16,6 +16,7 @@ func addCmd() *cobra.Command {
+ 	var base string
+ 	var open bool
+ 	var force bool
++	var useTmux bool
+ 
+ 	cmd := &cobra.Command{
+ 		Use:   "add <feature>",
+@@ -52,7 +53,11 @@ func addCmd() *cobra.Command {
+ 
+ 				if open {
+ 					path := internal.WorktreePath(feature, newBranch)
+-					openDirect(path)
++					if useTmux {
++						openWithTmux(feature, newBranch, path)
++					} else {
++						openDirect(path)
++					}
+ 				}
+ 			}
+ 		},
+@@ -63,6 +68,7 @@ func addCmd() *cobra.Command {
+ 	cmd.Flags().StringVar(&base, "base", "main", "Base branch for the new worktree (used with -n)")
+ 	cmd.Flags().BoolVar(&open, "open", false, "Open the worktree after creation (used with -n)")
+ 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force checkout of already checked-out branch")
++	cmd.Flags().BoolVar(&useTmux, "tmux", false, "Open in tmux session (used with --open)")
+ 
+ 	return cmd
+ }
