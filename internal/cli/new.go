@@ -19,51 +19,7 @@ func newCmd() *cobra.Command {
 		Short: "Create a worktree branch",
 		Args:  cobra.ExactArgs(2),
 		Run: func(cmd *cobra.Command, args []string) {
-			internal.RequireTool("git")
-
-			feature := args[0]
-			branch := args[1]
-
-			featurePath := internal.FeaturePath(feature)
-			path := internal.WorktreePath(feature, branch)
-
-			internal.Must(os.MkdirAll(featurePath, 0755))
-
-			repoRoot, err := internal.MainRepoRoot()
-			if err != nil {
-				fmt.Println("Error: must be run from inside a git repository")
-				os.Exit(1)
-			}
-
-			if internal.BranchExists(branch) {
-				if isCheckedOut(branch) && !force {
-					fmt.Printf("Warning: branch %q is already checked out in another worktree.\n", branch)
-					fmt.Println("Use --force to check it out anyway.")
-					os.Exit(1)
-				}
-
-				gitArgs := []string{"worktree", "add"}
-				if force {
-					gitArgs = append(gitArgs, "--force")
-				}
-				gitArgs = append(gitArgs, path, branch)
-				internal.Must(internal.RunDir(repoRoot, "git", gitArgs...))
-			} else {
-				internal.Must(internal.RunDir(repoRoot, "git", "worktree", "add", path, "-b", branch))
-			}
-
-			stack, _ := internal.LoadStack(featurePath)
-			if !internal.HasBranch(stack, branch) {
-				stack.Branches = append(stack.Branches, internal.StackEntry{Name: branch, Base: base})
-				internal.Must(internal.SaveStack(featurePath, stack))
-			}
-
-			// Inject shared files into the worktree
-			if err := internal.InjectFiles(featurePath, path); err != nil {
-				fmt.Printf("Warning: inject failed: %v\n", err)
-			}
-
-			fmt.Printf("Worktree created: %s (base: %s)\n", path, base)
+			createWorktree(args[0], args[1], base, force)
 		},
 	}
 
@@ -71,6 +27,53 @@ func newCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force checkout of already checked-out branch")
 
 	return cmd
+}
+
+// createWorktree is the shared logic for creating a worktree branch.
+// Used by both tws new and tws add -n.
+func createWorktree(feature, branch, base string, force bool) {
+	internal.RequireTool("git")
+
+	featurePath := internal.FeaturePath(feature)
+	path := internal.WorktreePath(feature, branch)
+
+	internal.Must(os.MkdirAll(featurePath, 0755))
+
+	repoRoot, err := internal.MainRepoRoot()
+	if err != nil {
+		fmt.Println("Error: must be run from inside a git repository")
+		os.Exit(1)
+	}
+
+	if internal.BranchExists(branch) {
+		if isCheckedOut(branch) && !force {
+			fmt.Printf("Warning: branch %q is already checked out in another worktree.\n", branch)
+			fmt.Println("Use --force to check it out anyway.")
+			os.Exit(1)
+		}
+
+		gitArgs := []string{"worktree", "add"}
+		if force {
+			gitArgs = append(gitArgs, "--force")
+		}
+		gitArgs = append(gitArgs, path, branch)
+		internal.Must(internal.RunDir(repoRoot, "git", gitArgs...))
+	} else {
+		internal.Must(internal.RunDir(repoRoot, "git", "worktree", "add", path, "-b", branch))
+	}
+
+	stack, _ := internal.LoadStack(featurePath)
+	if !internal.HasBranch(stack, branch) {
+		stack.Branches = append(stack.Branches, internal.StackEntry{Name: branch, Base: base})
+		internal.Must(internal.SaveStack(featurePath, stack))
+	}
+
+	// Inject shared files into the worktree
+	if err := internal.InjectFiles(featurePath, path); err != nil {
+		fmt.Printf("Warning: inject failed: %v\n", err)
+	}
+
+	fmt.Printf("Worktree created: %s (base: %s)\n", path, base)
 }
 
 // isCheckedOut checks if a branch is currently checked out in any worktree.

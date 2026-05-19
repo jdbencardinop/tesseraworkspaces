@@ -12,10 +12,15 @@ import (
 
 func addCmd() *cobra.Command {
 	var templates []string
+	var newBranch string
+	var base string
+	var open bool
+	var force bool
 
 	cmd := &cobra.Command{
 		Use:   "add <feature>",
 		Short: "Create a feature workspace",
+		Long:  "Create a feature workspace. Use -n to also create a worktree branch, and --open to launch the agent.",
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			feature := args[0]
@@ -30,7 +35,7 @@ func addCmd() *cobra.Command {
 			injectDir := internal.InjectPath(root)
 			internal.Must(os.MkdirAll(injectDir, 0755))
 
-			// Apply templates: configured default first, then --template flags
+			// Apply templates
 			applyTemplates(injectDir, templates)
 
 			// Add default CLAUDE.local.md if not provided by any template
@@ -40,10 +45,24 @@ func addCmd() *cobra.Command {
 			}
 
 			fmt.Println("Feature added:", feature)
+
+			// Quick start: create worktree if -n specified
+			if newBranch != "" {
+				createWorktree(feature, newBranch, base, force)
+
+				if open {
+					path := internal.WorktreePath(feature, newBranch)
+					openDirect(path)
+				}
+			}
 		},
 	}
 
 	cmd.Flags().StringArrayVar(&templates, "template", nil, "Template directory to copy into inject/ (can be specified multiple times)")
+	cmd.Flags().StringVarP(&newBranch, "new", "n", "", "Also create a worktree branch")
+	cmd.Flags().StringVar(&base, "base", "main", "Base branch for the new worktree (used with -n)")
+	cmd.Flags().BoolVar(&open, "open", false, "Open the worktree after creation (used with -n)")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force checkout of already checked-out branch")
 
 	return cmd
 }
