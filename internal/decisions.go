@@ -98,3 +98,79 @@ func (d Decision) IsRelevantTo(branch string) bool {
 	}
 	return d.To == branch
 }
+
+// --- Read state tracking ---
+
+type ReadState struct {
+	Branches map[string]int `yaml:"branches"`
+}
+
+func readStatePath(featurePath string) string {
+	return filepath.Join(featurePath, "read-state.yaml")
+}
+
+func LoadReadState(featurePath string) ReadState {
+	data, err := os.ReadFile(readStatePath(featurePath))
+	if err != nil {
+		return ReadState{Branches: make(map[string]int)}
+	}
+	var rs ReadState
+	if err := yaml.Unmarshal(data, &rs); err != nil {
+		return ReadState{Branches: make(map[string]int)}
+	}
+	if rs.Branches == nil {
+		rs.Branches = make(map[string]int)
+	}
+	return rs
+}
+
+func SaveReadState(featurePath string, rs ReadState) error {
+	data, err := yaml.Marshal(&rs)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(readStatePath(featurePath), data, 0644)
+}
+
+// AckDecisions marks all current decisions as read for the given branch.
+func AckDecisions(featurePath, branch string) error {
+	decisions, err := LoadDecisions(featurePath)
+	if err != nil {
+		return err
+	}
+
+	maxID := 0
+	for _, d := range decisions.Entries {
+		if d.ID > maxID {
+			maxID = d.ID
+		}
+	}
+
+	rs := LoadReadState(featurePath)
+	rs.Branches[branch] = maxID
+	return SaveReadState(featurePath, rs)
+}
+
+// LastReadID returns the last read decision ID for a branch.
+func LastReadID(featurePath, branch string) int {
+	rs := LoadReadState(featurePath)
+	return rs.Branches[branch]
+}
+
+// UnreadDecisions returns decisions relevant to a branch that haven't been acked.
+func UnreadDecisions(featurePath, branch string) []Decision {
+	decisions, err := LoadDecisions(featurePath)
+	if err != nil {
+		return nil
+	}
+
+	lastRead := LastReadID(featurePath, branch)
+
+	var unread []Decision
+	for _, d := range decisions.Entries {
+		if d.ID > lastRead && d.IsRelevantTo(branch) {
+			unread = append(unread, d)
+		}
+	}
+	return unread
+}

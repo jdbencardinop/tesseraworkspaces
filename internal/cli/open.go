@@ -51,27 +51,21 @@ func openCmd() *cobra.Command {
 				fmt.Printf("Warning: inject sync failed: %v\n", err)
 			}
 
-			// Show decisions count
-			if decisions, err := internal.LoadDecisions(featurePath); err == nil && len(decisions.Entries) > 0 {
-				broadcast := 0
+			// Show unread decisions count
+			unread := internal.UnreadDecisions(featurePath, branch)
+			if len(unread) > 0 {
 				targeted := 0
-				for _, d := range decisions.Entries {
-					if d.IsRelevantTo(branch) {
-						if d.To == "" {
-							broadcast++
-						} else {
-							targeted++
-						}
+				for _, d := range unread {
+					if d.To != "" {
+						targeted++
 					}
 				}
-				if broadcast+targeted > 0 {
-					msg := fmt.Sprintf("  %d decision(s)", broadcast+targeted)
-					if targeted > 0 {
-						msg += fmt.Sprintf(" (%d for you)", targeted)
-					}
-					msg += fmt.Sprintf(" (run: tws decisions %s --mine)", feature)
-					fmt.Println(msg)
+				msg := fmt.Sprintf("  %d new decision(s)", len(unread))
+				if targeted > 0 {
+					msg += fmt.Sprintf(" (%d for you)", targeted)
 				}
+				msg += fmt.Sprintf(" (run: tws decisions show %s)", feature)
+				fmt.Println(msg)
 			}
 
 			if noAgent {
