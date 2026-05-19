@@ -1,0 +1,12 @@
+{
+  "id": "quick-start-add-and-open",
+  "slug": "quick-start-add-and-open",
+  "title": "Add a shortcut to tws add that creates a feature, creates a first worktree branch, and optionally opens it in one command. Something like tws add \u003cfeature\u003e -n \u003cbranch\u003e [--base \u003cparent\u003e] [--open]. Saves running tws add + tws new + tws open separately for the common case of starting fresh work.",
+  "state": "requested",
+  "compatibility": "unknown",
+  "requested_at": "2026-05-19T19:24:39Z",
+  "updated_at": "2026-05-19T19:24:39Z",
+  "last_command": "add",
+  "apply": {},
+  "reconcile": {}
+}
