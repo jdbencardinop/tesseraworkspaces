@@ -1,0 +1,72 @@
+diff --git a/internal/cli/delete.go b/internal/cli/delete.go
+index 4622fce..04422c8 100644
+--- a/internal/cli/delete.go
++++ b/internal/cli/delete.go
+@@ -14,6 +14,12 @@ func deleteCmd() *cobra.Command {
+ 		Aliases: []string{"rm"},
+ 		Short:   "Remove feature and all worktrees",
+ 		Args:    cobra.ExactArgs(1),
++		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
++			if len(args) == 0 {
++				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
++			}
++			return nil, cobra.ShellCompDirectiveNoFileComp
++		},
+ 		Run: func(cmd *cobra.Command, args []string) {
+ 			internal.RequireTool("git")
+ 
+diff --git a/internal/cli/new.go b/internal/cli/new.go
+index 920d198..2f72945 100644
+--- a/internal/cli/new.go
++++ b/internal/cli/new.go
+@@ -18,6 +18,16 @@ func newCmd() *cobra.Command {
+ 		Use:   "new <feature> <branch>",
+ 		Short: "Create a worktree branch",
+ 		Args:  cobra.ExactArgs(2),
++		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
++			switch len(args) {
++			case 0:
++				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
++			case 1:
++				return internal.ListBranches(args[0]), cobra.ShellCompDirectiveNoFileComp
++			default:
++				return nil, cobra.ShellCompDirectiveNoFileComp
++			}
++		},
+ 		Run: func(cmd *cobra.Command, args []string) {
+ 			createWorktree(args[0], args[1], base, force)
+ 		},
+diff --git a/internal/cli/stack.go b/internal/cli/stack.go
+index 11cdff4..ae42bf7 100644
+--- a/internal/cli/stack.go
++++ b/internal/cli/stack.go
+@@ -13,6 +13,12 @@ func stackCmd() *cobra.Command {
+ 		Use:   "stack <feature>",
+ 		Short: "Show branch dependency tree",
+ 		Args:  cobra.ExactArgs(1),
++		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
++			if len(args) == 0 {
++				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
++			}
++			return nil, cobra.ShellCompDirectiveNoFileComp
++		},
+ 		Run: func(cmd *cobra.Command, args []string) {
+ 			feature := args[0]
+ 			featurePath := internal.FeaturePath(feature)
+diff --git a/internal/cli/sync.go b/internal/cli/sync.go
+index c69b385..7234f4a 100644
+--- a/internal/cli/sync.go
++++ b/internal/cli/sync.go
+@@ -12,6 +12,12 @@ func syncCmd() *cobra.Command {
+ 		Use:   "sync <feature>",
+ 		Short: "Rebase worktrees in dependency order",
+ 		Args:  cobra.ExactArgs(1),
++		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
++			if len(args) == 0 {
++				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
++			}
++			return nil, cobra.ShellCompDirectiveNoFileComp
++		},
+ 		Run: func(cmd *cobra.Command, args []string) {
+ 			internal.RequireTool("git")
+ 			syncFeature(args[0])

@@ -1,0 +1,22 @@
+{
+  "id": "fix-missing-completions",
+  "slug": "fix-missing-completions",
+  "title": "Add ValidArgsFunction to new, sync, stack, and delete commands that were missing tab completions after the cobra migration. All commands that take feature/branch args now provide shell completion suggestions.",
+  "state": "applied",
+  "compatibility": "unknown",
+  "requested_at": "2026-05-19T19:56:05Z",
+  "updated_at": "2026-05-19T19:57:43Z",
+  "last_command": "record",
+  "notes": "Patch recorded",
+  "apply": {
+    "base_commit": "743fd5bbdc9d78813b56e1ece90a53badf7a84d6",
+    "has_patch": true
+  },
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "cobra-migration",
+      "kind": "hard"
+    }
+  ]
+}
