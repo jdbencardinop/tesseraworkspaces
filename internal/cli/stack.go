@@ -13,6 +13,12 @@ func stackCmd() *cobra.Command {
 		Use:   "stack <feature>",
 		Short: "Show branch dependency tree",
 		Args:  cobra.ExactArgs(1),
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			if len(args) == 0 {
+				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
+			}
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		},
 		Run: func(cmd *cobra.Command, args []string) {
 			feature := args[0]
 			featurePath := internal.FeaturePath(feature)

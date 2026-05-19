@@ -18,6 +18,16 @@ func newCmd() *cobra.Command {
 		Use:   "new <feature> <branch>",
 		Short: "Create a worktree branch",
 		Args:  cobra.ExactArgs(2),
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			switch len(args) {
+			case 0:
+				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
+			case 1:
+				return internal.ListBranches(args[0]), cobra.ShellCompDirectiveNoFileComp
+			default:
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			}
+		},
 		Run: func(cmd *cobra.Command, args []string) {
 			createWorktree(args[0], args[1], base, force)
 		},
