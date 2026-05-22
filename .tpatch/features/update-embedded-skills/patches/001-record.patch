@@ -1,0 +1,290 @@
+diff --git a/assets/skills/claude/tesseraworkspaces/SKILL.md b/assets/skills/claude/tesseraworkspaces/SKILL.md
+index 48e965a..299e07d 100644
+--- a/assets/skills/claude/tesseraworkspaces/SKILL.md
++++ b/assets/skills/claude/tesseraworkspaces/SKILL.md
+@@ -21,40 +21,48 @@ tws <command> [args]
+ 
+ | Command | Description |
+ |---------|-------------|
+-| `tws add <feature>` | Create a feature workspace |
++| `tws add <feature> [-n <branch>] [--open] [--tmux]` | Create feature (and optionally a branch) |
+ | `tws new <feature> <branch> [--base <parent>] [--force]` | Create a worktree branch |
+-| `tws open <feature> <branch> [--tmux]` | Open worktree and run agent |
++| `tws open [feature] [branch] [--tmux] [--no-agent]` | Open worktree and run agent |
+ | `tws sync <feature>` | Rebase worktrees in dependency order |
+ | `tws stack <feature>` | Show branch dependency tree |
+ | `tws list` / `tws ls` | List features and branches |
+ | `tws delete <feature>` | Remove feature and all worktrees |
+ | `tws archive <feature> <branch>` | Remove worktree, keep branch ref |
++| `tws decide <feature> "<summary>" [--type T] [--to B]` | Record a decision |
++| `tws decisions show <feature> [--mine] [--all]` | View decisions |
++| `tws decisions ack <feature>` | Mark decisions as read |
++| `tws inject <feature> [branch]` | Sync inject/ files into worktrees |
++| `tws doctor [feature]` | Run health checks |
++| `tws rename feature <old> <new>` | Rename a feature |
++| `tws rename branch <feature> <old> <new>` | Rename a branch |
++| `tws config show/set/get` | Manage configuration |
++| `tws close <feature> <branch>` | Kill tmux session |
++| `tws template sync <feature> [--template <dir>]` | Backfill templates |
+ | `tws init [--agent claude\|copilot]` | Install agent skills |
+ | `tws --version` | Print version |
+ 
+-### Stacked Branches
++### Quick Start
+ 
+-When creating branches, use `--base` to declare dependencies:
++Create a feature, branch, and open the agent in one command:
+ 
+ ```sh
+-tws new auth auth-models                          # base: main (default)
+-tws new auth auth-middleware --base auth-models    # stacks on auth-models
+-tws new auth auth-routes --base auth-middleware    # stacks on auth-middleware
++tws add auth -n auth-models --open
++tws add auth -n auth-models --open --tmux    # with tmux
++tws add auth -n existing-branch --open       # with existing branch
+ ```
+ 
+-This creates a `stack.yaml` in the feature directory:
++### Stacked Branches
+ 
+-```yaml
+-branches:
+-  - name: auth-models
+-    base: main
+-  - name: auth-middleware
+-    base: auth-models
+-  - name: auth-routes
+-    base: auth-middleware
++Use `--base` to declare dependencies. Branches without `--base` default to `main` (parallel, not stacked):
++
++```sh
++tws new auth auth-models                          # base: main
++tws new auth auth-middleware --base auth-models    # stacks on auth-models
++tws new auth auth-tests --base auth-models         # diverges (parallel to middleware)
+ ```
+ 
+-`tws sync` rebases in topological order (parents first). If a rebase fails, dependent branches are skipped.
++`tws sync` rebases in topological order. Divergent stacks are supported (A→B, A→C). If a rebase fails, only that branch's descendants are skipped — sibling lineages continue.
+ 
+ ### Workspace Layout
+ 
+@@ -63,40 +71,59 @@ branches:
+   .tws-workspace                     # workspace marker
+   <feature>/
+     FEATURE.md
+-    CLAUDE.local.md                  # shared context across worktrees
+     stack.yaml                       # branch dependency graph
++    decisions.yaml                   # cross-worktree decisions
++    read-state.yaml                  # per-branch last-read tracking
++    inject/                          # shared files symlinked into worktrees
++      CLAUDE.local.md               # shared context (edit here, all worktrees see it)
++      .claude/skills/               # per-feature agent skills
+     worktrees/
+       <branch>/                      # full git worktree checkout
++        CLAUDE.local.md → ../../inject/CLAUDE.local.md  (symlink)
+ ```
+ 
+-### Configuration
++### Context Injection
+ 
+-Global config at `~/.config/tws/config.yaml`:
++Files in `inject/` are symlinked into every worktree. Edit once, all worktrees see changes.
+ 
+-```yaml
+-workspaces:
+-  /path/to/repo: /custom/workspace/path
+-agent_command: claude                # default agent for tws open
+-use_tmux: false                      # wrap tws open in tmux
+-```
++**Important:** Injected files appear as untracked in git status. Either:
++- Add them to `.gitignore` (e.g., `CLAUDE.local.md`)
++- Place them in an already-ignored subfolder (e.g., `inject/.claude/`)
+ 
+-Environment variable `TWS_ROOT` overrides all config.
++Re-sync after adding new files: `tws inject <feature>`
+ 
+ ### Cross-Worktree Decisions
+ 
+-When working in a feature with stacked branches, agents can broadcast decisions to sibling worktrees:
++Agents can broadcast or target decisions to sibling worktrees:
++
++```sh
++tws decide <feature> "Changed User.ID to uuid" --type breaking
++tws decide <feature> "Review API surface" --type review --to auth-middleware
++tws decisions show <feature>           # unread only (default)
++tws decisions show <feature> --all     # everything
++tws decisions ack <feature>            # mark all as read
++```
++
++Decision types: `breaking` | `info` | `deprecation` | `review` | `question`
++
++### Configuration
++
++```sh
++tws config show                              # show resolved config
++tws config set agent_command opencode        # change agent
++tws config set use_tmux true --repo          # per-repo setting
++```
++
++Config files: global (`~/.config/tws/config.yaml`), per-repo (`.tws/config.yaml`). Env: `TWS_ROOT`.
++
++### Health Checks
+ 
+ ```sh
+-tws decide <feature> "Changed User.ID from string to uuid" --type breaking
+-tws decide <feature> "Added UserRepository interface" --type info --details "Use internal.UserRepository instead of direct DB calls"
+-tws decisions <feature>                    # list all decisions
+-tws decisions <feature> --branch <name>    # filter by source branch
++tws doctor                # check all features
++tws doctor auth           # check one feature
+ ```
+ 
+-**Important workflow:**
+-- Before starting work in a worktree, run `tws decisions <feature>` to check for breaking changes from sibling branches
+-- After making a breaking change or important design decision, record it with `tws decide`
+-- Decision types: `breaking` (must adapt), `info` (good to know), `deprecation` (will be removed)
++Detects: wrong branch, uncommitted changes, missing inject symlinks.
+ 
+ ## When to Use
+ 
+@@ -105,4 +132,6 @@ tws decisions <feature> --branch <name>    # filter by source branch
+ - When managing worktrees for agent workflows
+ - Run `tws list` to see current features and branches before suggesting actions
+ - Run `tws stack <feature>` to understand branch dependencies before syncing
+-- **Run `tws decisions <feature>` at the start of each session** to check for updates from sibling branches
++- **Run `tws decisions show <feature>` at the start of each session** to check for updates
++- After making a breaking change, **record it with `tws decide`** so sibling agents know
++- Run `tws doctor` if something seems wrong (branch mismatch, missing files)
+diff --git a/assets/skills/copilot/tws.prompt.md b/assets/skills/copilot/tws.prompt.md
+index 76ffb20..040fb84 100644
+--- a/assets/skills/copilot/tws.prompt.md
++++ b/assets/skills/copilot/tws.prompt.md
+@@ -12,54 +12,54 @@ You are working in a project that uses `tws` for feature-scoped workspaces with
+ 
+ `tws` is a compiled Go binary on PATH. Invoke it directly:
+ 
+-- `tws add <feature>` — Create a feature workspace
+-- `tws new <feature> <branch> [--base <parent>] [--force]` — Create a worktree branch
+-- `tws open <feature> <branch> [--tmux]` — Open worktree and run agent
++- `tws add <feature> [-n <branch>] [--open]` — Create feature (quick start with -n)
++- `tws new <feature> <branch> [--base <parent>] [--force]` — Create worktree branch
++- `tws open [feature] [branch] [--tmux] [--no-agent]` — Open worktree and run agent
+ - `tws sync <feature>` — Rebase worktrees in dependency order
+ - `tws stack <feature>` — Show branch dependency tree
+ - `tws list` — List features and branches
+ - `tws delete <feature>` — Remove feature and all worktrees
+ - `tws archive <feature> <branch>` — Remove worktree, keep branch ref
+-
+-## Stacked Branches
+-
+-Use `--base` to declare dependencies between branches:
++- `tws decide <feature> "<summary>" [--type T] [--to B]` — Record a decision
++- `tws decisions show <feature> [--mine] [--all]` — View decisions (unread by default)
++- `tws decisions ack <feature>` — Mark all decisions as read
++- `tws inject <feature> [branch]` — Sync inject/ files into worktrees
++- `tws doctor [feature]` — Run health checks
++- `tws rename feature/branch` — Rename feature or branch
++- `tws config show/set/get` — Manage configuration
++- `tws close <feature> <branch>` — Kill tmux session
++- `tws template sync <feature> [--template <dir>]` — Backfill templates
++
++## Stacked & Divergent Branches
+ 
+ ```sh
+ tws new auth auth-models                          # base: main
+ tws new auth auth-middleware --base auth-models    # stacks on auth-models
++tws new auth auth-tests --base auth-models         # diverges (parallel)
+ ```
+ 
+-`tws sync` rebases in topological order. If a parent fails, children are skipped.
++Sync rebases in topological order. Divergent stacks (A→B, A→C) are supported.
+ 
+-## Workspace Layout
++## Context Injection
+ 
+-```
+-<workspace-root>/
+-  <feature>/
+-    FEATURE.md
+-    stack.yaml          # branch dependency graph
+-    worktrees/<branch>/ # git worktree checkouts
+-```
++Files in `inject/` are symlinked into every worktree. Edit once, all worktrees see changes.
++Injected files appear as untracked in git — add them to `.gitignore` or use an ignored subfolder.
+ 
+-## Configuration
++## Decisions
+ 
+-Config: `~/.config/tws/config.yaml`
+-
+-```yaml
+-workspaces:
+-  /path/to/repo: /custom/workspace/path
+-agent_command: claude
+-use_tmux: false
++```sh
++tws decide <feature> "Changed X" --type breaking           # broadcast
++tws decide <feature> "Review Y" --type review --to <branch> # targeted
++tws decisions show <feature>                                 # unread only
++tws decisions ack <feature>                                  # mark as read
+ ```
+ 
+-Override with `TWS_ROOT` env var.
+-
+ ## Workflow
+ 
+ 1. Run `tws list` to see current state
+-2. Run `tws decisions <feature>` to check for breaking changes from sibling branches
++2. Run `tws decisions show <feature>` to check for unread decisions from siblings
+ 3. Run `tws stack <feature>` to understand dependencies
+ 4. Use `tws sync <feature>` to keep branches up to date
+-5. After making breaking changes, run `tws decide <feature> "summary" --type breaking`
+-6. Use `tws archive` to free disk space, `tws new` to restore
++5. After breaking changes, run `tws decide <feature> "summary" --type breaking`
++6. Run `tws doctor` if something seems wrong
++7. Use `tws archive` to free disk space, `tws new` to restore
+diff --git a/internal/cli/add.go b/internal/cli/add.go
+index 675f88a..903136e 100644
+--- a/internal/cli/add.go
++++ b/internal/cli/add.go
+@@ -21,8 +21,14 @@ func addCmd() *cobra.Command {
+ 	cmd := &cobra.Command{
+ 		Use:   "add <feature>",
+ 		Short: "Create a feature workspace",
+-		Long:  "Create a feature workspace. Use -n to also create a worktree branch, and --open to launch the agent.",
+-		Args:  cobra.ExactArgs(1),
++		Long: `Create a feature workspace with an inject/ directory for shared files.
++
++Files in inject/ are symlinked into every worktree. Use -n to also
++create a first worktree branch, and --open to launch the agent.
++
++Note: injected files appear as untracked in git status. Add them to
++.gitignore or place them in an already-ignored subfolder.`,
++		Args: cobra.ExactArgs(1),
+ 		Run: func(cmd *cobra.Command, args []string) {
+ 			feature := args[0]
+ 			root := internal.FeaturePath(feature)
+diff --git a/internal/cli/inject.go b/internal/cli/inject.go
+index 90c1051..47d5c69 100644
+--- a/internal/cli/inject.go
++++ b/internal/cli/inject.go
+@@ -12,8 +12,17 @@ func injectCmd() *cobra.Command {
+ 	return &cobra.Command{
+ 		Use:   "inject <feature> [branch]",
+ 		Short: "Sync inject/ files into worktrees",
+-		Long:  "Re-sync shared files from inject/ into worktrees. With no branch, syncs all worktrees.",
+-		Args:  cobra.RangeArgs(1, 2),
++		Long: `Re-sync shared files from inject/ into worktrees. With no branch, syncs all worktrees.
++
++Injected files are symlinked into the worktree root. Since these are
++not tracked by git, they will appear as untracked files in git status.
++
++Tip: To keep git status clean, either:
++  - Add injected filenames to .gitignore (e.g., CLAUDE.local.md)
++  - Place files inside inject/ in a gitignored subfolder
++    (e.g., inject/.context/file.md → worktree/.context/file.md)
++  - Or nest inside an already-ignored dir like inject/.claude/`,
++		Args: cobra.RangeArgs(1, 2),
+ 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+ 			switch len(args) {
+ 			case 0:
