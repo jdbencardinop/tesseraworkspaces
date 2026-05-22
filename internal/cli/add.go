@@ -21,8 +21,14 @@ func addCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add <feature>",
 		Short: "Create a feature workspace",
-		Long:  "Create a feature workspace. Use -n to also create a worktree branch, and --open to launch the agent.",
-		Args:  cobra.ExactArgs(1),
+		Long: `Create a feature workspace with an inject/ directory for shared files.
+
+Files in inject/ are symlinked into every worktree. Use -n to also
+create a first worktree branch, and --open to launch the agent.
+
+Note: injected files appear as untracked in git status. Add them to
+.gitignore or place them in an already-ignored subfolder.`,
+		Args: cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			feature := args[0]
 			root := internal.FeaturePath(feature)

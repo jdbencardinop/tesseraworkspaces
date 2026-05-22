@@ -12,8 +12,17 @@ func injectCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "inject <feature> [branch]",
 		Short: "Sync inject/ files into worktrees",
-		Long:  "Re-sync shared files from inject/ into worktrees. With no branch, syncs all worktrees.",
-		Args:  cobra.RangeArgs(1, 2),
+		Long: `Re-sync shared files from inject/ into worktrees. With no branch, syncs all worktrees.
+
+Injected files are symlinked into the worktree root. Since these are
+not tracked by git, they will appear as untracked files in git status.
+
+Tip: To keep git status clean, either:
+  - Add injected filenames to .gitignore (e.g., CLAUDE.local.md)
+  - Place files inside inject/ in a gitignored subfolder
+    (e.g., inject/.context/file.md → worktree/.context/file.md)
+  - Or nest inside an already-ignored dir like inject/.claude/`,
+		Args: cobra.RangeArgs(1, 2),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			switch len(args) {
 			case 0:
