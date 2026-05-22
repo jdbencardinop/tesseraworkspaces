@@ -1,0 +1,12 @@
+{
+  "id": "multi-repo-workspaces",
+  "slug": "multi-repo-workspaces",
+  "title": "Formalize adding worktrees from different repos in the same feature workspace. Currently possible by manually setting paths, but not tracked properly in stack.yaml or tws list/status. Should support: tws new \u003cfeature\u003e \u003cbranch\u003e --repo /path/to/other/repo, track the source repo per branch in stack.yaml, pass decisions across repo boundaries within the same feature.",
+  "state": "requested",
+  "compatibility": "unknown",
+  "requested_at": "2026-05-22T23:16:26Z",
+  "updated_at": "2026-05-22T23:16:26Z",
+  "last_command": "add",
+  "apply": {},
+  "reconcile": {}
+}

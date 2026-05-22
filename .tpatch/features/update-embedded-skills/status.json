@@ -1,0 +1,12 @@
+{
+  "id": "update-embedded-skills",
+  "slug": "update-embedded-skills",
+  "title": "Update the embedded Claude Code and Copilot skill files (assets/skills/) to cover all features added since the initial skill creation. New features to document in skills: decisions (decide, decisions show/ack), inject system, templates, config command, doctor, rename, archive, quick start (tws add -n --open), shell completions. Also document the inject/ directory structure and how agents should use CLAUDE.local.md for context.",
+  "state": "requested",
+  "compatibility": "unknown",
+  "requested_at": "2026-05-22T23:17:29Z",
+  "updated_at": "2026-05-22T23:17:29Z",
+  "last_command": "add",
+  "apply": {},
+  "reconcile": {}
+}

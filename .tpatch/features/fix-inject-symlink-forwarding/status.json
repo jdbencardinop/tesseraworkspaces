@@ -1,0 +1,12 @@
+{
+  "id": "fix-inject-symlink-forwarding",
+  "slug": "fix-inject-symlink-forwarding",
+  "title": "Bug: When a symlink is placed in the inject/ directory (pointing to a file outside the workspace), tws inject creates a copy or fails instead of forwarding the symlink into the worktree. Users want to place symlinks in inject/ so that worktrees reference the same external target, preserving the symlink chain rather than copying the resolved content.",
+  "state": "requested",
+  "compatibility": "unknown",
+  "requested_at": "2026-05-22T23:17:15Z",
+  "updated_at": "2026-05-22T23:17:15Z",
+  "last_command": "add",
+  "apply": {},
+  "reconcile": {}
+}
