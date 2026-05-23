@@ -55,7 +55,7 @@ Note: injected files appear as untracked in git status. Add them to
 
 			// Quick start: create worktree if -n specified
 			if newBranch != "" {
-				createWorktree(feature, newBranch, base, force)
+				createWorktree(feature, newBranch, base, "", force)
 
 				if open {
 					path := internal.WorktreePath(feature, newBranch)

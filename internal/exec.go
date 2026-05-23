@@ -46,6 +46,11 @@ func BranchExists(branch string) bool {
 	return err == nil
 }
 
+// AbsPath returns the absolute path, resolving relative paths.
+func AbsPath(path string) (string, error) {
+	return filepath.Abs(path)
+}
+
 func Run(name string, args ...string) error {
 	cmd := exec.Command(name, args...)
 	cmd.Stdout = os.Stdout
@@ -67,6 +72,12 @@ func RunDir(dir string, name string, args ...string) error {
 
 func RunSilent(name string, args ...string) error {
 	cmd := exec.Command(name, args...)
+	return cmd.Run()
+}
+
+func RunSilentDir(dir string, name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
 	return cmd.Run()
 }
 

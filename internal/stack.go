@@ -12,10 +12,31 @@ import (
 type StackEntry struct {
 	Name string `yaml:"name"`
 	Base string `yaml:"base"`
+	Repo string `yaml:"repo,omitempty"` // source repo path (empty = default/current repo)
 }
 
 type Stack struct {
 	Branches []StackEntry `yaml:"branches"`
+}
+
+// UniqueRepos returns a set of unique repo paths referenced in the stack.
+// Empty string represents the default repo. Returns worktree paths for
+// each repo (to use as git context) alongside the repo path.
+func UniqueRepos(s Stack, featurePath string) map[string]string {
+	repos := make(map[string]string)
+	for _, e := range s.Branches {
+		repo := e.Repo
+		if _, ok := repos[repo]; !ok {
+			// Find an active worktree from this repo to use as git context
+			wtPath := filepath.Join(featurePath, "worktrees", e.Name)
+			if _, err := os.Stat(wtPath); err == nil {
+				repos[repo] = wtPath
+			} else {
+				repos[repo] = "" // no active worktree, will need fallback
+			}
+		}
+	}
+	return repos
 }
 
 // HasBranch checks if a branch name already exists in the stack.
@@ -26,6 +47,16 @@ func HasBranch(s Stack, name string) bool {
 		}
 	}
 	return false
+}
+
+// GetBranch returns the StackEntry for a branch name. Returns empty entry if not found.
+func GetBranch(s Stack, name string) StackEntry {
+	for _, e := range s.Branches {
+		if e.Name == name {
+			return e
+		}
+	}
+	return StackEntry{}
 }
 
 // RenameBranch renames a branch in the stack, updating both Name and Base references.

@@ -68,9 +68,27 @@ func syncWithStack(feature, featurePath string, stack internal.Stack, sorted []i
 		}
 
 		base := resolveBase(entry.Base)
-		err := internal.RunSilent("git", "rebase", base, entry.Name)
-		if err != nil {
-			_ = internal.RunSilent("git", "rebase", "--abort")
+
+		// For archived branches, rebase needs repo context.
+		// Use the repo path if specified, otherwise cwd.
+		rebaseDir := ""
+		if entry.Repo != "" {
+			rebaseDir = entry.Repo
+		}
+
+		var rebaseErr error
+		if rebaseDir != "" {
+			rebaseErr = internal.RunSilentDir(rebaseDir, "git", "rebase", base, entry.Name)
+		} else {
+			rebaseErr = internal.RunSilent("git", "rebase", base, entry.Name)
+		}
+
+		if rebaseErr != nil {
+			if rebaseDir != "" {
+				_ = internal.RunSilentDir(rebaseDir, "git", "rebase", "--abort")
+			} else {
+				_ = internal.RunSilent("git", "rebase", "--abort")
+			}
 			fmt.Println(formatSyncStatus(entry.Name, "archived", "conflict"))
 			fmt.Printf("    Restore with: tws new %s %s\n", feature, entry.Name)
 			skipDescendants(stack, entry.Name, skipped)

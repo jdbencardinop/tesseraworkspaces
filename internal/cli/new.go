@@ -13,6 +13,7 @@ import (
 func newCmd() *cobra.Command {
 	var base string
 	var force bool
+	var repo string
 
 	cmd := &cobra.Command{
 		Use:   "new <feature> <branch>",
@@ -29,19 +30,21 @@ func newCmd() *cobra.Command {
 			}
 		},
 		Run: func(cmd *cobra.Command, args []string) {
-			createWorktree(args[0], args[1], base, force)
+			createWorktree(args[0], args[1], base, repo, force)
 		},
 	}
 
 	cmd.Flags().StringVar(&base, "base", "main", "Parent branch for stacking")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force checkout of already checked-out branch")
+	cmd.Flags().StringVar(&repo, "repo", "", "Source repository path (for cross-repo worktrees)")
 
 	return cmd
 }
 
 // createWorktree is the shared logic for creating a worktree branch.
 // Used by both tws new and tws add -n.
-func createWorktree(feature, branch, base string, force bool) {
+// repoPath is the source repo (empty = current repo).
+func createWorktree(feature, branch, base, repoPath string, force bool) {
 	internal.RequireTool("git")
 
 	featurePath := internal.FeaturePath(feature)
@@ -49,14 +52,32 @@ func createWorktree(feature, branch, base string, force bool) {
 
 	internal.Must(os.MkdirAll(featurePath, 0755))
 
-	repoRoot, err := internal.MainRepoRoot()
-	if err != nil {
-		fmt.Println("Error: must be run from inside a git repository")
-		os.Exit(1)
+	// Determine which repo to use
+	var repoRoot string
+	if repoPath != "" {
+		// Cross-repo: use the specified repo
+		absRepo, err := internal.AbsPath(repoPath)
+		if err != nil {
+			fmt.Printf("Error: invalid repo path %s: %v\n", repoPath, err)
+			os.Exit(1)
+		}
+		repoRoot = absRepo
+		repoPath = absRepo
+	} else {
+		// Default: use the current repo
+		root, err := internal.MainRepoRoot()
+		if err != nil {
+			fmt.Println("Error: must be run from inside a git repository")
+			os.Exit(1)
+		}
+		repoRoot = root
 	}
 
-	if internal.BranchExists(branch) {
-		if isCheckedOut(branch) && !force {
+	// Check if branch exists in the target repo
+	branchExists := internal.RunSilent("git", "-C", repoRoot, "rev-parse", "--verify", branch) == nil
+
+	if branchExists {
+		if isCheckedOutIn(repoRoot, branch) && !force {
 			fmt.Printf("Warning: branch %q is already checked out in another worktree.\n", branch)
 			fmt.Println("Use --force to check it out anyway.")
 			os.Exit(1)
@@ -74,7 +95,11 @@ func createWorktree(feature, branch, base string, force bool) {
 
 	stack, _ := internal.LoadStack(featurePath)
 	if !internal.HasBranch(stack, branch) {
-		stack.Branches = append(stack.Branches, internal.StackEntry{Name: branch, Base: base})
+		stack.Branches = append(stack.Branches, internal.StackEntry{
+			Name: branch,
+			Base: base,
+			Repo: repoPath,
+		})
 		internal.Must(internal.SaveStack(featurePath, stack))
 	}
 
@@ -84,12 +109,16 @@ func createWorktree(feature, branch, base string, force bool) {
 		fmt.Printf("Warning: inject failed: %v\n", err)
 	}
 
-	fmt.Printf("Worktree created: %s (base: %s)\n", path, base)
+	if repoPath != "" {
+		fmt.Printf("Worktree created: %s (base: %s, repo: %s)\n", path, base, repoPath)
+	} else {
+		fmt.Printf("Worktree created: %s (base: %s)\n", path, base)
+	}
 }
 
-// isCheckedOut checks if a branch is currently checked out in any worktree.
-func isCheckedOut(branch string) bool {
-	out, err := exec.Command("git", "worktree", "list", "--porcelain").Output()
+// isCheckedOutIn checks if a branch is checked out in any worktree of the given repo.
+func isCheckedOutIn(repoDir, branch string) bool {
+	out, err := exec.Command("git", "-C", repoDir, "worktree", "list", "--porcelain").Output()
 	if err != nil {
 		return false
 	}

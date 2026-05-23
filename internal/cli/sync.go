@@ -28,12 +28,34 @@ func syncCmd() *cobra.Command {
 func syncFeature(feature string) {
 	featurePath := internal.FeaturePath(feature)
 
-	internal.Must(internal.Run("git", "fetch"))
-
 	stack, err := internal.LoadStack(featurePath)
 	if err != nil {
+		// No stack — single fetch + fallback
+		internal.Must(internal.Run("git", "fetch"))
 		syncFallback(featurePath)
 		return
+	}
+
+	// Fetch per-repo: find an active worktree for each repo to use as git context
+	repos := internal.UniqueRepos(stack, featurePath)
+	for repo, wtPath := range repos {
+		if wtPath == "" {
+			// No active worktree for this repo — try fetching from cwd
+			if repo == "" {
+				fmt.Println("Fetching default repo...")
+				_ = internal.Run("git", "fetch")
+			} else {
+				fmt.Printf("Fetching %s...\n", repo)
+				_ = internal.RunDir(repo, "git", "fetch")
+			}
+		} else {
+			if repo == "" {
+				fmt.Println("Fetching default repo...")
+			} else {
+				fmt.Printf("Fetching %s...\n", repo)
+			}
+			_ = internal.RunDir(wtPath, "git", "fetch")
+		}
 	}
 
 	sorted, err := internal.TopoSort(stack)
