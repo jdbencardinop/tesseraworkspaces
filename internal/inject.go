@@ -14,13 +14,22 @@ func InjectPath(featurePath string) string {
 }
 
 // InjectFiles symlinks all files from the feature's inject/ directory
-// into the target worktree. Uses relative symlinks so they work
-// regardless of absolute path. Skips existing files.
-func InjectFiles(featurePath, worktreePath string) error {
+// into the target worktree. injectInto is a relative subdirectory within
+// the worktree (empty string or "." means worktree root).
+// Uses relative symlinks. Skips existing files.
+func InjectFiles(featurePath, worktreePath, injectInto string) error {
 	injectDir := InjectPath(featurePath)
 
 	if _, err := os.Stat(injectDir); os.IsNotExist(err) {
 		return nil // no inject dir, nothing to do
+	}
+
+	targetBase := worktreePath
+	if injectInto != "" && injectInto != "." {
+		targetBase = filepath.Join(worktreePath, injectInto)
+		if err := os.MkdirAll(targetBase, 0755); err != nil {
+			return fmt.Errorf("could not create inject target %s: %w", targetBase, err)
+		}
 	}
 
 	return filepath.Walk(injectDir, func(srcPath string, info os.FileInfo, err error) error {
@@ -28,30 +37,25 @@ func InjectFiles(featurePath, worktreePath string) error {
 			return err
 		}
 
-		// Get relative path from inject/ dir
 		relPath, err := filepath.Rel(injectDir, srcPath)
 		if err != nil {
 			return err
 		}
 
-		// Skip the root inject/ dir itself
 		if relPath == "." {
 			return nil
 		}
 
-		destPath := filepath.Join(worktreePath, relPath)
+		destPath := filepath.Join(targetBase, relPath)
 
 		if info.IsDir() {
-			// Create directory in worktree if it doesn't exist
 			return os.MkdirAll(destPath, 0755)
 		}
 
-		// Skip if destination already exists (don't overwrite)
 		if _, err := os.Lstat(destPath); err == nil {
 			return nil
 		}
 
-		// Compute relative symlink target from dest to source
 		relTarget, err := filepath.Rel(filepath.Dir(destPath), srcPath)
 		if err != nil {
 			return fmt.Errorf("could not compute relative path: %w", err)
@@ -62,11 +66,11 @@ func InjectFiles(featurePath, worktreePath string) error {
 }
 
 // InjectFilesForFeature re-syncs inject/ into all active worktrees for a feature.
-func InjectFilesForFeature(featurePath string) (int, error) {
+func InjectFilesForFeature(featurePath, injectInto string) (int, error) {
 	wtDir := filepath.Join(featurePath, "worktrees")
 	entries, err := os.ReadDir(wtDir)
 	if err != nil {
-		return 0, nil // no worktrees dir
+		return 0, nil
 	}
 
 	count := 0
@@ -75,11 +79,20 @@ func InjectFilesForFeature(featurePath string) (int, error) {
 			continue
 		}
 		wtPath := filepath.Join(wtDir, e.Name())
-		if err := InjectFiles(featurePath, wtPath); err != nil {
+		if err := InjectFiles(featurePath, wtPath, injectInto); err != nil {
 			fmt.Printf("  Warning: inject failed for %s: %v\n", e.Name(), err)
 		} else {
 			count++
 		}
 	}
 	return count, nil
+}
+
+// ResolveInjectInto returns the inject target from the flag or config.
+func ResolveInjectInto(flagValue string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	cfg := LoadConfig()
+	return cfg.InjectInto
 }

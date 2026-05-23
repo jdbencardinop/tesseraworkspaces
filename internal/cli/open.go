@@ -47,7 +47,8 @@ func openCmd() *cobra.Command {
 
 			// Re-sync inject files
 			featurePath := internal.FeaturePath(feature)
-			if err := internal.InjectFiles(featurePath, path); err != nil {
+			injectTarget := internal.ResolveInjectInto("")
+			if err := internal.InjectFiles(featurePath, path, injectTarget); err != nil {
 				fmt.Printf("Warning: inject sync failed: %v\n", err)
 			}
 

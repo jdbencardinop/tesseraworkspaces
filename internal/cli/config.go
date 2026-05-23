@@ -37,6 +37,11 @@ func configShowCmd() *cobra.Command {
 			} else {
 				fmt.Println("use_tmux: false (default)")
 			}
+			if cfg.InjectInto != "" {
+				fmt.Printf("inject_into: %s\n", cfg.InjectInto)
+			} else {
+				fmt.Println("inject_into: . (default, worktree root)")
+			}
 			if len(cfg.Workspaces) > 0 {
 				fmt.Println("workspaces:")
 				for k, v := range cfg.Workspaces {
@@ -59,11 +64,11 @@ func configSetCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "set <key> <value>",
-		Short: "Set a config value (keys: agent_command, use_tmux)",
+		Short: "Set a config value (keys: agent_command, use_tmux, inject_into)",
 		Args:  cobra.ExactArgs(2),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			if len(args) == 0 {
-				return []string{"agent_command", "use_tmux"}, cobra.ShellCompDirectiveNoFileComp
+				return []string{"agent_command", "use_tmux", "inject_into"}, cobra.ShellCompDirectiveNoFileComp
 			}
 			if len(args) == 1 && args[0] == "agent_command" {
 				return []string{"claude", "opencode", "aider", "copilot"}, cobra.ShellCompDirectiveNoFileComp
@@ -97,8 +102,10 @@ func configSetCmd() *cobra.Command {
 					os.Exit(1)
 				}
 				cfg.UseTmux = &b
+			case "inject_into":
+				cfg.InjectInto = value
 			default:
-				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux)\n", key)
+				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux, inject_into)\n", key)
 				os.Exit(1)
 			}
 
@@ -140,8 +147,14 @@ func configGetCmd() *cobra.Command {
 				} else {
 					fmt.Println("false")
 				}
+			case "inject_into":
+				if cfg.InjectInto != "" {
+					fmt.Println(cfg.InjectInto)
+				} else {
+					fmt.Println(".")
+				}
 			default:
-				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux)\n", args[0])
+				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux, inject_into)\n", args[0])
 				os.Exit(1)
 			}
 		},

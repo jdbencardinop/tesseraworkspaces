@@ -79,7 +79,8 @@ func createWorktree(feature, branch, base string, force bool) {
 	}
 
 	// Inject shared files into the worktree
-	if err := internal.InjectFiles(featurePath, path); err != nil {
+	target := internal.ResolveInjectInto("")
+	if err := internal.InjectFiles(featurePath, path, target); err != nil {
 		fmt.Printf("Warning: inject failed: %v\n", err)
 	}
 

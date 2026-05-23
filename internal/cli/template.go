@@ -81,7 +81,8 @@ func syncFeatureTemplate(feature string, extraTemplates []string) {
 	applyTemplates(injectDir, extraTemplates)
 
 	// Re-sync inject into worktrees
-	count, err := internal.InjectFilesForFeature(featurePath)
+	target := internal.ResolveInjectInto("")
+	count, err := internal.InjectFilesForFeature(featurePath, target)
 	if err != nil {
 		fmt.Printf("  Warning: worktree inject failed: %v\n", err)
 	} else if count > 0 {
