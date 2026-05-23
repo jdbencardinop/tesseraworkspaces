@@ -1,0 +1,294 @@
+diff --git a/internal/cli/config.go b/internal/cli/config.go
+index 77c587c..303f3f7 100644
+--- a/internal/cli/config.go
++++ b/internal/cli/config.go
+@@ -37,6 +37,11 @@ func configShowCmd() *cobra.Command {
+ 			} else {
+ 				fmt.Println("use_tmux: false (default)")
+ 			}
++			if cfg.InjectInto != "" {
++				fmt.Printf("inject_into: %s\n", cfg.InjectInto)
++			} else {
++				fmt.Println("inject_into: . (default, worktree root)")
++			}
+ 			if len(cfg.Workspaces) > 0 {
+ 				fmt.Println("workspaces:")
+ 				for k, v := range cfg.Workspaces {
+@@ -59,11 +64,11 @@ func configSetCmd() *cobra.Command {
+ 
+ 	cmd := &cobra.Command{
+ 		Use:   "set <key> <value>",
+-		Short: "Set a config value (keys: agent_command, use_tmux)",
++		Short: "Set a config value (keys: agent_command, use_tmux, inject_into)",
+ 		Args:  cobra.ExactArgs(2),
+ 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+ 			if len(args) == 0 {
+-				return []string{"agent_command", "use_tmux"}, cobra.ShellCompDirectiveNoFileComp
++				return []string{"agent_command", "use_tmux", "inject_into"}, cobra.ShellCompDirectiveNoFileComp
+ 			}
+ 			if len(args) == 1 && args[0] == "agent_command" {
+ 				return []string{"claude", "opencode", "aider", "copilot"}, cobra.ShellCompDirectiveNoFileComp
+@@ -97,8 +102,10 @@ func configSetCmd() *cobra.Command {
+ 					os.Exit(1)
+ 				}
+ 				cfg.UseTmux = &b
++			case "inject_into":
++				cfg.InjectInto = value
+ 			default:
+-				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux)\n", key)
++				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux, inject_into)\n", key)
+ 				os.Exit(1)
+ 			}
+ 
+@@ -140,8 +147,14 @@ func configGetCmd() *cobra.Command {
+ 				} else {
+ 					fmt.Println("false")
+ 				}
++			case "inject_into":
++				if cfg.InjectInto != "" {
++					fmt.Println(cfg.InjectInto)
++				} else {
++					fmt.Println(".")
++				}
+ 			default:
+-				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux)\n", args[0])
++				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux, inject_into)\n", args[0])
+ 				os.Exit(1)
+ 			}
+ 		},
+diff --git a/internal/cli/inject.go b/internal/cli/inject.go
+index 47d5c69..fc3fcae 100644
+--- a/internal/cli/inject.go
++++ b/internal/cli/inject.go
+@@ -9,18 +9,23 @@ import (
+ )
+ 
+ func injectCmd() *cobra.Command {
+-	return &cobra.Command{
++	var into string
++
++	cmd := &cobra.Command{
+ 		Use:   "inject <feature> [branch]",
+ 		Short: "Sync inject/ files into worktrees",
+ 		Long: `Re-sync shared files from inject/ into worktrees. With no branch, syncs all worktrees.
+ 
+-Injected files are symlinked into the worktree root. Since these are
+-not tracked by git, they will appear as untracked files in git status.
++Injected files are symlinked into the worktree. By default they go to
++the worktree root. Use --into to target a subdirectory (e.g., --into .context).
++
++Set inject_into in config to change the default:
++  tws config set inject_into .context
++  tws config set inject_into .context --repo
+ 
+ Tip: To keep git status clean, either:
+   - Add injected filenames to .gitignore (e.g., CLAUDE.local.md)
+-  - Place files inside inject/ in a gitignored subfolder
+-    (e.g., inject/.context/file.md → worktree/.context/file.md)
++  - Use --into to target a gitignored subfolder (e.g., --into .context)
+   - Or nest inside an already-ignored dir like inject/.claude/`,
+ 		Args: cobra.RangeArgs(1, 2),
+ 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+@@ -49,22 +54,26 @@ Tip: To keep git status clean, either:
+ 				os.Exit(1)
+ 			}
+ 
++			target := internal.ResolveInjectInto(into)
++
+ 			if len(args) == 2 {
+-				// Single branch
+ 				branch := args[1]
+ 				path := internal.WorktreePath(feature, branch)
+ 				if _, err := os.Stat(path); os.IsNotExist(err) {
+ 					fmt.Printf("Worktree not found: %s/%s\n", feature, branch)
+ 					os.Exit(1)
+ 				}
+-				if err := internal.InjectFiles(featurePath, path); err != nil {
++				if err := internal.InjectFiles(featurePath, path, target); err != nil {
+ 					fmt.Printf("Error: %v\n", err)
+ 					os.Exit(1)
+ 				}
+-				fmt.Printf("Injected files into: %s/%s\n", feature, branch)
++				if target != "" && target != "." {
++					fmt.Printf("Injected files into: %s/%s/%s\n", feature, branch, target)
++				} else {
++					fmt.Printf("Injected files into: %s/%s\n", feature, branch)
++				}
+ 			} else {
+-				// All worktrees
+-				count, err := internal.InjectFilesForFeature(featurePath)
++				count, err := internal.InjectFilesForFeature(featurePath, target)
+ 				if err != nil {
+ 					fmt.Printf("Error: %v\n", err)
+ 					os.Exit(1)
+@@ -73,4 +82,8 @@ Tip: To keep git status clean, either:
+ 			}
+ 		},
+ 	}
++
++	cmd.Flags().StringVar(&into, "into", "", "Target subdirectory within worktree (default: root, or inject_into from config)")
++
++	return cmd
+ }
+diff --git a/internal/cli/new.go b/internal/cli/new.go
+index 2f72945..dd5c44f 100644
+--- a/internal/cli/new.go
++++ b/internal/cli/new.go
+@@ -79,7 +79,8 @@ func createWorktree(feature, branch, base string, force bool) {
+ 	}
+ 
+ 	// Inject shared files into the worktree
+-	if err := internal.InjectFiles(featurePath, path); err != nil {
++	target := internal.ResolveInjectInto("")
++	if err := internal.InjectFiles(featurePath, path, target); err != nil {
+ 		fmt.Printf("Warning: inject failed: %v\n", err)
+ 	}
+ 
+diff --git a/internal/cli/open.go b/internal/cli/open.go
+index 9f62ff8..d14d7ce 100644
+--- a/internal/cli/open.go
++++ b/internal/cli/open.go
+@@ -47,7 +47,8 @@ func openCmd() *cobra.Command {
+ 
+ 			// Re-sync inject files
+ 			featurePath := internal.FeaturePath(feature)
+-			if err := internal.InjectFiles(featurePath, path); err != nil {
++			injectTarget := internal.ResolveInjectInto("")
++			if err := internal.InjectFiles(featurePath, path, injectTarget); err != nil {
+ 				fmt.Printf("Warning: inject sync failed: %v\n", err)
+ 			}
+ 
+diff --git a/internal/cli/template.go b/internal/cli/template.go
+index 7eaf1a7..0300aca 100644
+--- a/internal/cli/template.go
++++ b/internal/cli/template.go
+@@ -81,7 +81,8 @@ func syncFeatureTemplate(feature string, extraTemplates []string) {
+ 	applyTemplates(injectDir, extraTemplates)
+ 
+ 	// Re-sync inject into worktrees
+-	count, err := internal.InjectFilesForFeature(featurePath)
++	target := internal.ResolveInjectInto("")
++	count, err := internal.InjectFilesForFeature(featurePath, target)
+ 	if err != nil {
+ 		fmt.Printf("  Warning: worktree inject failed: %v\n", err)
+ 	} else if count > 0 {
+diff --git a/internal/config.go b/internal/config.go
+index 06d7796..8c094d1 100644
+--- a/internal/config.go
++++ b/internal/config.go
+@@ -11,6 +11,7 @@ type Config struct {
+ 	Workspaces   map[string]string `yaml:"workspaces"`
+ 	AgentCommand string            `yaml:"agent_command"`
+ 	UseTmux      *bool             `yaml:"use_tmux"`
++	InjectInto   string            `yaml:"inject_into"`
+ }
+ 
+ func (c Config) GetAgentCommand() string {
+@@ -61,6 +62,9 @@ func LoadConfig() Config {
+ 	if repo.UseTmux != nil {
+ 		cfg.UseTmux = repo.UseTmux
+ 	}
++	if repo.InjectInto != "" {
++		cfg.InjectInto = repo.InjectInto
++	}
+ 	if len(repo.Workspaces) > 0 {
+ 		if cfg.Workspaces == nil {
+ 			cfg.Workspaces = make(map[string]string)
+diff --git a/internal/inject.go b/internal/inject.go
+index 14a42da..dddb782 100644
+--- a/internal/inject.go
++++ b/internal/inject.go
+@@ -14,44 +14,48 @@ func InjectPath(featurePath string) string {
+ }
+ 
+ // InjectFiles symlinks all files from the feature's inject/ directory
+-// into the target worktree. Uses relative symlinks so they work
+-// regardless of absolute path. Skips existing files.
+-func InjectFiles(featurePath, worktreePath string) error {
++// into the target worktree. injectInto is a relative subdirectory within
++// the worktree (empty string or "." means worktree root).
++// Uses relative symlinks. Skips existing files.
++func InjectFiles(featurePath, worktreePath, injectInto string) error {
+ 	injectDir := InjectPath(featurePath)
+ 
+ 	if _, err := os.Stat(injectDir); os.IsNotExist(err) {
+ 		return nil // no inject dir, nothing to do
+ 	}
+ 
++	targetBase := worktreePath
++	if injectInto != "" && injectInto != "." {
++		targetBase = filepath.Join(worktreePath, injectInto)
++		if err := os.MkdirAll(targetBase, 0755); err != nil {
++			return fmt.Errorf("could not create inject target %s: %w", targetBase, err)
++		}
++	}
++
+ 	return filepath.Walk(injectDir, func(srcPath string, info os.FileInfo, err error) error {
+ 		if err != nil {
+ 			return err
+ 		}
+ 
+-		// Get relative path from inject/ dir
+ 		relPath, err := filepath.Rel(injectDir, srcPath)
+ 		if err != nil {
+ 			return err
+ 		}
+ 
+-		// Skip the root inject/ dir itself
+ 		if relPath == "." {
+ 			return nil
+ 		}
+ 
+-		destPath := filepath.Join(worktreePath, relPath)
++		destPath := filepath.Join(targetBase, relPath)
+ 
+ 		if info.IsDir() {
+-			// Create directory in worktree if it doesn't exist
+ 			return os.MkdirAll(destPath, 0755)
+ 		}
+ 
+-		// Skip if destination already exists (don't overwrite)
+ 		if _, err := os.Lstat(destPath); err == nil {
+ 			return nil
+ 		}
+ 
+-		// Compute relative symlink target from dest to source
+ 		relTarget, err := filepath.Rel(filepath.Dir(destPath), srcPath)
+ 		if err != nil {
+ 			return fmt.Errorf("could not compute relative path: %w", err)
+@@ -62,11 +66,11 @@ func InjectFiles(featurePath, worktreePath string) error {
+ }
+ 
+ // InjectFilesForFeature re-syncs inject/ into all active worktrees for a feature.
+-func InjectFilesForFeature(featurePath string) (int, error) {
++func InjectFilesForFeature(featurePath, injectInto string) (int, error) {
+ 	wtDir := filepath.Join(featurePath, "worktrees")
+ 	entries, err := os.ReadDir(wtDir)
+ 	if err != nil {
+-		return 0, nil // no worktrees dir
++		return 0, nil
+ 	}
+ 
+ 	count := 0
+@@ -75,7 +79,7 @@ func InjectFilesForFeature(featurePath string) (int, error) {
+ 			continue
+ 		}
+ 		wtPath := filepath.Join(wtDir, e.Name())
+-		if err := InjectFiles(featurePath, wtPath); err != nil {
++		if err := InjectFiles(featurePath, wtPath, injectInto); err != nil {
+ 			fmt.Printf("  Warning: inject failed for %s: %v\n", e.Name(), err)
+ 		} else {
+ 			count++
+@@ -83,3 +87,12 @@ func InjectFilesForFeature(featurePath string) (int, error) {
+ 	}
+ 	return count, nil
+ }
++
++// ResolveInjectInto returns the inject target from the flag or config.
++func ResolveInjectInto(flagValue string) string {
++	if flagValue != "" {
++		return flagValue
++	}
++	cfg := LoadConfig()
++	return cfg.InjectInto
++}

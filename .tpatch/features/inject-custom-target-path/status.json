@@ -2,11 +2,15 @@
   "id": "inject-custom-target-path",
   "slug": "inject-custom-target-path",
   "title": "Add --into flag to tws inject for specifying a custom target subdirectory inside the worktree. Currently inject/ maps to the worktree root. With --into, users can target a gitignored subfolder like .context/ or .claude/. Example: tws inject auth --into .context would symlink inject/ contents into \u003cworktree\u003e/.context/ instead of \u003cworktree\u003e/. Users can work around this today by nesting folders inside inject/ (e.g., inject/.context/file.md) but this should be documented better and the --into flag adds clarity.",
-  "state": "requested",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-05-22T23:17:28Z",
-  "updated_at": "2026-05-22T23:17:28Z",
-  "last_command": "add",
-  "apply": {},
+  "updated_at": "2026-05-23T04:44:47Z",
+  "last_command": "record",
+  "notes": "Patch recorded",
+  "apply": {
+    "base_commit": "8c4dc90f4e2aa71a48a4c803b0639c07f31aa4cb",
+    "has_patch": true
+  },
   "reconcile": {}
 }
