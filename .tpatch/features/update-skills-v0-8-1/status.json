@@ -1,0 +1,22 @@
+{
+  "id": "update-skills-v0-8-1",
+  "slug": "update-skills-v0-8-1",
+  "title": "Update embedded Claude and Copilot skill files to cover v0.8.1 features: tws push, tws sync --push/--verbose, test_command config for post-rebase validation.",
+  "state": "applied",
+  "compatibility": "unknown",
+  "requested_at": "2026-05-26T22:31:41Z",
+  "updated_at": "2026-05-26T22:33:27Z",
+  "last_command": "record",
+  "notes": "Patch recorded",
+  "apply": {
+    "base_commit": "6eacc57efbf98aed5cf4d27b665a2da86884c98e",
+    "has_patch": true
+  },
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "update-embedded-skills",
+      "kind": "hard"
+    }
+  ]
+}
