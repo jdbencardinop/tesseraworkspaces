@@ -24,7 +24,8 @@ tws <command> [args]
 | `tws add <feature> [-n <branch>] [--open] [--tmux]` | Create feature (and optionally a branch) |
 | `tws new <feature> <branch> [--base <parent>] [--force]` | Create a worktree branch |
 | `tws open [feature] [branch] [--tmux] [--no-agent]` | Open worktree and run agent |
-| `tws sync <feature>` | Rebase worktrees in dependency order |
+| `tws sync <feature> [--push] [--verbose]` | Rebase worktrees in dependency order |
+| `tws push <feature> [--dry-run]` | Push all branches with --force-with-lease |
 | `tws stack <feature>` | Show branch dependency tree |
 | `tws list` / `tws ls` | List features and branches |
 | `tws delete <feature>` | Remove feature and all worktrees |
@@ -112,9 +113,24 @@ Decision types: `breaking` | `info` | `deprecation` | `review` | `question`
 tws config show                              # show resolved config
 tws config set agent_command opencode        # change agent
 tws config set use_tmux true --repo          # per-repo setting
+tws config set test_command "go build ./..."  # validation after rebase
 ```
 
 Config files: global (`~/.config/tws/config.yaml`), per-repo (`.tws/config.yaml`). Env: `TWS_ROOT`.
+
+Config keys: `agent_command`, `use_tmux`, `inject_into`, `test_command`.
+
+### Sync and Push
+
+```sh
+tws sync <feature>                # fetch (quiet) + rebase in dependency order
+tws sync <feature> --push        # sync + push all branches
+tws sync <feature> --verbose     # show full fetch output
+tws push <feature>               # push all branches with --force-with-lease
+tws push <feature> --dry-run     # preview what would be pushed
+```
+
+If `test_command` is configured, it runs after each successful rebase. Validation failure skips dependent branches.
 
 ### Health Checks
 

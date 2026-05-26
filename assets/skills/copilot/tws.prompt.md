@@ -15,7 +15,8 @@ You are working in a project that uses `tws` for feature-scoped workspaces with 
 - `tws add <feature> [-n <branch>] [--open]` — Create feature (quick start with -n)
 - `tws new <feature> <branch> [--base <parent>] [--force]` — Create worktree branch
 - `tws open [feature] [branch] [--tmux] [--no-agent]` — Open worktree and run agent
-- `tws sync <feature>` — Rebase worktrees in dependency order
+- `tws sync <feature> [--push] [--verbose]` — Rebase worktrees in dependency order
+- `tws push <feature> [--dry-run]` — Push all branches with --force-with-lease
 - `tws stack <feature>` — Show branch dependency tree
 - `tws list` — List features and branches
 - `tws delete <feature>` — Remove feature and all worktrees
@@ -60,6 +61,8 @@ tws decisions ack <feature>                                  # mark as read
 2. Run `tws decisions show <feature>` to check for unread decisions from siblings
 3. Run `tws stack <feature>` to understand dependencies
 4. Use `tws sync <feature>` to keep branches up to date
-5. After breaking changes, run `tws decide <feature> "summary" --type breaking`
-6. Run `tws doctor` if something seems wrong
-7. Use `tws archive` to free disk space, `tws new` to restore
+5. Use `tws sync <feature> --push` to sync and push in one command
+6. After breaking changes, run `tws decide <feature> "summary" --type breaking`
+7. Run `tws doctor` if something seems wrong
+8. Use `tws archive` to free disk space, `tws new` to restore
+9. Set `test_command` in config for automatic validation after rebase
