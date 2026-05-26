@@ -1,0 +1,6 @@
+ .tpatch/FEATURES.md                                 |  8 ++++----
+ .tpatch/features/clean-git-output/status.json       | 12 ++++++++----
+ .tpatch/features/post-rebase-validation/status.json |  7 ++++---
+ .tpatch/features/push-branches/status.json          |  7 ++++---
+ .tpatch/features/quiet-fetch-output/status.json     | 12 ++++++++----
+ 5 files changed, 28 insertions(+), 18 deletions(-)

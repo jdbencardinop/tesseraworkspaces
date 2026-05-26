@@ -1,0 +1,405 @@
+diff --git a/internal/cli/config.go b/internal/cli/config.go
+index 303f3f7..515a019 100644
+--- a/internal/cli/config.go
++++ b/internal/cli/config.go
+@@ -42,6 +42,11 @@ func configShowCmd() *cobra.Command {
+ 			} else {
+ 				fmt.Println("inject_into: . (default, worktree root)")
+ 			}
++			if cfg.TestCommand != "" {
++				fmt.Printf("test_command: %s\n", cfg.TestCommand)
++			} else {
++				fmt.Println("test_command: (none)")
++			}
+ 			if len(cfg.Workspaces) > 0 {
+ 				fmt.Println("workspaces:")
+ 				for k, v := range cfg.Workspaces {
+@@ -64,11 +69,11 @@ func configSetCmd() *cobra.Command {
+ 
+ 	cmd := &cobra.Command{
+ 		Use:   "set <key> <value>",
+-		Short: "Set a config value (keys: agent_command, use_tmux, inject_into)",
++		Short: "Set a config value (keys: agent_command, use_tmux, inject_into, test_command)",
+ 		Args:  cobra.ExactArgs(2),
+ 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+ 			if len(args) == 0 {
+-				return []string{"agent_command", "use_tmux", "inject_into"}, cobra.ShellCompDirectiveNoFileComp
++				return []string{"agent_command", "use_tmux", "inject_into", "test_command"}, cobra.ShellCompDirectiveNoFileComp
+ 			}
+ 			if len(args) == 1 && args[0] == "agent_command" {
+ 				return []string{"claude", "opencode", "aider", "copilot"}, cobra.ShellCompDirectiveNoFileComp
+@@ -104,8 +109,10 @@ func configSetCmd() *cobra.Command {
+ 				cfg.UseTmux = &b
+ 			case "inject_into":
+ 				cfg.InjectInto = value
++			case "test_command":
++				cfg.TestCommand = value
+ 			default:
+-				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux, inject_into)\n", key)
++				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux, inject_into, test_command)\n", key)
+ 				os.Exit(1)
+ 			}
+ 
+@@ -153,8 +160,14 @@ func configGetCmd() *cobra.Command {
+ 				} else {
+ 					fmt.Println(".")
+ 				}
++			case "test_command":
++				if cfg.TestCommand != "" {
++					fmt.Println(cfg.TestCommand)
++				} else {
++					fmt.Println("(none)")
++				}
+ 			default:
+-				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux, inject_into)\n", args[0])
++				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux, inject_into, test_command)\n", args[0])
+ 				os.Exit(1)
+ 			}
+ 		},
+diff --git a/internal/cli/push.go b/internal/cli/push.go
+new file mode 100644
+index 0000000..0ceefe5
+--- /dev/null
++++ b/internal/cli/push.go
+@@ -0,0 +1,71 @@
++package cli
++
++import (
++	"fmt"
++	"os"
++
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
++	"github.com/spf13/cobra"
++)
++
++func pushCmd() *cobra.Command {
++	var dryRun bool
++
++	cmd := &cobra.Command{
++		Use:   "push <feature>",
++		Short: "Push all branches in a feature with --force-with-lease",
++		Args:  cobra.ExactArgs(1),
++		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
++			if len(args) == 0 {
++				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
++			}
++			return nil, cobra.ShellCompDirectiveNoFileComp
++		},
++		Run: func(cmd *cobra.Command, args []string) {
++			internal.RequireTool("git")
++			pushFeature(args[0], dryRun)
++		},
++	}
++
++	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be pushed without pushing")
++
++	return cmd
++}
++
++func pushFeature(feature string, dryRun bool) {
++	featurePath := internal.FeaturePath(feature)
++
++	stack, err := internal.LoadStack(featurePath)
++	if err != nil {
++		fmt.Printf("No stack.yaml found for feature: %s\n", feature)
++		os.Exit(1)
++	}
++
++	for _, entry := range stack.Branches {
++		path := internal.WorktreePath(feature, entry.Name)
++
++		// Skip archived branches
++		if _, err := os.Stat(path); os.IsNotExist(err) {
++			fmt.Printf("  [-] %s (archived, skipped)\n", entry.Name)
++			continue
++		}
++
++		if dryRun {
++			fmt.Printf("  [~] %s (would push --force-with-lease)\n", entry.Name)
++			continue
++		}
++
++		// Determine repo context
++		repoDir := path
++		if entry.Repo != "" {
++			repoDir = entry.Repo
++		}
++
++		err := internal.RunDirClean(repoDir, "git", "push", "--force-with-lease", "origin", entry.Name)
++		if err != nil {
++			fmt.Printf("  [x] %s (push failed)\n", entry.Name)
++		} else {
++			fmt.Printf("  [+] %s (pushed)\n", entry.Name)
++		}
++	}
++}
+diff --git a/internal/cli/root.go b/internal/cli/root.go
+index 5c42816..af19e74 100644
+--- a/internal/cli/root.go
++++ b/internal/cli/root.go
+@@ -38,6 +38,7 @@ func Execute() int {
+ 		doctorCmd(),
+ 		renameCmd(),
+ 		templateCmd(),
++		pushCmd(),
+ 	)
+ 
+ 	if err := rootCmd.Execute(); err != nil {
+diff --git a/internal/cli/sync.go b/internal/cli/sync.go
+index dd7768d..e694fa1 100644
+--- a/internal/cli/sync.go
++++ b/internal/cli/sync.go
+@@ -8,7 +8,10 @@ import (
+ )
+ 
+ func syncCmd() *cobra.Command {
+-	return &cobra.Command{
++	var verbose bool
++	var push bool
++
++	cmd := &cobra.Command{
+ 		Use:   "sync <feature>",
+ 		Short: "Rebase worktrees in dependency order",
+ 		Args:  cobra.ExactArgs(1),
+@@ -20,42 +23,35 @@ func syncCmd() *cobra.Command {
+ 		},
+ 		Run: func(cmd *cobra.Command, args []string) {
+ 			internal.RequireTool("git")
+-			syncFeature(args[0])
++			syncFeature(args[0], verbose)
++			if push {
++				fmt.Println()
++				fmt.Println("Pushing...")
++				pushFeature(args[0], false)
++			}
+ 		},
+ 	}
++
++	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show full git fetch output")
++	cmd.Flags().BoolVar(&push, "push", false, "Push all branches after syncing")
++
++	return cmd
+ }
+ 
+-func syncFeature(feature string) {
++func syncFeature(feature string, verbose bool) {
+ 	featurePath := internal.FeaturePath(feature)
+ 
+ 	stack, err := internal.LoadStack(featurePath)
+ 	if err != nil {
+-		// No stack — single fetch + fallback
+-		internal.Must(internal.Run("git", "fetch"))
++		fetchQuiet("", "", verbose)
+ 		syncFallback(featurePath)
+ 		return
+ 	}
+ 
+-	// Fetch per-repo: find an active worktree for each repo to use as git context
++	// Fetch per-repo
+ 	repos := internal.UniqueRepos(stack, featurePath)
+ 	for repo, wtPath := range repos {
+-		if wtPath == "" {
+-			// No active worktree for this repo — try fetching from cwd
+-			if repo == "" {
+-				fmt.Println("Fetching default repo...")
+-				_ = internal.Run("git", "fetch")
+-			} else {
+-				fmt.Printf("Fetching %s...\n", repo)
+-				_ = internal.RunDir(repo, "git", "fetch")
+-			}
+-		} else {
+-			if repo == "" {
+-				fmt.Println("Fetching default repo...")
+-			} else {
+-				fmt.Printf("Fetching %s...\n", repo)
+-			}
+-			_ = internal.RunDir(wtPath, "git", "fetch")
+-		}
++		fetchQuiet(repo, wtPath, verbose)
+ 	}
+ 
+ 	sorted, err := internal.TopoSort(stack)
+@@ -66,3 +62,36 @@ func syncFeature(feature string) {
+ 
+ 	syncWithStack(feature, featurePath, stack, sorted)
+ }
++
++func fetchQuiet(repo, wtPath string, verbose bool) {
++	label := "default repo"
++	if repo != "" {
++		label = repo
++	}
++
++	if verbose {
++		fmt.Printf("Fetching %s...\n", label)
++		if wtPath != "" {
++			_ = internal.RunDir(wtPath, "git", "fetch")
++		} else if repo != "" {
++			_ = internal.RunDir(repo, "git", "fetch")
++		} else {
++			_ = internal.Run("git", "fetch")
++		}
++	} else {
++		fmt.Printf("Fetching %s... ", label)
++		var err error
++		if wtPath != "" {
++			err = internal.RunSilentDir(wtPath, "git", "fetch")
++		} else if repo != "" {
++			err = internal.RunSilentDir(repo, "git", "fetch")
++		} else {
++			err = internal.RunSilent("git", "fetch")
++		}
++		if err != nil {
++			fmt.Println("failed")
++		} else {
++			fmt.Println("done")
++		}
++	}
++}
+diff --git a/internal/cli/sync_helpers.go b/internal/cli/sync_helpers.go
+index bd4028e..be8fe8f 100644
+--- a/internal/cli/sync_helpers.go
++++ b/internal/cli/sync_helpers.go
+@@ -4,6 +4,7 @@ import (
+ 	"fmt"
+ 	"os"
+ 	"path/filepath"
++	"strings"
+ 
+ 	"github.com/jdbencardinop/tesseraworkspaces/internal"
+ )
+@@ -34,13 +35,18 @@ func syncWithStack(feature, featurePath string, stack internal.Stack, sorted []i
+ 
+ 		base := resolveBase(entry.Base)
+ 
+-		err := internal.RunDir(path, "git", "rebase", "--update-refs", base)
++		err := internal.RunDirClean(path, "git", "rebase", "--update-refs", base)
+ 		if err != nil {
+ 			fmt.Println(formatSyncStatus(entry.Name, "active", "failed"))
+ 			skipDescendants(stack, entry.Name, skipped)
+ 		} else {
+-			fmt.Println(formatSyncStatus(entry.Name, "active", "synced"))
+-			markUpdatedAncestors(stack, entry.Name, featurePath, updatedByRef)
++			// Post-rebase validation
++			if !runValidation(path, entry.Name) {
++				skipDescendants(stack, entry.Name, skipped)
++			} else {
++				fmt.Println(formatSyncStatus(entry.Name, "active", "synced"))
++				markUpdatedAncestors(stack, entry.Name, featurePath, updatedByRef)
++			}
+ 		}
+ 	}
+ 
+@@ -161,6 +167,26 @@ func syncFallback(featurePath string) {
+ 		}
+ 		path := filepath.Join(featurePath, "worktrees", e.Name())
+ 		fmt.Printf("Syncing worktree: %s\n", path)
+-		internal.Must(internal.RunDir(path, "git", "rebase", "--update-refs", "origin/main"))
++		internal.Must(internal.RunDirClean(path, "git", "rebase", "--update-refs", "origin/main"))
++	}
++}
++
++// runValidation runs the configured test_command after a successful rebase.
++// Returns true if validation passes (or no command configured).
++func runValidation(worktreePath, branchName string) bool {
++	cfg := internal.LoadConfig()
++	if cfg.TestCommand == "" {
++		return true
++	}
++
++	fmt.Printf("    validating %s: %s... ", branchName, cfg.TestCommand)
++	parts := strings.Fields(cfg.TestCommand)
++	err := internal.RunSilentDir(worktreePath, parts[0], parts[1:]...)
++	if err != nil {
++		fmt.Println("FAILED")
++		fmt.Println(formatSyncStatus(branchName, "active", "validation-failed"))
++		return false
+ 	}
++	fmt.Println("ok")
++	return true
+ }
+diff --git a/internal/config.go b/internal/config.go
+index 8c094d1..acba2e6 100644
+--- a/internal/config.go
++++ b/internal/config.go
+@@ -12,6 +12,7 @@ type Config struct {
+ 	AgentCommand string            `yaml:"agent_command"`
+ 	UseTmux      *bool             `yaml:"use_tmux"`
+ 	InjectInto   string            `yaml:"inject_into"`
++	TestCommand  string            `yaml:"test_command"`
+ }
+ 
+ func (c Config) GetAgentCommand() string {
+@@ -65,6 +66,9 @@ func LoadConfig() Config {
+ 	if repo.InjectInto != "" {
+ 		cfg.InjectInto = repo.InjectInto
+ 	}
++	if repo.TestCommand != "" {
++		cfg.TestCommand = repo.TestCommand
++	}
+ 	if len(repo.Workspaces) > 0 {
+ 		if cfg.Workspaces == nil {
+ 			cfg.Workspaces = make(map[string]string)
+diff --git a/internal/exec.go b/internal/exec.go
+index fe4c3f4..ea9b825 100644
+--- a/internal/exec.go
++++ b/internal/exec.go
+@@ -70,6 +70,58 @@ func RunDir(dir string, name string, args ...string) error {
+ 	return cmd.Run()
+ }
+ 
++// RunDirClean runs a command in a directory, filtering git hint/warning noise
++// from stderr. Actual errors are still shown.
++func RunDirClean(dir string, name string, args ...string) error {
++	return runWithFilteredStderr(dir, name, args...)
++}
++
++func runWithFilteredStderr(dir, name string, args ...string) error {
++	cmd := exec.Command(name, args...)
++	cmd.Stdout = os.Stdout
++	cmd.Dir = dir
++
++	stderr, err := cmd.StderrPipe()
++	if err != nil {
++		return err
++	}
++
++	if err := cmd.Start(); err != nil {
++		return err
++	}
++
++	// Read stderr and filter
++	buf := make([]byte, 4096)
++	for {
++		n, readErr := stderr.Read(buf)
++		if n > 0 {
++			lines := strings.Split(string(buf[:n]), "\n")
++			for _, line := range lines {
++				trimmed := strings.TrimSpace(line)
++				if trimmed == "" {
++					continue
++				}
++				// Filter git hint and advice lines
++				if strings.HasPrefix(trimmed, "hint:") ||
++					strings.HasPrefix(trimmed, "Disable this message") {
++					continue
++				}
++				// Reformat cherry-pick skip warnings
++				if strings.Contains(trimmed, "skipped previously applied commit") {
++					fmt.Fprintf(os.Stderr, "    (skipped duplicate commit)\n")
++					continue
++				}
++				fmt.Fprintln(os.Stderr, line)
++			}
++		}
++		if readErr != nil {
++			break
++		}
++	}
++
++	return cmd.Wait()
++}
++
+ func RunSilent(name string, args ...string) error {
+ 	cmd := exec.Command(name, args...)
+ 	return cmd.Run()

@@ -2,11 +2,15 @@
   "id": "post-rebase-validation",
   "slug": "post-rebase-validation",
   "title": "Add a configurable validation command (test_command in config) that runs after each successful rebase during tws sync. Example: test_command: go build ./... or test_command: npm run typecheck. Catches syntax errors and type errors before moving to the next branch. If validation fails, treat like a rebase failure — skip descendants. Support per-repo config. Update skills to mention validation.",
-  "state": "requested",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-05-26T19:39:23Z",
-  "updated_at": "2026-05-26T19:39:23Z",
-  "last_command": "add",
-  "apply": {},
+  "updated_at": "2026-05-26T22:11:40Z",
+  "last_command": "record",
+  "notes": "Patch recorded",
+  "apply": {
+    "base_commit": "bcc1903d8e1c5771f492dafcc44460d78e20cb13",
+    "has_patch": true
+  },
   "reconcile": {}
 }
