@@ -1,0 +1,8 @@
+# Feature Request: Filter and format git output during tws sync. Suppress git hint: messages, wrap rebase warnings in cleaner format. The cherry-pick skip warnings (warning: skipped previously applied commit) are confusing — could suppress or reformat them. Low priority cosmetic improvement.
+
+**Slug**: `clean-git-output`
+**Created**: 2026-05-26T19:39:31Z
+
+## Description
+
+Filter and format git output during tws sync. Suppress git hint: messages, wrap rebase warnings in cleaner format. The cherry-pick skip warnings (warning: skipped previously applied commit) are confusing — could suppress or reformat them. Low priority cosmetic improvement.

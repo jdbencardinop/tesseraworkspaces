@@ -1,0 +1,12 @@
+{
+  "id": "push-branches",
+  "slug": "push-branches",
+  "title": "Two push modes: (1) tws sync \u003cfeature\u003e --push pushes all successfully synced branches with --force-with-lease after sync completes. (2) tws push \u003cfeature\u003e as a standalone command that pushes all branches in the stack with --force-with-lease. Should only push branches that have diverged from their remote tracking branch. Support --dry-run to preview what would be pushed. Update skills to document both push workflows.",
+  "state": "requested",
+  "compatibility": "unknown",
+  "requested_at": "2026-05-26T19:42:44Z",
+  "updated_at": "2026-05-26T19:42:44Z",
+  "last_command": "add",
+  "apply": {},
+  "reconcile": {}
+}
