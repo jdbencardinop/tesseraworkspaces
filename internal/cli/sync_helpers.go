@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
 )
@@ -34,13 +35,18 @@ func syncWithStack(feature, featurePath string, stack internal.Stack, sorted []i
 
 		base := resolveBase(entry.Base)
 
-		err := internal.RunDir(path, "git", "rebase", "--update-refs", base)
+		err := internal.RunDirClean(path, "git", "rebase", "--update-refs", base)
 		if err != nil {
 			fmt.Println(formatSyncStatus(entry.Name, "active", "failed"))
 			skipDescendants(stack, entry.Name, skipped)
 		} else {
-			fmt.Println(formatSyncStatus(entry.Name, "active", "synced"))
-			markUpdatedAncestors(stack, entry.Name, featurePath, updatedByRef)
+			// Post-rebase validation
+			if !runValidation(path, entry.Name) {
+				skipDescendants(stack, entry.Name, skipped)
+			} else {
+				fmt.Println(formatSyncStatus(entry.Name, "active", "synced"))
+				markUpdatedAncestors(stack, entry.Name, featurePath, updatedByRef)
+			}
 		}
 	}
 
@@ -161,6 +167,26 @@ func syncFallback(featurePath string) {
 		}
 		path := filepath.Join(featurePath, "worktrees", e.Name())
 		fmt.Printf("Syncing worktree: %s\n", path)
-		internal.Must(internal.RunDir(path, "git", "rebase", "--update-refs", "origin/main"))
+		internal.Must(internal.RunDirClean(path, "git", "rebase", "--update-refs", "origin/main"))
 	}
+}
+
+// runValidation runs the configured test_command after a successful rebase.
+// Returns true if validation passes (or no command configured).
+func runValidation(worktreePath, branchName string) bool {
+	cfg := internal.LoadConfig()
+	if cfg.TestCommand == "" {
+		return true
+	}
+
+	fmt.Printf("    validating %s: %s... ", branchName, cfg.TestCommand)
+	parts := strings.Fields(cfg.TestCommand)
+	err := internal.RunSilentDir(worktreePath, parts[0], parts[1:]...)
+	if err != nil {
+		fmt.Println("FAILED")
+		fmt.Println(formatSyncStatus(branchName, "active", "validation-failed"))
+		return false
+	}
+	fmt.Println("ok")
+	return true
 }

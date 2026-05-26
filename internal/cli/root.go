@@ -38,6 +38,7 @@ func Execute() int {
 		doctorCmd(),
 		renameCmd(),
 		templateCmd(),
+		pushCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {

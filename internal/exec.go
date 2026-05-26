@@ -70,6 +70,58 @@ func RunDir(dir string, name string, args ...string) error {
 	return cmd.Run()
 }
 
+// RunDirClean runs a command in a directory, filtering git hint/warning noise
+// from stderr. Actual errors are still shown.
+func RunDirClean(dir string, name string, args ...string) error {
+	return runWithFilteredStderr(dir, name, args...)
+}
+
+func runWithFilteredStderr(dir, name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Dir = dir
+
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return err
+	}
+
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	// Read stderr and filter
+	buf := make([]byte, 4096)
+	for {
+		n, readErr := stderr.Read(buf)
+		if n > 0 {
+			lines := strings.Split(string(buf[:n]), "\n")
+			for _, line := range lines {
+				trimmed := strings.TrimSpace(line)
+				if trimmed == "" {
+					continue
+				}
+				// Filter git hint and advice lines
+				if strings.HasPrefix(trimmed, "hint:") ||
+					strings.HasPrefix(trimmed, "Disable this message") {
+					continue
+				}
+				// Reformat cherry-pick skip warnings
+				if strings.Contains(trimmed, "skipped previously applied commit") {
+					fmt.Fprintf(os.Stderr, "    (skipped duplicate commit)\n")
+					continue
+				}
+				fmt.Fprintln(os.Stderr, line)
+			}
+		}
+		if readErr != nil {
+			break
+		}
+	}
+
+	return cmd.Wait()
+}
+
 func RunSilent(name string, args ...string) error {
 	cmd := exec.Command(name, args...)
 	return cmd.Run()

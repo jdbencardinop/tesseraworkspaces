@@ -12,6 +12,7 @@ type Config struct {
 	AgentCommand string            `yaml:"agent_command"`
 	UseTmux      *bool             `yaml:"use_tmux"`
 	InjectInto   string            `yaml:"inject_into"`
+	TestCommand  string            `yaml:"test_command"`
 }
 
 func (c Config) GetAgentCommand() string {
@@ -64,6 +65,9 @@ func LoadConfig() Config {
 	}
 	if repo.InjectInto != "" {
 		cfg.InjectInto = repo.InjectInto
+	}
+	if repo.TestCommand != "" {
+		cfg.TestCommand = repo.TestCommand
 	}
 	if len(repo.Workspaces) > 0 {
 		if cfg.Workspaces == nil {

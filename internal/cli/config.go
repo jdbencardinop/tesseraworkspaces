@@ -42,6 +42,11 @@ func configShowCmd() *cobra.Command {
 			} else {
 				fmt.Println("inject_into: . (default, worktree root)")
 			}
+			if cfg.TestCommand != "" {
+				fmt.Printf("test_command: %s\n", cfg.TestCommand)
+			} else {
+				fmt.Println("test_command: (none)")
+			}
 			if len(cfg.Workspaces) > 0 {
 				fmt.Println("workspaces:")
 				for k, v := range cfg.Workspaces {
@@ -64,11 +69,11 @@ func configSetCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "set <key> <value>",
-		Short: "Set a config value (keys: agent_command, use_tmux, inject_into)",
+		Short: "Set a config value (keys: agent_command, use_tmux, inject_into, test_command)",
 		Args:  cobra.ExactArgs(2),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			if len(args) == 0 {
-				return []string{"agent_command", "use_tmux", "inject_into"}, cobra.ShellCompDirectiveNoFileComp
+				return []string{"agent_command", "use_tmux", "inject_into", "test_command"}, cobra.ShellCompDirectiveNoFileComp
 			}
 			if len(args) == 1 && args[0] == "agent_command" {
 				return []string{"claude", "opencode", "aider", "copilot"}, cobra.ShellCompDirectiveNoFileComp
@@ -104,8 +109,10 @@ func configSetCmd() *cobra.Command {
 				cfg.UseTmux = &b
 			case "inject_into":
 				cfg.InjectInto = value
+			case "test_command":
+				cfg.TestCommand = value
 			default:
-				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux, inject_into)\n", key)
+				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux, inject_into, test_command)\n", key)
 				os.Exit(1)
 			}
 
@@ -153,8 +160,14 @@ func configGetCmd() *cobra.Command {
 				} else {
 					fmt.Println(".")
 				}
+			case "test_command":
+				if cfg.TestCommand != "" {
+					fmt.Println(cfg.TestCommand)
+				} else {
+					fmt.Println("(none)")
+				}
 			default:
-				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux, inject_into)\n", args[0])
+				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux, inject_into, test_command)\n", args[0])
 				os.Exit(1)
 			}
 		},
