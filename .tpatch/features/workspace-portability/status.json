@@ -2,11 +2,15 @@
   "id": "workspace-portability",
   "slug": "workspace-portability",
   "title": "Add a way to sync or recreate workspace metadata across machines. When you push branches from one machine and pull on another, the workspace structure (stack.yaml, decisions, inject config) doesn't travel. Options: export/import commands, git-backed metadata in .tws/ inside the repo, or a tws clone command that recreates a workspace from existing branches. The goal is that when you git clone + fetch on a new machine, you can reconstruct the full tws workspace.",
-  "state": "requested",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-05-19T19:31:59Z",
-  "updated_at": "2026-05-19T19:31:59Z",
-  "last_command": "add",
-  "apply": {},
+  "updated_at": "2026-05-27T03:46:29Z",
+  "last_command": "record",
+  "notes": "Patch recorded",
+  "apply": {
+    "base_commit": "390a38c5d947a093590931b001b6209a2bf0b750",
+    "has_patch": true
+  },
   "reconcile": {}
 }
