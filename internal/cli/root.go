@@ -39,6 +39,8 @@ func Execute() int {
 		renameCmd(),
 		templateCmd(),
 		pushCmd(),
+		exportCmd(),
+		importCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
