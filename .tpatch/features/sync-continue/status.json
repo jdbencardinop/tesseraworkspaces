@@ -2,11 +2,15 @@
   "id": "sync-continue",
   "slug": "sync-continue",
   "title": "Add tws sync \u003cfeature\u003e --continue to resume after conflict resolution. Persist sync state (failed branch, pending branches) in a .sync-state.yaml in the feature dir. After the user resolves conflicts and runs git rebase --continue in the worktree, tws sync --continue picks up where it left off and processes remaining branches. Print clear guidance on conflict: \"Resolve in \u003cworktree\u003e, then run tws sync \u003cfeature\u003e --continue\". Update skills to document this workflow.",
-  "state": "requested",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-05-26T19:35:55Z",
-  "updated_at": "2026-05-26T19:35:55Z",
-  "last_command": "add",
-  "apply": {},
+  "updated_at": "2026-05-27T01:43:14Z",
+  "last_command": "record",
+  "notes": "Patch recorded",
+  "apply": {
+    "base_commit": "dff378f8c310e183d9695b2b9cc2190fec83cd3e",
+    "has_patch": true
+  },
   "reconcile": {}
 }

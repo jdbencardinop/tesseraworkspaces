@@ -1,0 +1,369 @@
+diff --git a/internal/cli/sync.go b/internal/cli/sync.go
+index e694fa1..06010d9 100644
+--- a/internal/cli/sync.go
++++ b/internal/cli/sync.go
+@@ -2,6 +2,7 @@ package cli
+ 
+ import (
+ 	"fmt"
++	"os"
+ 
+ 	"github.com/jdbencardinop/tesseraworkspaces/internal"
+ 	"github.com/spf13/cobra"
+@@ -10,6 +11,8 @@ import (
+ func syncCmd() *cobra.Command {
+ 	var verbose bool
+ 	var push bool
++	var cont bool
++	var abort bool
+ 
+ 	cmd := &cobra.Command{
+ 		Use:   "sync <feature>",
+@@ -23,21 +26,127 @@ func syncCmd() *cobra.Command {
+ 		},
+ 		Run: func(cmd *cobra.Command, args []string) {
+ 			internal.RequireTool("git")
+-			syncFeature(args[0], verbose)
++			feature := args[0]
++			featurePath := internal.FeaturePath(feature)
++
++			if abort {
++				handleSyncAbort(featurePath)
++				return
++			}
++
++			if cont {
++				handleSyncContinue(feature, featurePath, verbose, push)
++				return
++			}
++
++			// Check for existing state
++			if internal.HasSyncState(featurePath) {
++				state, _ := internal.LoadSyncState(featurePath)
++				fmt.Printf("Previous sync incomplete (failed on: %s)\n", state.FailedBranch)
++				fmt.Println("  Use --continue to resume after resolving conflicts")
++				fmt.Println("  Use --abort to discard sync state and start fresh")
++				os.Exit(1)
++			}
++
++			syncFeature(feature, verbose)
++
+ 			if push {
+ 				fmt.Println()
+ 				fmt.Println("Pushing...")
+-				pushFeature(args[0], false)
++				pushFeature(feature, false)
+ 			}
+ 		},
+ 	}
+ 
+ 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show full git fetch output")
+ 	cmd.Flags().BoolVar(&push, "push", false, "Push all branches after syncing")
++	cmd.Flags().BoolVar(&cont, "continue", false, "Resume after conflict resolution")
++	cmd.Flags().BoolVar(&abort, "abort", false, "Discard sync state and start fresh")
+ 
+ 	return cmd
+ }
+ 
++func handleSyncAbort(featurePath string) {
++	if !internal.HasSyncState(featurePath) {
++		fmt.Println("Nothing to abort — no sync in progress.")
++		return
++	}
++	internal.DeleteSyncState(featurePath)
++	fmt.Println("Sync state cleared.")
++}
++
++func handleSyncContinue(feature, featurePath string, verbose, push bool) {
++	state, err := internal.LoadSyncState(featurePath)
++	if err != nil {
++		fmt.Println("Nothing to continue — no sync in progress.")
++		return
++	}
++
++	// Verify the failed branch's rebase was completed
++	failedPath := internal.WorktreePath(feature, state.FailedBranch)
++	if _, err := os.Stat(failedPath); err == nil {
++		// Check if there's still a rebase in progress
++		if isRebaseInProgress(failedPath) {
++			fmt.Printf("Rebase still in progress in %s\n", state.FailedBranch)
++			fmt.Println("  Resolve conflicts, run: git add . && git rebase --continue")
++			fmt.Println("  Then run: tws sync <feature> --continue")
++			os.Exit(1)
++		}
++	}
++
++	fmt.Printf("Resuming sync (previously failed on: %s)\n", state.FailedBranch)
++
++	// Mark failed branch as completed
++	state.Completed = append(state.Completed, state.FailedBranch)
++	fmt.Println(formatSyncStatus(state.FailedBranch, "active", "resolved"))
++
++	// Load stack and continue with pending branches
++	stack, err := internal.LoadStack(featurePath)
++	if err != nil {
++		fmt.Println("Error: could not load stack.yaml")
++		os.Exit(1)
++	}
++
++	sorted, err := internal.TopoSort(stack)
++	if err != nil {
++		fmt.Printf("Error: %v\n", err)
++		os.Exit(1)
++	}
++
++	// Build skip set from completed + skipped branches
++	skip := make(map[string]bool)
++	for _, b := range state.Completed {
++		skip[b] = true
++	}
++	for _, b := range state.Skipped {
++		skip[b] = true
++	}
++
++	// Continue with remaining branches
++	syncWithStackFiltered(feature, featurePath, stack, sorted, skip)
++
++	// Clean up state
++	internal.DeleteSyncState(featurePath)
++	fmt.Println("Sync complete.")
++
++	if push {
++		fmt.Println()
++		fmt.Println("Pushing...")
++		pushFeature(feature, false)
++	}
++}
++
++func isRebaseInProgress(worktreePath string) bool {
++	// Check for .git/rebase-merge or .git/rebase-apply
++	gitDir := internal.RunSilent("git", "-C", worktreePath, "rev-parse", "--git-dir")
++	if gitDir != nil {
++		return false
++	}
++	// Simpler: check if git status shows rebase
++	err := internal.RunSilent("git", "-C", worktreePath, "rebase", "--show-current-patch")
++	return err == nil
++}
++
+ func syncFeature(feature string, verbose bool) {
+ 	featurePath := internal.FeaturePath(feature)
+ 
+diff --git a/internal/cli/sync_helpers.go b/internal/cli/sync_helpers.go
+index be8fe8f..680bec4 100644
+--- a/internal/cli/sync_helpers.go
++++ b/internal/cli/sync_helpers.go
+@@ -10,12 +10,22 @@ import (
+ )
+ 
+ func syncWithStack(feature, featurePath string, stack internal.Stack, sorted []internal.StackEntry) {
++	syncWithStackFiltered(feature, featurePath, stack, sorted, nil)
++}
++
++func syncWithStackFiltered(feature, featurePath string, stack internal.Stack, sorted []internal.StackEntry, alreadyDone map[string]bool) {
+ 	skipped := make(map[string]bool)
+ 	updatedByRef := make(map[string]bool)
++	completed := make([]string, 0)
++
++	// Collect already-done branches from --continue
++	if alreadyDone == nil {
++		alreadyDone = make(map[string]bool)
++	}
+ 
+ 	// Pass 1: rebase active branches with --update-refs
+ 	for _, entry := range sorted {
+-		if skipped[entry.Name] {
++		if skipped[entry.Name] || alreadyDone[entry.Name] {
+ 			continue
+ 		}
+ 
+@@ -37,23 +47,43 @@ func syncWithStack(feature, featurePath string, stack internal.Stack, sorted []i
+ 
+ 		err := internal.RunDirClean(path, "git", "rebase", "--update-refs", base)
+ 		if err != nil {
+-			fmt.Println(formatSyncStatus(entry.Name, "active", "failed"))
++			fmt.Println(formatSyncStatus(entry.Name, "active", "conflict"))
++
++			// Collect pending branches
++			pending := collectPending(sorted, entry.Name, skipped, alreadyDone, completed)
++			skippedList := collectSkippedNames(stack, entry.Name)
++
++			// Save state for --continue
++			state := internal.NewSyncState()
++			state.FailedBranch = entry.Name
++			state.Pending = pending
++			state.Completed = completed
++			state.Skipped = skippedList
++			_ = internal.SaveSyncState(featurePath, state)
++
++			fmt.Printf("    Resolve conflicts in: %s\n", path)
++			fmt.Println("    Then run: git add . && git rebase --continue")
++			fmt.Printf("    Resume with: tws sync %s --continue\n", feature)
++			skipDescendants(stack, entry.Name, skipped)
++			return
++		}
++
++		// Post-rebase validation
++		if !runValidation(path, entry.Name) {
+ 			skipDescendants(stack, entry.Name, skipped)
+ 		} else {
+-			// Post-rebase validation
+-			if !runValidation(path, entry.Name) {
+-				skipDescendants(stack, entry.Name, skipped)
+-			} else {
+-				fmt.Println(formatSyncStatus(entry.Name, "active", "synced"))
+-				markUpdatedAncestors(stack, entry.Name, featurePath, updatedByRef)
+-			}
++			fmt.Println(formatSyncStatus(entry.Name, "active", "synced"))
++			markUpdatedAncestors(stack, entry.Name, featurePath, updatedByRef)
++			completed = append(completed, entry.Name)
+ 		}
+ 	}
+ 
+ 	// Pass 2: handle archived/missing branches
+ 	for _, entry := range sorted {
+-		if skipped[entry.Name] {
+-			fmt.Println(formatSyncStatus(entry.Name, "skipped", "skipped"))
++		if skipped[entry.Name] || alreadyDone[entry.Name] {
++			if skipped[entry.Name] {
++				fmt.Println(formatSyncStatus(entry.Name, "skipped", "skipped"))
++			}
+ 			continue
+ 		}
+ 
+@@ -75,8 +105,6 @@ func syncWithStack(feature, featurePath string, stack internal.Stack, sorted []i
+ 
+ 		base := resolveBase(entry.Base)
+ 
+-		// For archived branches, rebase needs repo context.
+-		// Use the repo path if specified, otherwise cwd.
+ 		rebaseDir := ""
+ 		if entry.Repo != "" {
+ 			rebaseDir = entry.Repo
+@@ -102,6 +130,38 @@ func syncWithStack(feature, featurePath string, stack internal.Stack, sorted []i
+ 			fmt.Println(formatSyncStatus(entry.Name, "archived", "synced"))
+ 		}
+ 	}
++
++	// Clean up state if we completed everything
++	internal.DeleteSyncState(featurePath)
++}
++
++func collectPending(sorted []internal.StackEntry, failedBranch string, skipped, done map[string]bool, completed []string) []string {
++	completedSet := make(map[string]bool)
++	for _, b := range completed {
++		completedSet[b] = true
++	}
++
++	found := false
++	var pending []string
++	for _, entry := range sorted {
++		if entry.Name == failedBranch {
++			found = true
++			continue
++		}
++		if found && !skipped[entry.Name] && !done[entry.Name] && !completedSet[entry.Name] {
++			pending = append(pending, entry.Name)
++		}
++	}
++	return pending
++}
++
++func collectSkippedNames(stack internal.Stack, branch string) []string {
++	descs := internal.Descendants(stack, branch)
++	var names []string
++	for d := range descs {
++		names = append(names, d)
++	}
++	return names
+ }
+ 
+ func resolveBase(base string) string {
+@@ -147,10 +207,13 @@ func skipDescendants(stack internal.Stack, branch string, skipped map[string]boo
+ 
+ func formatSyncStatus(name, mode, status string) string {
+ 	symbols := map[string]string{
+-		"synced":   "+",
+-		"failed":   "x",
+-		"skipped":  "-",
+-		"conflict": "!",
++		"synced":            "+",
++		"failed":            "x",
++		"skipped":           "-",
++		"conflict":          "!",
++		"resolved":          "~",
++		"wrong-branch":      "?",
++		"validation-failed": "x",
+ 	}
+ 	sym := symbols[status]
+ 	if sym == "" {
+@@ -172,7 +235,6 @@ func syncFallback(featurePath string) {
+ }
+ 
+ // runValidation runs the configured test_command after a successful rebase.
+-// Returns true if validation passes (or no command configured).
+ func runValidation(worktreePath, branchName string) bool {
+ 	cfg := internal.LoadConfig()
+ 	if cfg.TestCommand == "" {
+diff --git a/internal/syncstate.go b/internal/syncstate.go
+new file mode 100644
+index 0000000..fd17caf
+--- /dev/null
++++ b/internal/syncstate.go
+@@ -0,0 +1,56 @@
++package internal
++
++import (
++	"os"
++	"path/filepath"
++	"time"
++
++	"gopkg.in/yaml.v3"
++)
++
++type SyncState struct {
++	StartedAt    string   `yaml:"started_at"`
++	FailedBranch string   `yaml:"failed_branch"`
++	Pending      []string `yaml:"pending"`
++	Completed    []string `yaml:"completed"`
++	Skipped      []string `yaml:"skipped"`
++}
++
++func SyncStatePath(featurePath string) string {
++	return filepath.Join(featurePath, ".sync-state.yaml")
++}
++
++func LoadSyncState(featurePath string) (*SyncState, error) {
++	data, err := os.ReadFile(SyncStatePath(featurePath))
++	if err != nil {
++		return nil, err
++	}
++	var s SyncState
++	if err := yaml.Unmarshal(data, &s); err != nil {
++		return nil, err
++	}
++	return &s, nil
++}
++
++func SaveSyncState(featurePath string, s *SyncState) error {
++	data, err := yaml.Marshal(s)
++	if err != nil {
++		return err
++	}
++	return os.WriteFile(SyncStatePath(featurePath), data, 0644)
++}
++
++func DeleteSyncState(featurePath string) {
++	os.Remove(SyncStatePath(featurePath)) //nolint:errcheck
++}
++
++func HasSyncState(featurePath string) bool {
++	_, err := os.Stat(SyncStatePath(featurePath))
++	return err == nil
++}
++
++func NewSyncState() *SyncState {
++	return &SyncState{
++		StartedAt: time.Now().UTC().Format(time.RFC3339),
++	}
++}
