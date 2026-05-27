@@ -1,0 +1,12 @@
+{
+  "id": "readme-v1-update",
+  "slug": "readme-v1-update",
+  "title": "Update README.md for the v1.0.0 release. Document all commands (22 total), the 3-tier skill system, decisions/hooks workflow, workspace portability (export/import), multi-repo workspaces, sync --continue/--push, post-rebase validation, inject system with --into, templates, and known caveats. Add badges, update install instructions, and link to docs/.",
+  "state": "requested",
+  "compatibility": "unknown",
+  "requested_at": "2026-05-27T06:27:38Z",
+  "updated_at": "2026-05-27T06:27:38Z",
+  "last_command": "add",
+  "apply": {},
+  "reconcile": {}
+}
