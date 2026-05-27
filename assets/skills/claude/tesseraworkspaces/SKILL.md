@@ -24,8 +24,10 @@ tws <command> [args]
 | `tws add <feature> [-n <branch>] [--open] [--tmux]` | Create feature (and optionally a branch) |
 | `tws new <feature> <branch> [--base <parent>] [--force]` | Create a worktree branch |
 | `tws open [feature] [branch] [--tmux] [--no-agent]` | Open worktree and run agent |
-| `tws sync <feature> [--push] [--verbose]` | Rebase worktrees in dependency order |
+| `tws sync <feature> [--push] [--verbose] [--continue] [--abort]` | Rebase worktrees in dependency order |
 | `tws push <feature> [--dry-run]` | Push all branches with --force-with-lease |
+| `tws export <feature> [--full] [--to-repo] [-o file]` | Export workspace metadata |
+| `tws import <file> [--from-repo <feature>]` | Import workspace from YAML or tarball |
 | `tws stack <feature>` | Show branch dependency tree |
 | `tws list` / `tws ls` | List features and branches |
 | `tws delete <feature>` | Remove feature and all worktrees |
@@ -135,6 +137,20 @@ tws push <feature> --dry-run     # preview what would be pushed
 If `test_command` is configured, it runs after each successful rebase. Validation failure skips dependent branches.
 
 **Conflict recovery:** When sync hits a conflict, it saves state and prints instructions. After resolving, run `tws sync <feature> --continue` to resume with remaining branches.
+
+**Amend-aware:** If a parent branch was amended, sync uses `--onto` to avoid ghost conflicts from stale SHAs.
+
+### Workspace Portability
+
+```sh
+tws export auth                          # YAML to stdout
+tws export auth -o auth.yaml             # YAML to file
+tws export auth --full -o auth.tar.gz    # tarball with inject files
+tws export auth --to-repo                # save to .tws/workspaces/ (travels with git push)
+tws import auth.yaml                     # recreate from YAML
+tws import auth.tar.gz                   # recreate from tarball
+tws import --from-repo auth              # recreate from .tws/workspaces/
+```
 
 ### Health Checks
 

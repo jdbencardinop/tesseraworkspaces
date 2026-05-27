@@ -17,6 +17,8 @@ You are working in a project that uses `tws` for feature-scoped workspaces with 
 - `tws open [feature] [branch] [--tmux] [--no-agent]` — Open worktree and run agent
 - `tws sync <feature> [--push] [--verbose] [--continue] [--abort]` — Rebase worktrees in dependency order
 - `tws push <feature> [--dry-run]` — Push all branches with --force-with-lease
+- `tws export <feature> [--full] [--to-repo]` — Export workspace metadata
+- `tws import <file> [--from-repo <feature>]` — Import workspace
 - `tws stack <feature>` — Show branch dependency tree
 - `tws list` — List features and branches
 - `tws delete <feature>` — Remove feature and all worktrees
