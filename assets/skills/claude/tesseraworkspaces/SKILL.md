@@ -33,9 +33,11 @@ tws <command> [args]
 | `tws delete <feature>` | Remove feature and all worktrees |
 | `tws archive <feature> <branch>` | Remove worktree, keep branch ref |
 | `tws decide <feature> "<summary>" [--type T] [--to B]` | Record a decision |
-| `tws decisions show <feature> [--mine] [--all]` | View decisions |
-| `tws decisions ack <feature>` | Mark decisions as read |
-| `tws inject <feature> [branch]` | Sync inject/ files into worktrees |
+| `tws decisions show [feature] [--mine] [--all]` | View decisions (auto-detects feature) |
+| `tws decisions ack [feature]` | Mark decisions as read |
+| `tws inject <feature> [branch] [--into <path>]` | Sync inject/ files into worktrees |
+| `tws hooks install [feature]` | Install Claude Code auto-read hooks |
+| `tws hooks remove [feature]` | Remove auto-read hooks |
 | `tws doctor [feature]` | Run health checks |
 | `tws rename feature <old> <new>` | Rename a feature |
 | `tws rename branch <feature> <old> <new>` | Rename a branch |
@@ -151,6 +153,20 @@ tws import auth.yaml                     # recreate from YAML
 tws import auth.tar.gz                   # recreate from tarball
 tws import --from-repo auth              # recreate from .tws/workspaces/
 ```
+
+### Auto-Read Hooks
+
+Install hooks so Claude Code automatically checks for new decisions:
+
+```sh
+tws hooks install auth          # install on all worktrees in feature
+tws hooks install                # auto-detect feature from cwd
+tws hooks remove auth            # uninstall hooks
+```
+
+This writes `.claude/settings.local.json` in each worktree with SessionStart hooks that run `tws decisions show --mine` on startup and resume. Unread decisions appear automatically at the start of each session.
+
+**Note:** `tws decisions show` and `tws decisions ack` work without a feature argument when run from inside a worktree — the feature is auto-detected from the path.
 
 ### Health Checks
 

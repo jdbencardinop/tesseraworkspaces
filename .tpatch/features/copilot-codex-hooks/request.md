@@ -1,0 +1,8 @@
+# Feature Request: Add hooks support for GitHub Copilot CLI and Codex CLI alongside the existing Claude Code hooks. Copilot uses .github/copilot-instructions.md or AGENTS.md for persistent instructions. Codex may support similar mechanisms. Investigate each agent's hook/instruction system and add tws hooks install --agent copilot/codex. Update the embedded skills to match.
+
+**Slug**: `copilot-codex-hooks`
+**Created**: 2026-05-27T05:23:44Z
+
+## Description
+
+Add hooks support for GitHub Copilot CLI and Codex CLI alongside the existing Claude Code hooks. Copilot uses .github/copilot-instructions.md or AGENTS.md for persistent instructions. Codex may support similar mechanisms. Investigate each agent's hook/instruction system and add tws hooks install --agent copilot/codex. Update the embedded skills to match.

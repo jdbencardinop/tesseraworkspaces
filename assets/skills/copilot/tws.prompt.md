@@ -24,9 +24,10 @@ You are working in a project that uses `tws` for feature-scoped workspaces with 
 - `tws delete <feature>` — Remove feature and all worktrees
 - `tws archive <feature> <branch>` — Remove worktree, keep branch ref
 - `tws decide <feature> "<summary>" [--type T] [--to B]` — Record a decision
-- `tws decisions show <feature> [--mine] [--all]` — View decisions (unread by default)
-- `tws decisions ack <feature>` — Mark all decisions as read
-- `tws inject <feature> [branch]` — Sync inject/ files into worktrees
+- `tws decisions show [feature] [--mine] [--all]` — View decisions (auto-detects feature)
+- `tws decisions ack [feature]` — Mark all decisions as read
+- `tws inject <feature> [branch] [--into <path>]` — Sync inject/ files into worktrees
+- `tws hooks install/remove [feature]` — Manage agent hooks
 - `tws doctor [feature]` — Run health checks
 - `tws rename feature/branch` — Rename feature or branch
 - `tws config show/set/get` — Manage configuration
