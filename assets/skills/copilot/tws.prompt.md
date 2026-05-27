@@ -15,7 +15,7 @@ You are working in a project that uses `tws` for feature-scoped workspaces with 
 - `tws add <feature> [-n <branch>] [--open]` — Create feature (quick start with -n)
 - `tws new <feature> <branch> [--base <parent>] [--force]` — Create worktree branch
 - `tws open [feature] [branch] [--tmux] [--no-agent]` — Open worktree and run agent
-- `tws sync <feature> [--push] [--verbose]` — Rebase worktrees in dependency order
+- `tws sync <feature> [--push] [--verbose] [--continue] [--abort]` — Rebase worktrees in dependency order
 - `tws push <feature> [--dry-run]` — Push all branches with --force-with-lease
 - `tws stack <feature>` — Show branch dependency tree
 - `tws list` — List features and branches

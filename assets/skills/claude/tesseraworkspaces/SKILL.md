@@ -126,11 +126,15 @@ Config keys: `agent_command`, `use_tmux`, `inject_into`, `test_command`.
 tws sync <feature>                # fetch (quiet) + rebase in dependency order
 tws sync <feature> --push        # sync + push all branches
 tws sync <feature> --verbose     # show full fetch output
+tws sync <feature> --continue    # resume after conflict resolution
+tws sync <feature> --abort       # discard sync state, start fresh
 tws push <feature>               # push all branches with --force-with-lease
 tws push <feature> --dry-run     # preview what would be pushed
 ```
 
 If `test_command` is configured, it runs after each successful rebase. Validation failure skips dependent branches.
+
+**Conflict recovery:** When sync hits a conflict, it saves state and prints instructions. After resolving, run `tws sync <feature> --continue` to resume with remaining branches.
 
 ### Health Checks
 
