@@ -10,12 +10,22 @@ import (
 )
 
 func syncWithStack(feature, featurePath string, stack internal.Stack, sorted []internal.StackEntry) {
+	syncWithStackFiltered(feature, featurePath, stack, sorted, nil)
+}
+
+func syncWithStackFiltered(feature, featurePath string, stack internal.Stack, sorted []internal.StackEntry, alreadyDone map[string]bool) {
 	skipped := make(map[string]bool)
 	updatedByRef := make(map[string]bool)
+	completed := make([]string, 0)
+
+	// Collect already-done branches from --continue
+	if alreadyDone == nil {
+		alreadyDone = make(map[string]bool)
+	}
 
 	// Pass 1: rebase active branches with --update-refs
 	for _, entry := range sorted {
-		if skipped[entry.Name] {
+		if skipped[entry.Name] || alreadyDone[entry.Name] {
 			continue
 		}
 
@@ -37,23 +47,43 @@ func syncWithStack(feature, featurePath string, stack internal.Stack, sorted []i
 
 		err := internal.RunDirClean(path, "git", "rebase", "--update-refs", base)
 		if err != nil {
-			fmt.Println(formatSyncStatus(entry.Name, "active", "failed"))
+			fmt.Println(formatSyncStatus(entry.Name, "active", "conflict"))
+
+			// Collect pending branches
+			pending := collectPending(sorted, entry.Name, skipped, alreadyDone, completed)
+			skippedList := collectSkippedNames(stack, entry.Name)
+
+			// Save state for --continue
+			state := internal.NewSyncState()
+			state.FailedBranch = entry.Name
+			state.Pending = pending
+			state.Completed = completed
+			state.Skipped = skippedList
+			_ = internal.SaveSyncState(featurePath, state)
+
+			fmt.Printf("    Resolve conflicts in: %s\n", path)
+			fmt.Println("    Then run: git add . && git rebase --continue")
+			fmt.Printf("    Resume with: tws sync %s --continue\n", feature)
+			skipDescendants(stack, entry.Name, skipped)
+			return
+		}
+
+		// Post-rebase validation
+		if !runValidation(path, entry.Name) {
 			skipDescendants(stack, entry.Name, skipped)
 		} else {
-			// Post-rebase validation
-			if !runValidation(path, entry.Name) {
-				skipDescendants(stack, entry.Name, skipped)
-			} else {
-				fmt.Println(formatSyncStatus(entry.Name, "active", "synced"))
-				markUpdatedAncestors(stack, entry.Name, featurePath, updatedByRef)
-			}
+			fmt.Println(formatSyncStatus(entry.Name, "active", "synced"))
+			markUpdatedAncestors(stack, entry.Name, featurePath, updatedByRef)
+			completed = append(completed, entry.Name)
 		}
 	}
 
 	// Pass 2: handle archived/missing branches
 	for _, entry := range sorted {
-		if skipped[entry.Name] {
-			fmt.Println(formatSyncStatus(entry.Name, "skipped", "skipped"))
+		if skipped[entry.Name] || alreadyDone[entry.Name] {
+			if skipped[entry.Name] {
+				fmt.Println(formatSyncStatus(entry.Name, "skipped", "skipped"))
+			}
 			continue
 		}
 
@@ -75,8 +105,6 @@ func syncWithStack(feature, featurePath string, stack internal.Stack, sorted []i
 
 		base := resolveBase(entry.Base)
 
-		// For archived branches, rebase needs repo context.
-		// Use the repo path if specified, otherwise cwd.
 		rebaseDir := ""
 		if entry.Repo != "" {
 			rebaseDir = entry.Repo
@@ -102,6 +130,38 @@ func syncWithStack(feature, featurePath string, stack internal.Stack, sorted []i
 			fmt.Println(formatSyncStatus(entry.Name, "archived", "synced"))
 		}
 	}
+
+	// Clean up state if we completed everything
+	internal.DeleteSyncState(featurePath)
+}
+
+func collectPending(sorted []internal.StackEntry, failedBranch string, skipped, done map[string]bool, completed []string) []string {
+	completedSet := make(map[string]bool)
+	for _, b := range completed {
+		completedSet[b] = true
+	}
+
+	found := false
+	var pending []string
+	for _, entry := range sorted {
+		if entry.Name == failedBranch {
+			found = true
+			continue
+		}
+		if found && !skipped[entry.Name] && !done[entry.Name] && !completedSet[entry.Name] {
+			pending = append(pending, entry.Name)
+		}
+	}
+	return pending
+}
+
+func collectSkippedNames(stack internal.Stack, branch string) []string {
+	descs := internal.Descendants(stack, branch)
+	var names []string
+	for d := range descs {
+		names = append(names, d)
+	}
+	return names
 }
 
 func resolveBase(base string) string {
@@ -147,10 +207,13 @@ func skipDescendants(stack internal.Stack, branch string, skipped map[string]boo
 
 func formatSyncStatus(name, mode, status string) string {
 	symbols := map[string]string{
-		"synced":   "+",
-		"failed":   "x",
-		"skipped":  "-",
-		"conflict": "!",
+		"synced":            "+",
+		"failed":            "x",
+		"skipped":           "-",
+		"conflict":          "!",
+		"resolved":          "~",
+		"wrong-branch":      "?",
+		"validation-failed": "x",
 	}
 	sym := symbols[status]
 	if sym == "" {
@@ -172,7 +235,6 @@ func syncFallback(featurePath string) {
 }
 
 // runValidation runs the configured test_command after a successful rebase.
-// Returns true if validation passes (or no command configured).
 func runValidation(worktreePath, branchName string) bool {
 	cfg := internal.LoadConfig()
 	if cfg.TestCommand == "" {
