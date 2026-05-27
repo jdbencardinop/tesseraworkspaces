@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	skills "github.com/jdbencardinop/tesseraworkspaces/assets/skills"
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
 	"github.com/spf13/cobra"
 )
@@ -50,6 +51,10 @@ Note: injected files appear as untracked in git status. Add them to
 			if _, err := os.Stat(claudeLocal); os.IsNotExist(err) {
 				internal.Must(os.WriteFile(claudeLocal, []byte("# "+feature+" - shared context\n\nThis file is symlinked into every worktree for this feature.\nEdit it in the workspace inject/ directory.\n"), 0644))
 			}
+
+			// Install orchestrator skill in the feature dir
+			orchPath := filepath.Join(root, ".claude", "skills", "tesseraworkspaces-orchestrator", "SKILL.md")
+			installFile(orchPath, skills.ClaudeOrchestratorSkill, false)
 
 			fmt.Println("Feature added:", feature)
 
