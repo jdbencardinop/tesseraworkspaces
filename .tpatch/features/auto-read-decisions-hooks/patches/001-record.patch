@@ -1,0 +1,301 @@
+diff --git a/internal/cli/decisions.go b/internal/cli/decisions.go
+index e2bc99f..0108735 100644
+--- a/internal/cli/decisions.go
++++ b/internal/cli/decisions.go
+@@ -26,9 +26,9 @@ func decisionsListCmd() *cobra.Command {
+ 	var all bool
+ 
+ 	cmd := &cobra.Command{
+-		Use:   "show <feature>",
+-		Short: "List decisions for a feature (unread by default)",
+-		Args:  cobra.ExactArgs(1),
++		Use:   "show [feature]",
++		Short: "List decisions for a feature (unread by default, auto-detects feature if omitted)",
++		Args:  cobra.MaximumNArgs(1),
+ 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+ 			if len(args) == 0 {
+ 				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
+@@ -36,8 +36,18 @@ func decisionsListCmd() *cobra.Command {
+ 			return nil, cobra.ShellCompDirectiveNoFileComp
+ 		},
+ 		Run: func(cmd *cobra.Command, args []string) {
+-			feature := args[0]
+-			featurePath := internal.FeaturePath(feature)
++			var feature, featurePath string
++			if len(args) > 0 {
++				feature = args[0]
++				featurePath = internal.FeaturePath(feature)
++			} else {
++				feature, featurePath = internal.DetectFeatureFromCwd()
++				if feature == "" {
++					fmt.Println("Could not detect feature from current directory.")
++					fmt.Println("Usage: tws decisions show <feature> or run from inside a worktree.")
++					os.Exit(1)
++				}
++			}
+ 
+ 			decisions, err := internal.LoadDecisions(featurePath)
+ 			if err != nil {
+@@ -95,9 +105,9 @@ func decisionsListCmd() *cobra.Command {
+ 
+ func decisionsAckCmd() *cobra.Command {
+ 	return &cobra.Command{
+-		Use:   "ack <feature>",
++		Use:   "ack [feature]",
+ 		Short: "Mark all decisions as read for current branch",
+-		Args:  cobra.ExactArgs(1),
++		Args:  cobra.MaximumNArgs(1),
+ 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+ 			if len(args) == 0 {
+ 				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
+@@ -105,8 +115,16 @@ func decisionsAckCmd() *cobra.Command {
+ 			return nil, cobra.ShellCompDirectiveNoFileComp
+ 		},
+ 		Run: func(cmd *cobra.Command, args []string) {
+-			feature := args[0]
+-			featurePath := internal.FeaturePath(feature)
++			var featurePath string
++			if len(args) > 0 {
++				featurePath = internal.FeaturePath(args[0])
++			} else {
++				_, featurePath = internal.DetectFeatureFromCwd()
++				if featurePath == "" {
++					fmt.Println("Could not detect feature. Usage: tws decisions ack <feature>")
++					os.Exit(1)
++				}
++			}
+ 
+ 			branch, err := currentBranch()
+ 			if err != nil {
+diff --git a/internal/cli/hooks.go b/internal/cli/hooks.go
+new file mode 100644
+index 0000000..9863b81
+--- /dev/null
++++ b/internal/cli/hooks.go
+@@ -0,0 +1,159 @@
++package cli
++
++import (
++	"encoding/json"
++	"fmt"
++	"os"
++	"path/filepath"
++
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
++	"github.com/spf13/cobra"
++)
++
++func hooksCmd() *cobra.Command {
++	cmd := &cobra.Command{
++		Use:   "hooks",
++		Short: "Manage agent hooks for auto-read decisions",
++	}
++
++	cmd.AddCommand(hooksInstallCmd())
++	cmd.AddCommand(hooksRemoveCmd())
++
++	return cmd
++}
++
++// Claude Code settings.json hook structure
++type claudeSettings struct {
++	Hooks map[string][]hookMatcher `json:"hooks,omitempty"`
++}
++
++type hookMatcher struct {
++	Matcher string       `json:"matcher"`
++	Hooks   []hookAction `json:"hooks"`
++}
++
++type hookAction struct {
++	Type    string `json:"type"`
++	Command string `json:"command"`
++	Timeout int    `json:"timeout,omitempty"`
++}
++
++func hooksInstallCmd() *cobra.Command {
++	return &cobra.Command{
++		Use:   "install [feature]",
++		Short: "Install Claude Code hooks for auto-reading decisions",
++		Long: `Install hooks into .claude/settings.local.json so that Claude Code
++automatically checks for new decisions on session start and resume.
++
++Optionally watches decisions.yaml for real-time notifications via FileChanged hook.
++
++Run from inside a worktree, or specify the feature name.`,
++		Args: cobra.MaximumNArgs(1),
++		Run: func(cmd *cobra.Command, args []string) {
++			var feature string
++			if len(args) > 0 {
++				feature = args[0]
++			} else {
++				feature, _ = internal.DetectFeatureFromCwd()
++				if feature == "" {
++					fmt.Println("Could not detect feature. Run from inside a worktree or specify: tws hooks install <feature>")
++					os.Exit(1)
++				}
++			}
++
++			featurePath := internal.FeaturePath(feature)
++			stack, _ := internal.LoadStack(featurePath)
++
++			installed := 0
++			for _, entry := range stack.Branches {
++				wtPath := internal.WorktreePath(feature, entry.Name)
++				if _, err := os.Stat(wtPath); os.IsNotExist(err) {
++					continue // archived
++				}
++
++				if err := installHooksForWorktree(wtPath, feature); err != nil {
++					fmt.Printf("  [x] %s: %v\n", entry.Name, err)
++				} else {
++					fmt.Printf("  [+] %s: hooks installed\n", entry.Name)
++					installed++
++				}
++			}
++
++			if installed > 0 {
++				fmt.Printf("Installed hooks in %d worktree(s)\n", installed)
++				fmt.Println("Claude Code will now check for decisions on session start/resume.")
++			}
++		},
++	}
++}
++
++func hooksRemoveCmd() *cobra.Command {
++	return &cobra.Command{
++		Use:   "remove [feature]",
++		Short: "Remove auto-read decision hooks",
++		Args:  cobra.MaximumNArgs(1),
++		Run: func(cmd *cobra.Command, args []string) {
++			var feature string
++			if len(args) > 0 {
++				feature = args[0]
++			} else {
++				feature, _ = internal.DetectFeatureFromCwd()
++				if feature == "" {
++					fmt.Println("Could not detect feature.")
++					os.Exit(1)
++				}
++			}
++
++			featurePath := internal.FeaturePath(feature)
++			stack, _ := internal.LoadStack(featurePath)
++
++			for _, entry := range stack.Branches {
++				wtPath := internal.WorktreePath(feature, entry.Name)
++				settingsPath := filepath.Join(wtPath, ".claude", "settings.local.json")
++				if err := os.Remove(settingsPath); err == nil {
++					fmt.Printf("  [-] %s: hooks removed\n", entry.Name)
++				}
++			}
++		},
++	}
++}
++
++func installHooksForWorktree(wtPath, feature string) error {
++	settingsDir := filepath.Join(wtPath, ".claude")
++	if err := os.MkdirAll(settingsDir, 0755); err != nil {
++		return err
++	}
++
++	settingsPath := filepath.Join(settingsDir, "settings.local.json")
++
++	// Build the decisions check command
++	showCmd := fmt.Sprintf("tws decisions show %s --mine 2>/dev/null || true", feature)
++	ackHint := fmt.Sprintf("echo 'To acknowledge: tws decisions ack %s'", feature)
++	fullCmd := showCmd + " && " + ackHint
++
++	settings := claudeSettings{
++		Hooks: map[string][]hookMatcher{
++			"SessionStart": {
++				{
++					Matcher: "startup",
++					Hooks: []hookAction{
++						{Type: "command", Command: fullCmd, Timeout: 10},
++					},
++				},
++				{
++					Matcher: "resume",
++					Hooks: []hookAction{
++						{Type: "command", Command: showCmd, Timeout: 10},
++					},
++				},
++			},
++		},
++	}
++
++	data, err := json.MarshalIndent(settings, "", "  ")
++	if err != nil {
++		return err
++	}
++
++	return os.WriteFile(settingsPath, data, 0644)
++}
+diff --git a/internal/cli/root.go b/internal/cli/root.go
+index 2dd9946..e792379 100644
+--- a/internal/cli/root.go
++++ b/internal/cli/root.go
+@@ -41,6 +41,7 @@ func Execute() int {
+ 		pushCmd(),
+ 		exportCmd(),
+ 		importCmd(),
++		hooksCmd(),
+ 	)
+ 
+ 	if err := rootCmd.Execute(); err != nil {
+diff --git a/internal/paths.go b/internal/paths.go
+index 2ced9ae..04b7be9 100644
+--- a/internal/paths.go
++++ b/internal/paths.go
+@@ -93,6 +93,50 @@ func WorktreePath(feature, branch string) string {
+ 	return filepath.Join(FeaturePath(feature), "worktrees", branch)
+ }
+ 
++// DetectFeatureFromCwd detects the current feature name from the working directory.
++// Works when cwd is inside a worktree: <workspace>/<feature>/worktrees/<branch>/
++// Returns feature name and feature path, or empty strings if not detected.
++func DetectFeatureFromCwd() (string, string) {
++	cwd, err := os.Getwd()
++	if err != nil {
++		return "", ""
++	}
++
++	wsRoot := TwsRoot()
++	absWs, _ := filepath.Abs(wsRoot)
++	absCwd, _ := filepath.Abs(cwd)
++
++	// Check if cwd is inside the workspace
++	if !strings.HasPrefix(absCwd, absWs+string(filepath.Separator)) {
++		return "", ""
++	}
++
++	// Get the relative path from workspace root
++	rel, err := filepath.Rel(absWs, absCwd)
++	if err != nil {
++		return "", ""
++	}
++
++	// First component is the feature name
++	parts := strings.SplitN(rel, string(filepath.Separator), 2)
++	if len(parts) == 0 {
++		return "", ""
++	}
++
++	feature := parts[0]
++	featurePath := filepath.Join(absWs, feature)
++
++	// Verify it's actually a feature dir (has stack.yaml or worktrees/)
++	if _, err := os.Stat(filepath.Join(featurePath, "worktrees")); err == nil {
++		return feature, featurePath
++	}
++	if _, err := os.Stat(filepath.Join(featurePath, "stack.yaml")); err == nil {
++		return feature, featurePath
++	}
++
++	return "", ""
++}
++
+ // ListFeatures returns the names of all feature directories in the workspace.
+ func ListFeatures() []string {
+ 	wsRoot := TwsRoot()
