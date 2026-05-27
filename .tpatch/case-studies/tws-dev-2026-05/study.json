@@ -1,0 +1,27 @@
+{
+  "study_id": "tws-dev-2026-05",
+  "created_at": "2026-05-27T00:00:00Z",
+  "repo_url": "https://github.com/jdbencardinop/tesseraworkspaces",
+  "repo_kind": "public-greenfield",
+  "project_kind": "new-cli-tool",
+  "study_type": "development-workflow",
+  "description": "Using tpatch as a feature-tracking and patch-recording workflow to build tesseraworkspaces (tws) from scratch, from empty main.go to v1.0.0.",
+  "duration_days": 7,
+  "tpatch_version": "0.6.1",
+  "languages": ["go"],
+  "test_command": "go test ./... && golangci-lint run ./...",
+  "provider": {
+    "configured": "copilot-gpt-5.5",
+    "status": "unreliable",
+    "fallback": "manual artifact writing",
+    "notes": "Provider fell back to heuristic mode frequently (500 errors from localhost:4141). Manual artifact writing was the practical default for most features."
+  },
+  "feature_count_final": 42,
+  "features_implemented": 35,
+  "features_requested": 7,
+  "tags_released": ["v0.1.0", "v0.2.0", "v0.3.0", "v0.4.0", "v0.5.0", "v0.6.0", "v0.7.0", "v0.7.1", "v0.7.2", "v0.7.3", "v0.7.4", "v0.7.5", "v0.8.0", "v0.8.1", "v0.9.0", "v0.9.1", "v0.9.2", "v1.0.0"],
+  "commits_production": 35,
+  "commits_tpatch_metadata": 35,
+  "workflow": "path-B-agent-assisted",
+  "excluded_paths": [".git/", "bin/", "*.test"]
+}

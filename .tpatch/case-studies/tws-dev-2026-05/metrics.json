@@ -1,0 +1,44 @@
+{
+  "study_id": "tws-dev-2026-05",
+  "computed_at": "2026-05-27T00:00:00Z",
+  "totals": {
+    "features_total": 42,
+    "features_implemented": 35,
+    "features_requested_remaining": 7,
+    "tags_released": 18,
+    "production_commits": 35,
+    "tpatch_metadata_commits": 35,
+    "lines_of_go_code": 3500,
+    "test_count": 25,
+    "cli_commands": 22
+  },
+  "workflow_metrics": {
+    "avg_feature_cycle_minutes": 30,
+    "features_with_full_tpatch_cycle": 20,
+    "features_fast_tracked": 15,
+    "provider_success_rate": "~10%",
+    "manual_artifact_rate": "~90%",
+    "smoke_tests_per_feature": 1.2,
+    "bugs_caught_by_smoke_tests": 3
+  },
+  "tpatch_phase_usage": {
+    "analyze": { "provider": 3, "manual": 17, "skipped": 15 },
+    "define": { "provider": 2, "manual": 18, "skipped": 15 },
+    "explore": { "provider": 2, "manual": 18, "skipped": 15 },
+    "implement": { "all_path_b": true, "notes": "All features implemented via Path B (agent-assisted). No provider-driven implementation." },
+    "record": { "total": 35, "with_collision": 4, "round_trip_warnings": 3 }
+  },
+  "commit_convention": {
+    "production_first": true,
+    "tpatch_separate": true,
+    "convention": "feat() commit → tpatch record --from HEAD~1 → chore(tpatch) commit",
+    "violations": 1,
+    "violation_notes": "Once committed to wrong branch (routes instead of main), caught and cherry-picked"
+  },
+  "dependency_graph": {
+    "total_edges": 18,
+    "max_depth": 4,
+    "cycles_detected": 0,
+    "dag_validations_run": 12
+  }
+}
