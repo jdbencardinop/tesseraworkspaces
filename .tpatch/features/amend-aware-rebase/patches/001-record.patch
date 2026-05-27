@@ -1,0 +1,100 @@
+diff --git a/internal/cli/sync_helpers.go b/internal/cli/sync_helpers.go
+index 680bec4..18d75e0 100644
+--- a/internal/cli/sync_helpers.go
++++ b/internal/cli/sync_helpers.go
+@@ -45,7 +45,24 @@ func syncWithStackFiltered(feature, featurePath string, stack internal.Stack, so
+ 
+ 		base := resolveBase(entry.Base)
+ 
+-		err := internal.RunDirClean(path, "git", "rebase", "--update-refs", base)
++		// Determine git context for resolving SHAs
++		gitContext := path
++		if entry.Repo != "" {
++			gitContext = entry.Repo
++		}
++
++		// Build rebase args — use --onto if we have a previous base SHA
++		// to avoid ghost conflicts from amended commits
++		var rebaseArgs []string
++		currentBaseSHA := internal.GetBranchSHA(gitContext, base)
++		if entry.LastBaseSHA != "" && currentBaseSHA != "" && entry.LastBaseSHA != currentBaseSHA {
++			// Base has changed (amended/rebased) — use --onto to skip stale commits
++			rebaseArgs = []string{"rebase", "--update-refs", "--onto", base, entry.LastBaseSHA}
++		} else {
++			rebaseArgs = []string{"rebase", "--update-refs", base}
++		}
++
++		err := internal.RunDirClean(path, "git", rebaseArgs...)
+ 		if err != nil {
+ 			fmt.Println(formatSyncStatus(entry.Name, "active", "conflict"))
+ 
+@@ -75,6 +92,13 @@ func syncWithStackFiltered(feature, featurePath string, stack internal.Stack, so
+ 			fmt.Println(formatSyncStatus(entry.Name, "active", "synced"))
+ 			markUpdatedAncestors(stack, entry.Name, featurePath, updatedByRef)
+ 			completed = append(completed, entry.Name)
++
++			// Update last_base_sha for next sync
++			newBaseSHA := internal.GetBranchSHA(gitContext, base)
++			if newBaseSHA != "" {
++				internal.UpdateBaseSHA(&stack, entry.Name, newBaseSHA)
++				_ = internal.SaveStack(featurePath, stack)
++			}
+ 		}
+ 	}
+ 
+diff --git a/internal/stack.go b/internal/stack.go
+index 380e540..9e2b1bf 100644
+--- a/internal/stack.go
++++ b/internal/stack.go
+@@ -3,6 +3,7 @@ package internal
+ import (
+ 	"fmt"
+ 	"os"
++	"os/exec"
+ 	"path/filepath"
+ 	"strings"
+ 
+@@ -10,9 +11,10 @@ import (
+ )
+ 
+ type StackEntry struct {
+-	Name string `yaml:"name"`
+-	Base string `yaml:"base"`
+-	Repo string `yaml:"repo,omitempty"` // source repo path (empty = default/current repo)
++	Name        string `yaml:"name"`
++	Base        string `yaml:"base"`
++	Repo        string `yaml:"repo,omitempty"`          // source repo path (empty = default/current repo)
++	LastBaseSHA string `yaml:"last_base_sha,omitempty"` // SHA of base branch at last sync
+ }
+ 
+ type Stack struct {
+@@ -59,6 +61,29 @@ func GetBranch(s Stack, name string) StackEntry {
+ 	return StackEntry{}
+ }
+ 
++// UpdateBaseSHA updates the last_base_sha for a branch in the stack.
++func UpdateBaseSHA(s *Stack, branchName, sha string) {
++	for i := range s.Branches {
++		if s.Branches[i].Name == branchName {
++			s.Branches[i].LastBaseSHA = sha
++			return
++		}
++	}
++}
++
++// GetBranchSHA returns the current HEAD SHA of a branch using git.
++func GetBranchSHA(gitContext, branch string) string {
++	args := []string{"rev-parse", branch}
++	if gitContext != "" {
++		args = []string{"-C", gitContext, "rev-parse", branch}
++	}
++	out, err := exec.Command("git", args...).Output()
++	if err != nil {
++		return ""
++	}
++	return strings.TrimSpace(string(out))
++}
++
+ // RenameBranch renames a branch in the stack, updating both Name and Base references.
+ func RenameBranch(s *Stack, oldName, newName string) bool {
+ 	found := false
