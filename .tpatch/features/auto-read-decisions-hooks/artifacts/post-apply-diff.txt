@@ -1,3 +1,3 @@
- .tpatch/FEATURES.md                                    | 2 +-
- .tpatch/features/auto-read-decisions-hooks/status.json | 7 ++++---
- 2 files changed, 5 insertions(+), 4 deletions(-)
+ .tpatch/FEATURES.md                                |   1 +
+ .../artifacts/post-apply.patch                     | 450 ++++++++-------------
+ 2 files changed, 176 insertions(+), 275 deletions(-)

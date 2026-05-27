@@ -1,8 +1,8 @@
 # Implementation Record: auto-read-decisions-hooks
 
-**Recorded**: 2026-05-27T05:09:33Z
+**Recorded**: 2026-05-27T05:32:58Z
 **Files changed**: 4
-**Patch size**: 8987 bytes
+**Patch size**: 6732 bytes
 **Capture mode**: committed range
 **Base commit**: HEAD~1
 **Upper bound**: HEAD
@@ -10,9 +10,9 @@
 ## Change Summary
 
 ```
- .tpatch/FEATURES.md                                    | 2 +-
- .tpatch/features/auto-read-decisions-hooks/status.json | 7 ++++---
- 2 files changed, 5 insertions(+), 4 deletions(-)
+ .tpatch/FEATURES.md                                |   1 +
+ .../artifacts/post-apply.patch                     | 450 ++++++++-------------
+ 2 files changed, 176 insertions(+), 275 deletions(-)
 ```
 
 ## Replay Instructions
