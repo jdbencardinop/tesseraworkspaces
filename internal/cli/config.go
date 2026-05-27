@@ -47,6 +47,11 @@ func configShowCmd() *cobra.Command {
 			} else {
 				fmt.Println("test_command: (none)")
 			}
+			if cfg.AutoHooks != nil {
+				fmt.Printf("auto_hooks: %v\n", *cfg.AutoHooks)
+			} else {
+				fmt.Println("auto_hooks: false (default)")
+			}
 			if len(cfg.Workspaces) > 0 {
 				fmt.Println("workspaces:")
 				for k, v := range cfg.Workspaces {
@@ -69,11 +74,11 @@ func configSetCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "set <key> <value>",
-		Short: "Set a config value (keys: agent_command, use_tmux, inject_into, test_command)",
+		Short: "Set a config value (keys: agent_command, use_tmux, inject_into, test_command, auto_hooks)",
 		Args:  cobra.ExactArgs(2),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			if len(args) == 0 {
-				return []string{"agent_command", "use_tmux", "inject_into", "test_command"}, cobra.ShellCompDirectiveNoFileComp
+				return []string{"agent_command", "use_tmux", "inject_into", "test_command", "auto_hooks"}, cobra.ShellCompDirectiveNoFileComp
 			}
 			if len(args) == 1 && args[0] == "agent_command" {
 				return []string{"claude", "opencode", "aider", "copilot"}, cobra.ShellCompDirectiveNoFileComp
@@ -111,8 +116,15 @@ func configSetCmd() *cobra.Command {
 				cfg.InjectInto = value
 			case "test_command":
 				cfg.TestCommand = value
+			case "auto_hooks":
+				b, err := strconv.ParseBool(value)
+				if err != nil {
+					fmt.Printf("Error: auto_hooks must be true or false, got %q\n", value)
+					os.Exit(1)
+				}
+				cfg.AutoHooks = &b
 			default:
-				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux, inject_into, test_command)\n", key)
+				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux, inject_into, test_command, auto_hooks)\n", key)
 				os.Exit(1)
 			}
 
@@ -166,8 +178,14 @@ func configGetCmd() *cobra.Command {
 				} else {
 					fmt.Println("(none)")
 				}
+			case "auto_hooks":
+				if cfg.AutoHooks != nil {
+					fmt.Println(*cfg.AutoHooks)
+				} else {
+					fmt.Println("false")
+				}
 			default:
-				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux, inject_into, test_command)\n", args[0])
+				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux, inject_into, test_command, auto_hooks)\n", args[0])
 				os.Exit(1)
 			}
 		},

@@ -109,6 +109,14 @@ func createWorktree(feature, branch, base, repoPath string, force bool) {
 		fmt.Printf("Warning: inject failed: %v\n", err)
 	}
 
+	// Auto-install hooks if configured
+	cfg := internal.LoadConfig()
+	if cfg.AutoHooks != nil && *cfg.AutoHooks {
+		if err := installHooksForWorktree(path, feature); err != nil {
+			fmt.Printf("Warning: auto-hooks install failed: %v\n", err)
+		}
+	}
+
 	if repoPath != "" {
 		fmt.Printf("Worktree created: %s (base: %s, repo: %s)\n", path, base, repoPath)
 	} else {

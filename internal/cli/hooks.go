@@ -39,17 +39,31 @@ type hookAction struct {
 }
 
 func hooksInstallCmd() *cobra.Command {
-	return &cobra.Command{
+	var all bool
+
+	cmd := &cobra.Command{
 		Use:   "install [feature]",
 		Short: "Install Claude Code hooks for auto-reading decisions",
 		Long: `Install hooks into .claude/settings.local.json so that Claude Code
 automatically checks for new decisions on session start and resume.
 
-Optionally watches decisions.yaml for real-time notifications via FileChanged hook.
-
-Run from inside a worktree, or specify the feature name.`,
+Use --all to install hooks across all features.
+Set auto_hooks: true in config to auto-install on every tws new.`,
 		Args: cobra.MaximumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
+			if all {
+				features := internal.ListFeatures()
+				if len(features) == 0 {
+					fmt.Println("No features found.")
+					return
+				}
+				for _, f := range features {
+					fmt.Printf("%s:\n", f)
+					installHooksForFeature(f)
+				}
+				return
+			}
+
 			var feature string
 			if len(args) > 0 {
 				feature = args[0]
@@ -61,29 +75,36 @@ Run from inside a worktree, or specify the feature name.`,
 				}
 			}
 
-			featurePath := internal.FeaturePath(feature)
-			stack, _ := internal.LoadStack(featurePath)
-
-			installed := 0
-			for _, entry := range stack.Branches {
-				wtPath := internal.WorktreePath(feature, entry.Name)
-				if _, err := os.Stat(wtPath); os.IsNotExist(err) {
-					continue // archived
-				}
-
-				if err := installHooksForWorktree(wtPath, feature); err != nil {
-					fmt.Printf("  [x] %s: %v\n", entry.Name, err)
-				} else {
-					fmt.Printf("  [+] %s: hooks installed\n", entry.Name)
-					installed++
-				}
-			}
-
-			if installed > 0 {
-				fmt.Printf("Installed hooks in %d worktree(s)\n", installed)
-				fmt.Println("Claude Code will now check for decisions on session start/resume.")
-			}
+			installHooksForFeature(feature)
 		},
+	}
+
+	cmd.Flags().BoolVar(&all, "all", false, "Install hooks for all features")
+
+	return cmd
+}
+
+func installHooksForFeature(feature string) {
+	featurePath := internal.FeaturePath(feature)
+	stack, _ := internal.LoadStack(featurePath)
+
+	installed := 0
+	for _, entry := range stack.Branches {
+		wtPath := internal.WorktreePath(feature, entry.Name)
+		if _, err := os.Stat(wtPath); os.IsNotExist(err) {
+			continue
+		}
+
+		if err := installHooksForWorktree(wtPath, feature); err != nil {
+			fmt.Printf("  [x] %s: %v\n", entry.Name, err)
+		} else {
+			fmt.Printf("  [+] %s: hooks installed\n", entry.Name)
+			installed++
+		}
+	}
+
+	if installed > 0 {
+		fmt.Printf("Installed hooks in %d worktree(s)\n", installed)
 	}
 }
 

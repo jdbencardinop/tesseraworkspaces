@@ -13,6 +13,7 @@ type Config struct {
 	UseTmux      *bool             `yaml:"use_tmux"`
 	InjectInto   string            `yaml:"inject_into"`
 	TestCommand  string            `yaml:"test_command"`
+	AutoHooks    *bool             `yaml:"auto_hooks"`
 }
 
 func (c Config) GetAgentCommand() string {
@@ -68,6 +69,9 @@ func LoadConfig() Config {
 	}
 	if repo.TestCommand != "" {
 		cfg.TestCommand = repo.TestCommand
+	}
+	if repo.AutoHooks != nil {
+		cfg.AutoHooks = repo.AutoHooks
 	}
 	if len(repo.Workspaces) > 0 {
 		if cfg.Workspaces == nil {
