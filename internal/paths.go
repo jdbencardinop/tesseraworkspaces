@@ -93,6 +93,50 @@ func WorktreePath(feature, branch string) string {
 	return filepath.Join(FeaturePath(feature), "worktrees", branch)
 }
 
+// DetectFeatureFromCwd detects the current feature name from the working directory.
+// Works when cwd is inside a worktree: <workspace>/<feature>/worktrees/<branch>/
+// Returns feature name and feature path, or empty strings if not detected.
+func DetectFeatureFromCwd() (string, string) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", ""
+	}
+
+	wsRoot := TwsRoot()
+	absWs, _ := filepath.Abs(wsRoot)
+	absCwd, _ := filepath.Abs(cwd)
+
+	// Check if cwd is inside the workspace
+	if !strings.HasPrefix(absCwd, absWs+string(filepath.Separator)) {
+		return "", ""
+	}
+
+	// Get the relative path from workspace root
+	rel, err := filepath.Rel(absWs, absCwd)
+	if err != nil {
+		return "", ""
+	}
+
+	// First component is the feature name
+	parts := strings.SplitN(rel, string(filepath.Separator), 2)
+	if len(parts) == 0 {
+		return "", ""
+	}
+
+	feature := parts[0]
+	featurePath := filepath.Join(absWs, feature)
+
+	// Verify it's actually a feature dir (has stack.yaml or worktrees/)
+	if _, err := os.Stat(filepath.Join(featurePath, "worktrees")); err == nil {
+		return feature, featurePath
+	}
+	if _, err := os.Stat(filepath.Join(featurePath, "stack.yaml")); err == nil {
+		return feature, featurePath
+	}
+
+	return "", ""
+}
+
 // ListFeatures returns the names of all feature directories in the workspace.
 func ListFeatures() []string {
 	wsRoot := TwsRoot()

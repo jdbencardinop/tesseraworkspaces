@@ -26,9 +26,9 @@ func decisionsListCmd() *cobra.Command {
 	var all bool
 
 	cmd := &cobra.Command{
-		Use:   "show <feature>",
-		Short: "List decisions for a feature (unread by default)",
-		Args:  cobra.ExactArgs(1),
+		Use:   "show [feature]",
+		Short: "List decisions for a feature (unread by default, auto-detects feature if omitted)",
+		Args:  cobra.MaximumNArgs(1),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			if len(args) == 0 {
 				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
@@ -36,8 +36,18 @@ func decisionsListCmd() *cobra.Command {
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
 		Run: func(cmd *cobra.Command, args []string) {
-			feature := args[0]
-			featurePath := internal.FeaturePath(feature)
+			var feature, featurePath string
+			if len(args) > 0 {
+				feature = args[0]
+				featurePath = internal.FeaturePath(feature)
+			} else {
+				feature, featurePath = internal.DetectFeatureFromCwd()
+				if feature == "" {
+					fmt.Println("Could not detect feature from current directory.")
+					fmt.Println("Usage: tws decisions show <feature> or run from inside a worktree.")
+					os.Exit(1)
+				}
+			}
 
 			decisions, err := internal.LoadDecisions(featurePath)
 			if err != nil {
@@ -95,9 +105,9 @@ func decisionsListCmd() *cobra.Command {
 
 func decisionsAckCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "ack <feature>",
+		Use:   "ack [feature]",
 		Short: "Mark all decisions as read for current branch",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			if len(args) == 0 {
 				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
@@ -105,8 +115,16 @@ func decisionsAckCmd() *cobra.Command {
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
 		Run: func(cmd *cobra.Command, args []string) {
-			feature := args[0]
-			featurePath := internal.FeaturePath(feature)
+			var featurePath string
+			if len(args) > 0 {
+				featurePath = internal.FeaturePath(args[0])
+			} else {
+				_, featurePath = internal.DetectFeatureFromCwd()
+				if featurePath == "" {
+					fmt.Println("Could not detect feature. Usage: tws decisions ack <feature>")
+					os.Exit(1)
+				}
+			}
 
 			branch, err := currentBranch()
 			if err != nil {

@@ -41,6 +41,7 @@ func Execute() int {
 		pushCmd(),
 		exportCmd(),
 		importCmd(),
+		hooksCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
