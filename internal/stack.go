@@ -3,6 +3,7 @@ package internal
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -10,9 +11,10 @@ import (
 )
 
 type StackEntry struct {
-	Name string `yaml:"name"`
-	Base string `yaml:"base"`
-	Repo string `yaml:"repo,omitempty"` // source repo path (empty = default/current repo)
+	Name        string `yaml:"name"`
+	Base        string `yaml:"base"`
+	Repo        string `yaml:"repo,omitempty"`          // source repo path (empty = default/current repo)
+	LastBaseSHA string `yaml:"last_base_sha,omitempty"` // SHA of base branch at last sync
 }
 
 type Stack struct {
@@ -57,6 +59,29 @@ func GetBranch(s Stack, name string) StackEntry {
 		}
 	}
 	return StackEntry{}
+}
+
+// UpdateBaseSHA updates the last_base_sha for a branch in the stack.
+func UpdateBaseSHA(s *Stack, branchName, sha string) {
+	for i := range s.Branches {
+		if s.Branches[i].Name == branchName {
+			s.Branches[i].LastBaseSHA = sha
+			return
+		}
+	}
+}
+
+// GetBranchSHA returns the current HEAD SHA of a branch using git.
+func GetBranchSHA(gitContext, branch string) string {
+	args := []string{"rev-parse", branch}
+	if gitContext != "" {
+		args = []string{"-C", gitContext, "rev-parse", branch}
+	}
+	out, err := exec.Command("git", args...).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // RenameBranch renames a branch in the stack, updating both Name and Base references.

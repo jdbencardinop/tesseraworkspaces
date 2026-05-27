@@ -45,7 +45,24 @@ func syncWithStackFiltered(feature, featurePath string, stack internal.Stack, so
 
 		base := resolveBase(entry.Base)
 
-		err := internal.RunDirClean(path, "git", "rebase", "--update-refs", base)
+		// Determine git context for resolving SHAs
+		gitContext := path
+		if entry.Repo != "" {
+			gitContext = entry.Repo
+		}
+
+		// Build rebase args — use --onto if we have a previous base SHA
+		// to avoid ghost conflicts from amended commits
+		var rebaseArgs []string
+		currentBaseSHA := internal.GetBranchSHA(gitContext, base)
+		if entry.LastBaseSHA != "" && currentBaseSHA != "" && entry.LastBaseSHA != currentBaseSHA {
+			// Base has changed (amended/rebased) — use --onto to skip stale commits
+			rebaseArgs = []string{"rebase", "--update-refs", "--onto", base, entry.LastBaseSHA}
+		} else {
+			rebaseArgs = []string{"rebase", "--update-refs", base}
+		}
+
+		err := internal.RunDirClean(path, "git", rebaseArgs...)
 		if err != nil {
 			fmt.Println(formatSyncStatus(entry.Name, "active", "conflict"))
 
@@ -75,6 +92,13 @@ func syncWithStackFiltered(feature, featurePath string, stack internal.Stack, so
 			fmt.Println(formatSyncStatus(entry.Name, "active", "synced"))
 			markUpdatedAncestors(stack, entry.Name, featurePath, updatedByRef)
 			completed = append(completed, entry.Name)
+
+			// Update last_base_sha for next sync
+			newBaseSHA := internal.GetBranchSHA(gitContext, base)
+			if newBaseSHA != "" {
+				internal.UpdateBaseSHA(&stack, entry.Name, newBaseSHA)
+				_ = internal.SaveStack(featurePath, stack)
+			}
 		}
 	}
 
