@@ -1,0 +1,12 @@
+{
+  "id": "per-file-inject-routing",
+  "slug": "per-file-inject-routing",
+  "title": "Support per-file inject targets via an inject.yaml mapping. Currently inject_into is a single global value. Users need CLAUDE.local.md at worktree root (agent auto-discovery) but planning docs in a gitignored subfolder (dev/). inject.yaml would map files to destinations: CLAUDE.local.md → ., *.html → dev/, planning/ → dev/planning/. Directory-mirroring mode: inject/dev/foo lands at worktree/dev/foo naturally. This unblocks F1, F2, F4 from user feedback.",
+  "state": "requested",
+  "compatibility": "unknown",
+  "requested_at": "2026-07-01T04:23:12Z",
+  "updated_at": "2026-07-01T04:23:12Z",
+  "last_command": "add",
+  "apply": {},
+  "reconcile": {}
+}

@@ -1,0 +1,12 @@
+{
+  "id": "agent-work-status-dashboard",
+  "slug": "agent-work-status-dashboard",
+  "title": "Track which worktree agents are currently working, halted, or need attention (e.g., approval for a command). tws status or tws list could show per-worktree agent status: active (agent running), idle (no agent), blocked (needs approval/input). Could integrate with tpatch feature states. Useful for orchestrators to know which branches need intervention.",
+  "state": "requested",
+  "compatibility": "unknown",
+  "requested_at": "2026-07-01T04:52:47Z",
+  "updated_at": "2026-07-01T04:52:47Z",
+  "last_command": "add",
+  "apply": {},
+  "reconcile": {}
+}

@@ -1,0 +1,8 @@
+# Feature Request: Integrate tws with tpatch so that feature workspaces can contain tpatch metadata. A meta-repo or .tws subfolder could hold tpatch's .tpatch/ structure, allowing features to be tracked as tpatch features with analysis/spec/exploration/record workflow. This bridges the workspace orchestration (tws) with the feature lifecycle (tpatch).
+
+**Slug**: `tpatch-integration`
+**Created**: 2026-07-01T04:59:52Z
+
+## Description
+
+Integrate tws with tpatch so that feature workspaces can contain tpatch metadata. A meta-repo or .tws subfolder could hold tpatch's .tpatch/ structure, allowing features to be tracked as tpatch features with analysis/spec/exploration/record workflow. This bridges the workspace orchestration (tws) with the feature lifecycle (tpatch).

@@ -1,0 +1,12 @@
+{
+  "id": "open-feature-dir",
+  "slug": "open-feature-dir",
+  "title": "Allow tws open \u003cfeature\u003e (no branch) to open the feature directory itself, not just worktrees. Useful for viewing docs, inject files, decisions. Optionally create a tmux session for the whole feature with --all flag that creates windows for each worktree branch in the same session. This enables a single tmux session to manage the entire feature with tabs/windows per branch.",
+  "state": "requested",
+  "compatibility": "unknown",
+  "requested_at": "2026-07-01T04:47:21Z",
+  "updated_at": "2026-07-01T04:47:21Z",
+  "last_command": "add",
+  "apply": {},
+  "reconcile": {}
+}
