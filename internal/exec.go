@@ -46,6 +46,21 @@ func BranchExists(branch string) bool {
 	return err == nil
 }
 
+// DefaultBranch returns the repo's default branch name (e.g., main, master).
+// Detects from origin/HEAD, falls back to "main".
+func DefaultBranch() string {
+	out, err := exec.Command("git", "rev-parse", "--abbrev-ref", "origin/HEAD").Output()
+	if err == nil {
+		branch := strings.TrimSpace(string(out))
+		// origin/HEAD returns "origin/main" — strip the "origin/" prefix
+		if strings.HasPrefix(branch, "origin/") {
+			return strings.TrimPrefix(branch, "origin/")
+		}
+		return branch
+	}
+	return "main"
+}
+
 // AbsPath returns the absolute path, resolving relative paths.
 func AbsPath(path string) (string, error) {
 	return filepath.Abs(path)

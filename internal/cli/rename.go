@@ -76,33 +76,62 @@ func renameBranchCmd() *cobra.Command {
 
 			featurePath := internal.FeaturePath(feature)
 
-			// Update stack.yaml
+			// Load stack (don't mutate yet)
 			stack, err := internal.LoadStack(featurePath)
 			if err != nil {
 				fmt.Printf("No stack.yaml found for feature: %s\n", feature)
 				os.Exit(1)
 			}
 
-			if !internal.RenameBranch(&stack, oldName, newName) {
+			if !internal.HasBranch(stack, oldName) {
 				fmt.Printf("Branch %q not found in stack\n", oldName)
 				os.Exit(1)
 			}
 
-			internal.Must(internal.SaveStack(featurePath, stack))
+			// Resolve git context: find an active worktree to run git from
+			gitDir := resolveGitDir(featurePath, stack)
+			if gitDir == "" {
+				fmt.Println("Error: could not find a git context. Run from inside the repo or ensure at least one active worktree exists.")
+				os.Exit(1)
+			}
 
-			// Rename worktree directory if active
+			// Step 1: Git operations FIRST (validate before mutating metadata)
 			oldPath := internal.WorktreePath(feature, oldName)
 			newPath := internal.WorktreePath(feature, newName)
 
 			if _, err := os.Stat(oldPath); err == nil {
-				// Remove worktree, rename git branch, re-add
-				internal.Must(internal.Run("git", "worktree", "remove", "--force", oldPath))
-				internal.Must(internal.Run("git", "branch", "-m", oldName, newName))
-				internal.Must(internal.Run("git", "worktree", "add", newPath, newName))
+				// Active worktree: remove, rename branch, re-add
+				if err := internal.RunDir(gitDir, "git", "worktree", "remove", "--force", oldPath); err != nil {
+					fmt.Printf("Error removing worktree: %v\n", err)
+					os.Exit(1)
+				}
+				if err := internal.RunDir(gitDir, "git", "branch", "-m", oldName, newName); err != nil {
+					// Rollback: re-add old worktree
+					_ = internal.RunDir(gitDir, "git", "worktree", "add", oldPath, oldName)
+					fmt.Printf("Error renaming git branch: %v\n", err)
+					os.Exit(1)
+				}
+				if err := internal.RunDir(gitDir, "git", "worktree", "add", newPath, newName); err != nil {
+					fmt.Printf("Error creating new worktree: %v\n", err)
+					os.Exit(1)
+				}
+
+				// Re-inject files into the new worktree
+				target := internal.ResolveInjectInto("")
+				if injectErr := internal.InjectFiles(featurePath, newPath, target); injectErr != nil {
+					fmt.Printf("Warning: inject failed: %v\n", injectErr)
+				}
 			} else {
-				// Archived — just rename the git branch
-				internal.Must(internal.Run("git", "branch", "-m", oldName, newName))
+				// Archived: just rename the git branch
+				if err := internal.RunDir(gitDir, "git", "branch", "-m", oldName, newName); err != nil {
+					fmt.Printf("Error renaming git branch: %v\n", err)
+					os.Exit(1)
+				}
 			}
+
+			// Step 2: NOW mutate metadata (git succeeded)
+			internal.RenameBranch(&stack, oldName, newName)
+			internal.Must(internal.SaveStack(featurePath, stack))
 
 			// Kill stale tmux session
 			oldSession := sanitizeSessionName(feature + "/" + oldName)
@@ -124,4 +153,30 @@ func renameBranchCmd() *cobra.Command {
 			fmt.Printf("Renamed branch: %s → %s (in feature %s)\n", oldName, newName, feature)
 		},
 	}
+}
+
+// resolveGitDir finds a usable git directory from the feature's worktrees.
+// Returns the path to an active worktree, or tries cwd as fallback.
+func resolveGitDir(featurePath string, stack internal.Stack) string {
+	// Try active worktrees first
+	for _, entry := range stack.Branches {
+		wtPath := internal.WorktreePath("", entry.Name)
+		// Reconstruct from featurePath directly
+		path := featurePath + "/worktrees/" + entry.Name
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+		if entry.Repo != "" {
+			return entry.Repo
+		}
+		_ = wtPath
+	}
+
+	// Fallback: try cwd
+	if internal.BranchExists("HEAD") {
+		cwd, _ := os.Getwd()
+		return cwd
+	}
+
+	return ""
 }

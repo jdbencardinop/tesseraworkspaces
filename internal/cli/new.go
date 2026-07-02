@@ -30,11 +30,14 @@ func newCmd() *cobra.Command {
 			}
 		},
 		Run: func(cmd *cobra.Command, args []string) {
+			if !cmd.Flags().Changed("base") {
+				base = internal.DefaultBranch()
+			}
 			createWorktree(args[0], args[1], base, repo, force)
 		},
 	}
 
-	cmd.Flags().StringVar(&base, "base", "main", "Parent branch for stacking")
+	cmd.Flags().StringVar(&base, "base", "", "Parent branch for stacking (default: repo's default branch)")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force checkout of already checked-out branch")
 	cmd.Flags().StringVar(&repo, "repo", "", "Source repository path (for cross-repo worktrees)")
 

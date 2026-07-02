@@ -60,6 +60,9 @@ Note: injected files appear as untracked in git status. Add them to
 
 			// Quick start: create worktree if -n specified
 			if newBranch != "" {
+				if !cmd.Flags().Changed("base") {
+					base = internal.DefaultBranch()
+				}
 				createWorktree(feature, newBranch, base, "", force)
 
 				if open {
@@ -76,7 +79,7 @@ Note: injected files appear as untracked in git status. Add them to
 
 	cmd.Flags().StringArrayVar(&templates, "template", nil, "Template directory to copy into inject/ (can be specified multiple times)")
 	cmd.Flags().StringVarP(&newBranch, "new", "n", "", "Also create a worktree branch")
-	cmd.Flags().StringVar(&base, "base", "main", "Base branch for the new worktree (used with -n)")
+	cmd.Flags().StringVar(&base, "base", "", "Base branch for the new worktree (default: repo's default branch)")
 	cmd.Flags().BoolVar(&open, "open", false, "Open the worktree after creation (used with -n)")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force checkout of already checked-out branch")
 	cmd.Flags().BoolVar(&useTmux, "tmux", false, "Open in tmux session (used with --open)")

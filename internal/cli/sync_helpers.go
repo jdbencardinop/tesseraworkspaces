@@ -189,8 +189,10 @@ func collectSkippedNames(stack internal.Stack, branch string) []string {
 }
 
 func resolveBase(base string) string {
-	if base == "main" {
-		return "origin/main"
+	// If base is the repo's default branch, use its remote tracking ref
+	defaultBranch := internal.DefaultBranch()
+	if base == defaultBranch {
+		return "origin/" + defaultBranch
 	}
 	return base
 }
