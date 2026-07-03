@@ -2,11 +2,15 @@
   "id": "fix-default-base-branch",
   "slug": "fix-default-base-branch",
   "title": "Default --base is hardcoded to \"main\" but many repos use \"master\" or other default branches. Detect the actual default branch from origin/HEAD (git rev-parse --abbrev-ref origin/HEAD) and use that as the default. Warn if the given base branch doesn't exist.",
-  "state": "requested",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-07-01T03:53:18Z",
-  "updated_at": "2026-07-01T03:53:18Z",
-  "last_command": "add",
-  "apply": {},
+  "updated_at": "2026-07-03T22:36:01Z",
+  "last_command": "record",
+  "notes": "Patch recorded",
+  "apply": {
+    "base_commit": "e056ab9ec176fd26eadc3019e5a77af5eefda0bf",
+    "has_patch": true
+  },
   "reconcile": {}
 }

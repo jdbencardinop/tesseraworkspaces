@@ -1,0 +1,194 @@
+diff --git a/internal/cli/add.go b/internal/cli/add.go
+index e6cfcf5..94e1ca5 100644
+--- a/internal/cli/add.go
++++ b/internal/cli/add.go
+@@ -60,6 +60,9 @@ Note: injected files appear as untracked in git status. Add them to
+ 
+ 			// Quick start: create worktree if -n specified
+ 			if newBranch != "" {
++				if !cmd.Flags().Changed("base") {
++					base = internal.DefaultBranch()
++				}
+ 				createWorktree(feature, newBranch, base, "", force)
+ 
+ 				if open {
+@@ -76,7 +79,7 @@ Note: injected files appear as untracked in git status. Add them to
+ 
+ 	cmd.Flags().StringArrayVar(&templates, "template", nil, "Template directory to copy into inject/ (can be specified multiple times)")
+ 	cmd.Flags().StringVarP(&newBranch, "new", "n", "", "Also create a worktree branch")
+-	cmd.Flags().StringVar(&base, "base", "main", "Base branch for the new worktree (used with -n)")
++	cmd.Flags().StringVar(&base, "base", "", "Base branch for the new worktree (default: repo's default branch)")
+ 	cmd.Flags().BoolVar(&open, "open", false, "Open the worktree after creation (used with -n)")
+ 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force checkout of already checked-out branch")
+ 	cmd.Flags().BoolVar(&useTmux, "tmux", false, "Open in tmux session (used with --open)")
+diff --git a/internal/cli/new.go b/internal/cli/new.go
+index 78a6fdb..63d9794 100644
+--- a/internal/cli/new.go
++++ b/internal/cli/new.go
+@@ -30,11 +30,14 @@ func newCmd() *cobra.Command {
+ 			}
+ 		},
+ 		Run: func(cmd *cobra.Command, args []string) {
++			if !cmd.Flags().Changed("base") {
++				base = internal.DefaultBranch()
++			}
+ 			createWorktree(args[0], args[1], base, repo, force)
+ 		},
+ 	}
+ 
+-	cmd.Flags().StringVar(&base, "base", "main", "Parent branch for stacking")
++	cmd.Flags().StringVar(&base, "base", "", "Parent branch for stacking (default: repo's default branch)")
+ 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force checkout of already checked-out branch")
+ 	cmd.Flags().StringVar(&repo, "repo", "", "Source repository path (for cross-repo worktrees)")
+ 
+diff --git a/internal/cli/rename.go b/internal/cli/rename.go
+index fa63885..3f5a97e 100644
+--- a/internal/cli/rename.go
++++ b/internal/cli/rename.go
+@@ -76,34 +76,63 @@ func renameBranchCmd() *cobra.Command {
+ 
+ 			featurePath := internal.FeaturePath(feature)
+ 
+-			// Update stack.yaml
++			// Load stack (don't mutate yet)
+ 			stack, err := internal.LoadStack(featurePath)
+ 			if err != nil {
+ 				fmt.Printf("No stack.yaml found for feature: %s\n", feature)
+ 				os.Exit(1)
+ 			}
+ 
+-			if !internal.RenameBranch(&stack, oldName, newName) {
++			if !internal.HasBranch(stack, oldName) {
+ 				fmt.Printf("Branch %q not found in stack\n", oldName)
+ 				os.Exit(1)
+ 			}
+ 
+-			internal.Must(internal.SaveStack(featurePath, stack))
++			// Resolve git context: find an active worktree to run git from
++			gitDir := resolveGitDir(featurePath, stack)
++			if gitDir == "" {
++				fmt.Println("Error: could not find a git context. Run from inside the repo or ensure at least one active worktree exists.")
++				os.Exit(1)
++			}
+ 
+-			// Rename worktree directory if active
++			// Step 1: Git operations FIRST (validate before mutating metadata)
+ 			oldPath := internal.WorktreePath(feature, oldName)
+ 			newPath := internal.WorktreePath(feature, newName)
+ 
+ 			if _, err := os.Stat(oldPath); err == nil {
+-				// Remove worktree, rename git branch, re-add
+-				internal.Must(internal.Run("git", "worktree", "remove", "--force", oldPath))
+-				internal.Must(internal.Run("git", "branch", "-m", oldName, newName))
+-				internal.Must(internal.Run("git", "worktree", "add", newPath, newName))
++				// Active worktree: remove, rename branch, re-add
++				if err := internal.RunDir(gitDir, "git", "worktree", "remove", "--force", oldPath); err != nil {
++					fmt.Printf("Error removing worktree: %v\n", err)
++					os.Exit(1)
++				}
++				if err := internal.RunDir(gitDir, "git", "branch", "-m", oldName, newName); err != nil {
++					// Rollback: re-add old worktree
++					_ = internal.RunDir(gitDir, "git", "worktree", "add", oldPath, oldName)
++					fmt.Printf("Error renaming git branch: %v\n", err)
++					os.Exit(1)
++				}
++				if err := internal.RunDir(gitDir, "git", "worktree", "add", newPath, newName); err != nil {
++					fmt.Printf("Error creating new worktree: %v\n", err)
++					os.Exit(1)
++				}
++
++				// Re-inject files into the new worktree
++				target := internal.ResolveInjectInto("")
++				if injectErr := internal.InjectFiles(featurePath, newPath, target); injectErr != nil {
++					fmt.Printf("Warning: inject failed: %v\n", injectErr)
++				}
+ 			} else {
+-				// Archived — just rename the git branch
+-				internal.Must(internal.Run("git", "branch", "-m", oldName, newName))
++				// Archived: just rename the git branch
++				if err := internal.RunDir(gitDir, "git", "branch", "-m", oldName, newName); err != nil {
++					fmt.Printf("Error renaming git branch: %v\n", err)
++					os.Exit(1)
++				}
+ 			}
+ 
++			// Step 2: NOW mutate metadata (git succeeded)
++			internal.RenameBranch(&stack, oldName, newName)
++			internal.Must(internal.SaveStack(featurePath, stack))
++
+ 			// Kill stale tmux session
+ 			oldSession := sanitizeSessionName(feature + "/" + oldName)
+ 			if sessionExists(oldSession) {
+@@ -125,3 +154,29 @@ func renameBranchCmd() *cobra.Command {
+ 		},
+ 	}
+ }
++
++// resolveGitDir finds a usable git directory from the feature's worktrees.
++// Returns the path to an active worktree, or tries cwd as fallback.
++func resolveGitDir(featurePath string, stack internal.Stack) string {
++	// Try active worktrees first
++	for _, entry := range stack.Branches {
++		wtPath := internal.WorktreePath("", entry.Name)
++		// Reconstruct from featurePath directly
++		path := featurePath + "/worktrees/" + entry.Name
++		if _, err := os.Stat(path); err == nil {
++			return path
++		}
++		if entry.Repo != "" {
++			return entry.Repo
++		}
++		_ = wtPath
++	}
++
++	// Fallback: try cwd
++	if internal.BranchExists("HEAD") {
++		cwd, _ := os.Getwd()
++		return cwd
++	}
++
++	return ""
++}
+diff --git a/internal/cli/sync_helpers.go b/internal/cli/sync_helpers.go
+index 18d75e0..171999b 100644
+--- a/internal/cli/sync_helpers.go
++++ b/internal/cli/sync_helpers.go
+@@ -189,8 +189,10 @@ func collectSkippedNames(stack internal.Stack, branch string) []string {
+ }
+ 
+ func resolveBase(base string) string {
+-	if base == "main" {
+-		return "origin/main"
++	// If base is the repo's default branch, use its remote tracking ref
++	defaultBranch := internal.DefaultBranch()
++	if base == defaultBranch {
++		return "origin/" + defaultBranch
+ 	}
+ 	return base
+ }
+diff --git a/internal/exec.go b/internal/exec.go
+index ea9b825..fdbb6b4 100644
+--- a/internal/exec.go
++++ b/internal/exec.go
+@@ -46,6 +46,21 @@ func BranchExists(branch string) bool {
+ 	return err == nil
+ }
+ 
++// DefaultBranch returns the repo's default branch name (e.g., main, master).
++// Detects from origin/HEAD, falls back to "main".
++func DefaultBranch() string {
++	out, err := exec.Command("git", "rev-parse", "--abbrev-ref", "origin/HEAD").Output()
++	if err == nil {
++		branch := strings.TrimSpace(string(out))
++		// origin/HEAD returns "origin/main" — strip the "origin/" prefix
++		if strings.HasPrefix(branch, "origin/") {
++			return strings.TrimPrefix(branch, "origin/")
++		}
++		return branch
++	}
++	return "main"
++}
++
+ // AbsPath returns the absolute path, resolving relative paths.
+ func AbsPath(path string) (string, error) {
+ 	return filepath.Abs(path)

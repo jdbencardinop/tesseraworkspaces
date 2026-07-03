@@ -2,11 +2,15 @@
   "id": "fix-atomic-rename",
   "slug": "fix-atomic-rename",
   "title": "tws rename branch is non-atomic: it writes stack.yaml (metadata rename) BEFORE validating the git repo is reachable. If run from the feature dir (not a git repo), the git step fails but stack.yaml is already corrupted with the new name while git branch + worktree dir retain the old name. Fix: validate git repo reachability before mutating any metadata. Roll back stack.yaml on git failure. Also resolve the source repo from feature metadata (stack.yaml Repo field or active worktree) so commands work from the feature dir.",
-  "state": "requested",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-07-01T03:55:36Z",
-  "updated_at": "2026-07-01T03:55:36Z",
-  "last_command": "add",
-  "apply": {},
+  "updated_at": "2026-07-03T22:36:01Z",
+  "last_command": "record",
+  "notes": "Patch recorded",
+  "apply": {
+    "base_commit": "e056ab9ec176fd26eadc3019e5a77af5eefda0bf",
+    "has_patch": true
+  },
   "reconcile": {}
 }

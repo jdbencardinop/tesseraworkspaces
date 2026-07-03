@@ -1,0 +1,4 @@
+ .tpatch/FEATURES.md                                  |  4 ++--
+ .tpatch/features/fix-atomic-rename/status.json       |  7 ++++---
+ .tpatch/features/fix-default-base-branch/status.json | 12 ++++++++----
+ 3 files changed, 14 insertions(+), 9 deletions(-)
