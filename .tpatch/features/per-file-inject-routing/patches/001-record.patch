@@ -1,0 +1,272 @@
+diff --git a/internal/cli/config.go b/internal/cli/config.go
+index 3afc658..0109330 100644
+--- a/internal/cli/config.go
++++ b/internal/cli/config.go
+@@ -52,6 +52,11 @@ func configShowCmd() *cobra.Command {
+ 			} else {
+ 				fmt.Println("auto_hooks: false (default)")
+ 			}
++			if cfg.BranchPrefix != "" {
++				fmt.Printf("branch_prefix: %s\n", cfg.BranchPrefix)
++			} else {
++				fmt.Println("branch_prefix: (none)")
++			}
+ 			if len(cfg.Workspaces) > 0 {
+ 				fmt.Println("workspaces:")
+ 				for k, v := range cfg.Workspaces {
+@@ -74,11 +79,11 @@ func configSetCmd() *cobra.Command {
+ 
+ 	cmd := &cobra.Command{
+ 		Use:   "set <key> <value>",
+-		Short: "Set a config value (keys: agent_command, use_tmux, inject_into, test_command, auto_hooks)",
++		Short: "Set a config value",
+ 		Args:  cobra.ExactArgs(2),
+ 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+ 			if len(args) == 0 {
+-				return []string{"agent_command", "use_tmux", "inject_into", "test_command", "auto_hooks"}, cobra.ShellCompDirectiveNoFileComp
++				return []string{"agent_command", "use_tmux", "inject_into", "test_command", "auto_hooks", "branch_prefix"}, cobra.ShellCompDirectiveNoFileComp
+ 			}
+ 			if len(args) == 1 && args[0] == "agent_command" {
+ 				return []string{"claude", "opencode", "aider", "copilot"}, cobra.ShellCompDirectiveNoFileComp
+@@ -123,6 +128,8 @@ func configSetCmd() *cobra.Command {
+ 					os.Exit(1)
+ 				}
+ 				cfg.AutoHooks = &b
++			case "branch_prefix":
++				cfg.BranchPrefix = value
+ 			default:
+ 				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux, inject_into, test_command, auto_hooks)\n", key)
+ 				os.Exit(1)
+@@ -152,7 +159,7 @@ func configGetCmd() *cobra.Command {
+ 		Short: "Get a resolved config value",
+ 		Args:  cobra.ExactArgs(1),
+ 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+-			return []string{"agent_command", "use_tmux"}, cobra.ShellCompDirectiveNoFileComp
++			return []string{"agent_command", "use_tmux", "inject_into", "test_command", "auto_hooks", "branch_prefix"}, cobra.ShellCompDirectiveNoFileComp
+ 		},
+ 		Run: func(cmd *cobra.Command, args []string) {
+ 			cfg := internal.LoadConfig()
+@@ -184,6 +191,12 @@ func configGetCmd() *cobra.Command {
+ 				} else {
+ 					fmt.Println("false")
+ 				}
++			case "branch_prefix":
++				if cfg.BranchPrefix != "" {
++					fmt.Println(cfg.BranchPrefix)
++				} else {
++					fmt.Println("(none)")
++				}
+ 			default:
+ 				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux, inject_into, test_command, auto_hooks)\n", args[0])
+ 				os.Exit(1)
+diff --git a/internal/cli/new.go b/internal/cli/new.go
+index 63d9794..3d9537c 100644
+--- a/internal/cli/new.go
++++ b/internal/cli/new.go
+@@ -47,18 +47,24 @@ func newCmd() *cobra.Command {
+ // createWorktree is the shared logic for creating a worktree branch.
+ // Used by both tws new and tws add -n.
+ // repoPath is the source repo (empty = current repo).
+-func createWorktree(feature, branch, base, repoPath string, force bool) {
++func createWorktree(feature, name, base, repoPath string, force bool) {
+ 	internal.RequireTool("git")
+ 
+ 	featurePath := internal.FeaturePath(feature)
+-	path := internal.WorktreePath(feature, branch)
++	path := internal.WorktreePath(feature, name) // worktree dir uses short name
+ 
+ 	internal.Must(os.MkdirAll(featurePath, 0755))
+ 
++	// Resolve the actual git branch name (apply prefix if configured)
++	cfg := internal.LoadConfig()
++	gitBranch := name
++	if cfg.BranchPrefix != "" {
++		gitBranch = cfg.BranchPrefix + name
++	}
++
+ 	// Determine which repo to use
+ 	var repoRoot string
+ 	if repoPath != "" {
+-		// Cross-repo: use the specified repo
+ 		absRepo, err := internal.AbsPath(repoPath)
+ 		if err != nil {
+ 			fmt.Printf("Error: invalid repo path %s: %v\n", repoPath, err)
+@@ -67,7 +73,6 @@ func createWorktree(feature, branch, base, repoPath string, force bool) {
+ 		repoRoot = absRepo
+ 		repoPath = absRepo
+ 	} else {
+-		// Default: use the current repo
+ 		root, err := internal.MainRepoRoot()
+ 		if err != nil {
+ 			fmt.Println("Error: must be run from inside a git repository")
+@@ -76,12 +81,19 @@ func createWorktree(feature, branch, base, repoPath string, force bool) {
+ 		repoRoot = root
+ 	}
+ 
+-	// Check if branch exists in the target repo
+-	branchExists := internal.RunSilent("git", "-C", repoRoot, "rev-parse", "--verify", branch) == nil
++	// Check if branch exists in the target repo (try both prefixed and unprefixed)
++	branchExists := internal.RunSilent("git", "-C", repoRoot, "rev-parse", "--verify", gitBranch) == nil
++	if !branchExists && gitBranch != name {
++		// Try the unprefixed name (user may have created the branch manually)
++		if internal.RunSilent("git", "-C", repoRoot, "rev-parse", "--verify", name) == nil {
++			gitBranch = name // use the existing unprefixed branch
++			branchExists = true
++		}
++	}
+ 
+ 	if branchExists {
+-		if isCheckedOutIn(repoRoot, branch) && !force {
+-			fmt.Printf("Warning: branch %q is already checked out in another worktree.\n", branch)
++		if isCheckedOutIn(repoRoot, gitBranch) && !force {
++			fmt.Printf("Warning: branch %q is already checked out in another worktree.\n", gitBranch)
+ 			fmt.Println("Use --force to check it out anyway.")
+ 			os.Exit(1)
+ 		}
+@@ -90,19 +102,24 @@ func createWorktree(feature, branch, base, repoPath string, force bool) {
+ 		if force {
+ 			gitArgs = append(gitArgs, "--force")
+ 		}
+-		gitArgs = append(gitArgs, path, branch)
++		gitArgs = append(gitArgs, path, gitBranch)
+ 		internal.Must(internal.RunDir(repoRoot, "git", gitArgs...))
+ 	} else {
+-		internal.Must(internal.RunDir(repoRoot, "git", "worktree", "add", path, "-b", branch))
++		internal.Must(internal.RunDir(repoRoot, "git", "worktree", "add", path, "-b", gitBranch))
+ 	}
+ 
+ 	stack, _ := internal.LoadStack(featurePath)
+-	if !internal.HasBranch(stack, branch) {
+-		stack.Branches = append(stack.Branches, internal.StackEntry{
+-			Name: branch,
++	if !internal.HasBranch(stack, name) {
++		entry := internal.StackEntry{
++			Name: name,
+ 			Base: base,
+ 			Repo: repoPath,
+-		})
++		}
++		// Only store Branch if it differs from Name
++		if gitBranch != name {
++			entry.Branch = gitBranch
++		}
++		stack.Branches = append(stack.Branches, entry)
+ 		internal.Must(internal.SaveStack(featurePath, stack))
+ 	}
+ 
+@@ -113,7 +130,6 @@ func createWorktree(feature, branch, base, repoPath string, force bool) {
+ 	}
+ 
+ 	// Auto-install hooks if configured
+-	cfg := internal.LoadConfig()
+ 	if cfg.AutoHooks != nil && *cfg.AutoHooks {
+ 		if err := installHooksForWorktree(path, feature); err != nil {
+ 			fmt.Printf("Warning: auto-hooks install failed: %v\n", err)
+diff --git a/internal/cli/sync_helpers.go b/internal/cli/sync_helpers.go
+index 171999b..be315fa 100644
+--- a/internal/cli/sync_helpers.go
++++ b/internal/cli/sync_helpers.go
+@@ -135,10 +135,11 @@ func syncWithStackFiltered(feature, featurePath string, stack internal.Stack, so
+ 		}
+ 
+ 		var rebaseErr error
++		gitBranch := entry.GitBranch()
+ 		if rebaseDir != "" {
+-			rebaseErr = internal.RunSilentDir(rebaseDir, "git", "rebase", base, entry.Name)
++			rebaseErr = internal.RunSilentDir(rebaseDir, "git", "rebase", base, gitBranch)
+ 		} else {
+-			rebaseErr = internal.RunSilent("git", "rebase", base, entry.Name)
++			rebaseErr = internal.RunSilent("git", "rebase", base, gitBranch)
+ 		}
+ 
+ 		if rebaseErr != nil {
+diff --git a/internal/config.go b/internal/config.go
+index 74e5e29..93b1289 100644
+--- a/internal/config.go
++++ b/internal/config.go
+@@ -14,6 +14,7 @@ type Config struct {
+ 	InjectInto   string            `yaml:"inject_into"`
+ 	TestCommand  string            `yaml:"test_command"`
+ 	AutoHooks    *bool             `yaml:"auto_hooks"`
++	BranchPrefix string            `yaml:"branch_prefix"`
+ }
+ 
+ func (c Config) GetAgentCommand() string {
+@@ -73,6 +74,9 @@ func LoadConfig() Config {
+ 	if repo.AutoHooks != nil {
+ 		cfg.AutoHooks = repo.AutoHooks
+ 	}
++	if repo.BranchPrefix != "" {
++		cfg.BranchPrefix = repo.BranchPrefix
++	}
+ 	if len(repo.Workspaces) > 0 {
+ 		if cfg.Workspaces == nil {
+ 			cfg.Workspaces = make(map[string]string)
+diff --git a/internal/health.go b/internal/health.go
+index 7fe49c8..30eefec 100644
+--- a/internal/health.go
++++ b/internal/health.go
+@@ -61,12 +61,20 @@ func CheckWorktreeDirty(worktreePath, branch string) *HealthIssue {
+ }
+ 
+ // CheckWorktreeInjectLinks checks if inject symlinks are present.
++// Respects the configured inject_into target path.
+ func CheckWorktreeInjectLinks(featurePath, worktreePath, branch string) *HealthIssue {
+ 	injectDir := InjectPath(featurePath)
+ 	if _, err := os.Stat(injectDir); os.IsNotExist(err) {
+ 		return nil // no inject dir, nothing to check
+ 	}
+ 
++	// Resolve inject target (respects inject_into config)
++	targetBase := worktreePath
++	injectInto := ResolveInjectInto("")
++	if injectInto != "" && injectInto != "." {
++		targetBase = filepath.Join(worktreePath, injectInto)
++	}
++
+ 	missing := 0
+ 	_ = filepath.Walk(injectDir, func(srcPath string, info os.FileInfo, err error) error {
+ 		if err != nil || info.IsDir() {
+@@ -76,7 +84,7 @@ func CheckWorktreeInjectLinks(featurePath, worktreePath, branch string) *HealthI
+ 		if err != nil {
+ 			return nil
+ 		}
+-		destPath := filepath.Join(worktreePath, relPath)
++		destPath := filepath.Join(targetBase, relPath)
+ 		if _, err := os.Lstat(destPath); os.IsNotExist(err) {
+ 			missing++
+ 		}
+@@ -108,7 +116,7 @@ func CheckFeatureHealth(featurePath string) []HealthIssue {
+ 			continue // archived, skip
+ 		}
+ 
+-		if issue := CheckWorktreeBranch(wtPath, entry.Name); issue != nil {
++		if issue := CheckWorktreeBranch(wtPath, entry.GitBranch()); issue != nil {
+ 			issues = append(issues, *issue)
+ 		}
+ 		if issue := CheckWorktreeDirty(wtPath, entry.Name); issue != nil {
+diff --git a/internal/stack.go b/internal/stack.go
+index 9e2b1bf..09609ae 100644
+--- a/internal/stack.go
++++ b/internal/stack.go
+@@ -12,11 +12,20 @@ import (
+ 
+ type StackEntry struct {
+ 	Name        string `yaml:"name"`
++	Branch      string `yaml:"branch,omitempty"` // git branch name (defaults to Name if empty)
+ 	Base        string `yaml:"base"`
+ 	Repo        string `yaml:"repo,omitempty"`          // source repo path (empty = default/current repo)
+ 	LastBaseSHA string `yaml:"last_base_sha,omitempty"` // SHA of base branch at last sync
+ }
+ 
++// GitBranch returns the actual git branch name for this entry.
++func (e StackEntry) GitBranch() string {
++	if e.Branch != "" {
++		return e.Branch
++	}
++	return e.Name
++}
++
+ type Stack struct {
+ 	Branches []StackEntry `yaml:"branches"`
+ }
