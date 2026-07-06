@@ -14,6 +14,7 @@ type Config struct {
 	InjectInto   string            `yaml:"inject_into"`
 	TestCommand  string            `yaml:"test_command"`
 	AutoHooks    *bool             `yaml:"auto_hooks"`
+	BranchPrefix string            `yaml:"branch_prefix"`
 }
 
 func (c Config) GetAgentCommand() string {
@@ -72,6 +73,9 @@ func LoadConfig() Config {
 	}
 	if repo.AutoHooks != nil {
 		cfg.AutoHooks = repo.AutoHooks
+	}
+	if repo.BranchPrefix != "" {
+		cfg.BranchPrefix = repo.BranchPrefix
 	}
 	if len(repo.Workspaces) > 0 {
 		if cfg.Workspaces == nil {

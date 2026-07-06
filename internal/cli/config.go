@@ -52,6 +52,11 @@ func configShowCmd() *cobra.Command {
 			} else {
 				fmt.Println("auto_hooks: false (default)")
 			}
+			if cfg.BranchPrefix != "" {
+				fmt.Printf("branch_prefix: %s\n", cfg.BranchPrefix)
+			} else {
+				fmt.Println("branch_prefix: (none)")
+			}
 			if len(cfg.Workspaces) > 0 {
 				fmt.Println("workspaces:")
 				for k, v := range cfg.Workspaces {
@@ -74,11 +79,11 @@ func configSetCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "set <key> <value>",
-		Short: "Set a config value (keys: agent_command, use_tmux, inject_into, test_command, auto_hooks)",
+		Short: "Set a config value",
 		Args:  cobra.ExactArgs(2),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			if len(args) == 0 {
-				return []string{"agent_command", "use_tmux", "inject_into", "test_command", "auto_hooks"}, cobra.ShellCompDirectiveNoFileComp
+				return []string{"agent_command", "use_tmux", "inject_into", "test_command", "auto_hooks", "branch_prefix"}, cobra.ShellCompDirectiveNoFileComp
 			}
 			if len(args) == 1 && args[0] == "agent_command" {
 				return []string{"claude", "opencode", "aider", "copilot"}, cobra.ShellCompDirectiveNoFileComp
@@ -123,6 +128,8 @@ func configSetCmd() *cobra.Command {
 					os.Exit(1)
 				}
 				cfg.AutoHooks = &b
+			case "branch_prefix":
+				cfg.BranchPrefix = value
 			default:
 				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux, inject_into, test_command, auto_hooks)\n", key)
 				os.Exit(1)
@@ -152,7 +159,7 @@ func configGetCmd() *cobra.Command {
 		Short: "Get a resolved config value",
 		Args:  cobra.ExactArgs(1),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-			return []string{"agent_command", "use_tmux"}, cobra.ShellCompDirectiveNoFileComp
+			return []string{"agent_command", "use_tmux", "inject_into", "test_command", "auto_hooks", "branch_prefix"}, cobra.ShellCompDirectiveNoFileComp
 		},
 		Run: func(cmd *cobra.Command, args []string) {
 			cfg := internal.LoadConfig()
@@ -183,6 +190,12 @@ func configGetCmd() *cobra.Command {
 					fmt.Println(*cfg.AutoHooks)
 				} else {
 					fmt.Println("false")
+				}
+			case "branch_prefix":
+				if cfg.BranchPrefix != "" {
+					fmt.Println(cfg.BranchPrefix)
+				} else {
+					fmt.Println("(none)")
 				}
 			default:
 				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux, inject_into, test_command, auto_hooks)\n", args[0])

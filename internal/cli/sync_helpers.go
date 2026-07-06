@@ -135,10 +135,11 @@ func syncWithStackFiltered(feature, featurePath string, stack internal.Stack, so
 		}
 
 		var rebaseErr error
+		gitBranch := entry.GitBranch()
 		if rebaseDir != "" {
-			rebaseErr = internal.RunSilentDir(rebaseDir, "git", "rebase", base, entry.Name)
+			rebaseErr = internal.RunSilentDir(rebaseDir, "git", "rebase", base, gitBranch)
 		} else {
-			rebaseErr = internal.RunSilent("git", "rebase", base, entry.Name)
+			rebaseErr = internal.RunSilent("git", "rebase", base, gitBranch)
 		}
 
 		if rebaseErr != nil {

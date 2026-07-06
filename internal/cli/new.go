@@ -47,18 +47,24 @@ func newCmd() *cobra.Command {
 // createWorktree is the shared logic for creating a worktree branch.
 // Used by both tws new and tws add -n.
 // repoPath is the source repo (empty = current repo).
-func createWorktree(feature, branch, base, repoPath string, force bool) {
+func createWorktree(feature, name, base, repoPath string, force bool) {
 	internal.RequireTool("git")
 
 	featurePath := internal.FeaturePath(feature)
-	path := internal.WorktreePath(feature, branch)
+	path := internal.WorktreePath(feature, name) // worktree dir uses short name
 
 	internal.Must(os.MkdirAll(featurePath, 0755))
+
+	// Resolve the actual git branch name (apply prefix if configured)
+	cfg := internal.LoadConfig()
+	gitBranch := name
+	if cfg.BranchPrefix != "" {
+		gitBranch = cfg.BranchPrefix + name
+	}
 
 	// Determine which repo to use
 	var repoRoot string
 	if repoPath != "" {
-		// Cross-repo: use the specified repo
 		absRepo, err := internal.AbsPath(repoPath)
 		if err != nil {
 			fmt.Printf("Error: invalid repo path %s: %v\n", repoPath, err)
@@ -67,7 +73,6 @@ func createWorktree(feature, branch, base, repoPath string, force bool) {
 		repoRoot = absRepo
 		repoPath = absRepo
 	} else {
-		// Default: use the current repo
 		root, err := internal.MainRepoRoot()
 		if err != nil {
 			fmt.Println("Error: must be run from inside a git repository")
@@ -76,12 +81,19 @@ func createWorktree(feature, branch, base, repoPath string, force bool) {
 		repoRoot = root
 	}
 
-	// Check if branch exists in the target repo
-	branchExists := internal.RunSilent("git", "-C", repoRoot, "rev-parse", "--verify", branch) == nil
+	// Check if branch exists in the target repo (try both prefixed and unprefixed)
+	branchExists := internal.RunSilent("git", "-C", repoRoot, "rev-parse", "--verify", gitBranch) == nil
+	if !branchExists && gitBranch != name {
+		// Try the unprefixed name (user may have created the branch manually)
+		if internal.RunSilent("git", "-C", repoRoot, "rev-parse", "--verify", name) == nil {
+			gitBranch = name // use the existing unprefixed branch
+			branchExists = true
+		}
+	}
 
 	if branchExists {
-		if isCheckedOutIn(repoRoot, branch) && !force {
-			fmt.Printf("Warning: branch %q is already checked out in another worktree.\n", branch)
+		if isCheckedOutIn(repoRoot, gitBranch) && !force {
+			fmt.Printf("Warning: branch %q is already checked out in another worktree.\n", gitBranch)
 			fmt.Println("Use --force to check it out anyway.")
 			os.Exit(1)
 		}
@@ -90,19 +102,24 @@ func createWorktree(feature, branch, base, repoPath string, force bool) {
 		if force {
 			gitArgs = append(gitArgs, "--force")
 		}
-		gitArgs = append(gitArgs, path, branch)
+		gitArgs = append(gitArgs, path, gitBranch)
 		internal.Must(internal.RunDir(repoRoot, "git", gitArgs...))
 	} else {
-		internal.Must(internal.RunDir(repoRoot, "git", "worktree", "add", path, "-b", branch))
+		internal.Must(internal.RunDir(repoRoot, "git", "worktree", "add", path, "-b", gitBranch))
 	}
 
 	stack, _ := internal.LoadStack(featurePath)
-	if !internal.HasBranch(stack, branch) {
-		stack.Branches = append(stack.Branches, internal.StackEntry{
-			Name: branch,
+	if !internal.HasBranch(stack, name) {
+		entry := internal.StackEntry{
+			Name: name,
 			Base: base,
 			Repo: repoPath,
-		})
+		}
+		// Only store Branch if it differs from Name
+		if gitBranch != name {
+			entry.Branch = gitBranch
+		}
+		stack.Branches = append(stack.Branches, entry)
 		internal.Must(internal.SaveStack(featurePath, stack))
 	}
 
@@ -113,7 +130,6 @@ func createWorktree(feature, branch, base, repoPath string, force bool) {
 	}
 
 	// Auto-install hooks if configured
-	cfg := internal.LoadConfig()
 	if cfg.AutoHooks != nil && *cfg.AutoHooks {
 		if err := installHooksForWorktree(path, feature); err != nil {
 			fmt.Printf("Warning: auto-hooks install failed: %v\n", err)

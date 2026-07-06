@@ -12,9 +12,18 @@ import (
 
 type StackEntry struct {
 	Name        string `yaml:"name"`
+	Branch      string `yaml:"branch,omitempty"` // git branch name (defaults to Name if empty)
 	Base        string `yaml:"base"`
 	Repo        string `yaml:"repo,omitempty"`          // source repo path (empty = default/current repo)
 	LastBaseSHA string `yaml:"last_base_sha,omitempty"` // SHA of base branch at last sync
+}
+
+// GitBranch returns the actual git branch name for this entry.
+func (e StackEntry) GitBranch() string {
+	if e.Branch != "" {
+		return e.Branch
+	}
+	return e.Name
 }
 
 type Stack struct {

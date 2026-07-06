@@ -61,10 +61,18 @@ func CheckWorktreeDirty(worktreePath, branch string) *HealthIssue {
 }
 
 // CheckWorktreeInjectLinks checks if inject symlinks are present.
+// Respects the configured inject_into target path.
 func CheckWorktreeInjectLinks(featurePath, worktreePath, branch string) *HealthIssue {
 	injectDir := InjectPath(featurePath)
 	if _, err := os.Stat(injectDir); os.IsNotExist(err) {
 		return nil // no inject dir, nothing to check
+	}
+
+	// Resolve inject target (respects inject_into config)
+	targetBase := worktreePath
+	injectInto := ResolveInjectInto("")
+	if injectInto != "" && injectInto != "." {
+		targetBase = filepath.Join(worktreePath, injectInto)
 	}
 
 	missing := 0
@@ -76,7 +84,7 @@ func CheckWorktreeInjectLinks(featurePath, worktreePath, branch string) *HealthI
 		if err != nil {
 			return nil
 		}
-		destPath := filepath.Join(worktreePath, relPath)
+		destPath := filepath.Join(targetBase, relPath)
 		if _, err := os.Lstat(destPath); os.IsNotExist(err) {
 			missing++
 		}
@@ -108,7 +116,7 @@ func CheckFeatureHealth(featurePath string) []HealthIssue {
 			continue // archived, skip
 		}
 
-		if issue := CheckWorktreeBranch(wtPath, entry.Name); issue != nil {
+		if issue := CheckWorktreeBranch(wtPath, entry.GitBranch()); issue != nil {
 			issues = append(issues, *issue)
 		}
 		if issue := CheckWorktreeDirty(wtPath, entry.Name); issue != nil {
