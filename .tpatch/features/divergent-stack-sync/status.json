@@ -5,11 +5,11 @@
   "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-05-01T09:03:44Z",
-  "updated_at": "2026-05-04T07:26:11Z",
-  "last_command": "record",
+  "updated_at": "2026-07-10T08:11:41Z",
+  "last_command": "verify",
   "notes": "Patch recorded",
   "apply": {
-    "base_commit": "6ccb5dac5d1c1303123d0f7de4f312b625da0852",
+    "base_commit": "4f7424b318bf4511c1286c6ff5a3bfc4ce2c4837",
     "has_patch": true
   },
   "reconcile": {},
@@ -17,6 +17,20 @@
     {
       "slug": "keep-track-of-stacked-diffs-and-dependencies",
       "kind": "hard"
+    },
+    {
+      "slug": "archive-worktree",
+      "kind": "hard"
     }
-  ]
+  ],
+  "verify": {
+    "verified_at": "2026-07-10T08:11:40Z",
+    "passed": true,
+    "recipe_hash_at_verify": "a08a4df2f5b4857c2c128c2a191d2b15e98a8bf5decdcc17ff36786f2f1ff118",
+    "patch_hash_at_verify": "528983bb306594b35bdbcb8e2f94f7897c8c3f30730ead232ae1d72ceda26709",
+    "parent_snapshot": {
+      "archive-worktree": "applied",
+      "keep-track-of-stacked-diffs-and-dependencies": "applied"
+    }
+  }
 }
