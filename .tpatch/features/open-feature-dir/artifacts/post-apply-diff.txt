@@ -1,0 +1,4 @@
+ .tpatch/FEATURES.md                           |  2 +-
+ .tpatch/features/open-feature-dir/status.json |  7 ++-
+ internal/cli/open.go                          | 85 ++++++++++++++++++++++++++-
+ 3 files changed, 88 insertions(+), 6 deletions(-)

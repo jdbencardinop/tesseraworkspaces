@@ -1,0 +1,121 @@
+diff --git a/internal/cli/open.go b/internal/cli/open.go
+index d14d7ce..2302cc9 100644
+--- a/internal/cli/open.go
++++ b/internal/cli/open.go
+@@ -15,12 +15,17 @@ func openCmd() *cobra.Command {
+ 	var useTmux bool
+ 	var noTmux bool
+ 	var noAgent bool
++	var featureDir bool
++	var all bool
+ 
+ 	cmd := &cobra.Command{
+ 		Use:   "open [feature] [branch]",
+ 		Short: "Open worktree and run agent",
+-		Long:  "Open a worktree and run the configured agent. With no args, shows an interactive picker.",
+-		Args:  cobra.RangeArgs(0, 2),
++		Long: `Open a worktree and run the configured agent. With no args, shows an interactive picker.
++
++Use --feature-dir to open the feature directory itself (orchestrator mode).
++Use --all to create a tmux session with windows for every worktree in the feature.`,
++		Args: cobra.RangeArgs(0, 2),
+ 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+ 			switch len(args) {
+ 			case 0:
+@@ -32,6 +37,38 @@ func openCmd() *cobra.Command {
+ 			}
+ 		},
+ 		Run: func(cmd *cobra.Command, args []string) {
++			// Handle --all: tmux session with all worktrees
++			if all {
++				if len(args) < 1 {
++					fmt.Println("Usage: tws open <feature> --all")
++					os.Exit(1)
++				}
++				openAll(args[0])
++				return
++			}
++
++			// Handle --feature-dir: open the feature directory
++			if featureDir {
++				if len(args) < 1 {
++					fmt.Println("Usage: tws open <feature> --feature-dir")
++					os.Exit(1)
++				}
++				feature := args[0]
++				path := internal.FeaturePath(feature)
++				if _, err := os.Stat(path); os.IsNotExist(err) {
++					fmt.Printf("Feature not found: %s\n", feature)
++					os.Exit(1)
++				}
++				if noAgent {
++					fmt.Printf("cd %s\n", path)
++					return
++				}
++				fmt.Printf("Opening feature dir: %s\n", path)
++				openDirect(path)
++				return
++			}
++
++			// Normal mode: open a specific worktree
+ 			feature, branch, err := resolveOpenArgs(args)
+ 			if err != nil {
+ 				fmt.Println(err)
+@@ -104,6 +141,8 @@ func openCmd() *cobra.Command {
+ 	cmd.Flags().BoolVar(&useTmux, "tmux", false, "Wrap in tmux session")
+ 	cmd.Flags().BoolVar(&noTmux, "no-tmux", false, "Skip tmux even if configured")
+ 	cmd.Flags().BoolVar(&noAgent, "no-agent", false, "Just print the worktree path")
++	cmd.Flags().BoolVar(&featureDir, "feature-dir", false, "Open the feature directory (orchestrator mode)")
++	cmd.Flags().BoolVar(&all, "all", false, "Create tmux session with windows for all worktrees")
+ 
+ 	return cmd
+ }
+@@ -190,6 +229,48 @@ func openDirect(path string) {
+ 	_ = sh.Run()
+ }
+ 
++// openAll creates a tmux session with the feature dir as the first window
++// and one window per active worktree.
++func openAll(feature string) {
++	internal.RequireTool("tmux")
++
++	featurePath := internal.FeaturePath(feature)
++	if _, err := os.Stat(featurePath); os.IsNotExist(err) {
++		fmt.Printf("Feature not found: %s\n", feature)
++		os.Exit(1)
++	}
++
++	session := sanitizeSessionName(feature)
++
++	// Kill existing session if any
++	if sessionExists(session) {
++		fmt.Printf("Attaching to existing session: %s\n", session)
++		internal.Must(internal.Run("tmux", "attach", "-t", session))
++		return
++	}
++
++	// Create session with feature dir as first window
++	fmt.Printf("Creating tmux session: %s\n", session)
++	internal.Must(internal.Run("tmux", "new-session", "-d", "-s", session, "-c", featurePath, "-n", "orchestrator"))
++
++	// Add a window for each active worktree
++	branches := internal.ListBranches(feature)
++	for _, branch := range branches {
++		wtPath := internal.WorktreePath(feature, branch)
++		if _, err := os.Stat(wtPath); os.IsNotExist(err) {
++			continue // archived
++		}
++		windowName := sanitizeSessionName(branch)
++		_ = internal.RunSilent("tmux", "new-window", "-t", session, "-n", windowName, "-c", wtPath)
++	}
++
++	// Select the orchestrator window
++	_ = internal.RunSilent("tmux", "select-window", "-t", session+":orchestrator")
++
++	// Attach
++	internal.Must(internal.Run("tmux", "attach", "-t", session))
++}
++
+ func openWithTmux(feature, branch, path string) {
+ 	internal.RequireTool("tmux")
+ 
