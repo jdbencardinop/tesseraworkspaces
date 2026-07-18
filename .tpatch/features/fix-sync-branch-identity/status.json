@@ -1,0 +1,19 @@
+{
+  "id": "fix-sync-branch-identity",
+  "slug": "fix-sync-branch-identity",
+  "title": "Use StackEntry.GitBranch() rather than the short tws name for active sync branch validation and Git ref operations, while preserving the short name in user-facing output. Update embedded skills when agent-facing behavior changes.",
+  "state": "implementing",
+  "compatibility": "unknown",
+  "requested_at": "2026-07-18T08:16:09Z",
+  "updated_at": "2026-07-18T18:14:37Z",
+  "last_command": "apply --mode started",
+  "notes": "Implementation in progress",
+  "apply": {},
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "branch-name-decoupling",
+      "kind": "hard"
+    }
+  ]
+}
