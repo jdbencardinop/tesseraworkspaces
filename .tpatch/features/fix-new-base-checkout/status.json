@@ -5,8 +5,8 @@
   "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-07-18T08:16:09Z",
-  "updated_at": "2026-07-19T16:45:30Z",
-  "last_command": "record",
+  "updated_at": "2026-07-19T18:13:00Z",
+  "last_command": "verify",
   "notes": "landed at 2026-07-19T16:45:30Z",
   "apply": {
     "base_commit": "841c895f8671ef5769f9d0645ac6da3c6d95cac3",
@@ -21,6 +21,22 @@
     {
       "slug": "fix-default-base-branch",
       "kind": "hard"
+    },
+    {
+      "slug": "branch-name-decoupling",
+      "kind": "hard"
     }
-  ]
+  ],
+  "verify": {
+    "verified_at": "2026-07-19T18:13:00Z",
+    "passed": false,
+    "recipe_hash_at_verify": "064fe46138a590c4ce5672788b825d8267bcaebaedaf476aba935bd9ca7439c1",
+    "patch_hash_at_verify": "561569583f1a211912dd7ae88edbbdd73d0f709bc063d82ebca97e687f04d582",
+    "parent_snapshot": {
+      "branch-name-decoupling": "applied",
+      "fix-default-base-branch": "applied",
+      "multi-repo-workspaces": "applied",
+      "tiered-skill-system": "applied"
+    }
+  }
 }
