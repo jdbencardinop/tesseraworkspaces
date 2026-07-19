@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
@@ -29,15 +30,12 @@ func newCmd() *cobra.Command {
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			}
 		},
-		Run: func(cmd *cobra.Command, args []string) {
-			if !cmd.Flags().Changed("base") {
-				base = internal.DefaultBranch()
-			}
-			createWorktree(args[0], args[1], base, repo, force)
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return createWorktree(args[0], args[1], base, repo, force)
 		},
 	}
 
-	cmd.Flags().StringVar(&base, "base", "", "Parent branch for stacking (default: repo's default branch)")
+	cmd.Flags().StringVar(&base, "base", "", "Parent branch, tag, or commit (default: selected repo's origin/HEAD)")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force checkout of already checked-out branch")
 	cmd.Flags().StringVar(&repo, "repo", "", "Source repository path (for cross-repo worktrees)")
 
@@ -45,57 +43,42 @@ func newCmd() *cobra.Command {
 }
 
 // createWorktree is the shared logic for creating a worktree branch.
-// Used by both tws new and tws add -n.
-// repoPath is the source repo (empty = current repo).
-func createWorktree(feature, name, base, repoPath string, force bool) {
-	internal.RequireTool("git")
-
+// Used by both tws new and tws add -n. Explicit base refs are literal;
+// an omitted base resolves from the selected repository's origin/HEAD.
+func createWorktree(feature, name, requestedBase, repoPath string, force bool) error {
 	featurePath := internal.FeaturePath(feature)
-	path := internal.WorktreePath(feature, name) // worktree dir uses short name
+	path := internal.WorktreePath(feature, name)
 
-	internal.Must(os.MkdirAll(featurePath, 0755))
+	if err := os.MkdirAll(featurePath, 0755); err != nil {
+		return err
+	}
 
-	// Resolve the actual git branch name (apply prefix if configured)
+	stack, _ := internal.LoadStack(featurePath)
+	repoRoot, storedRepo, err := resolveSourceRepo(featurePath, stack, repoPath)
+	if err != nil {
+		return err
+	}
+
+	baseName, baseRef, err := resolveCreationBase(repoRoot, storedRepo, stack, requestedBase)
+	if err != nil {
+		return err
+	}
+
 	cfg := internal.LoadConfig()
 	gitBranch := name
 	if cfg.BranchPrefix != "" {
 		gitBranch = cfg.BranchPrefix + name
 	}
 
-	// Determine which repo to use
-	var repoRoot string
-	if repoPath != "" {
-		absRepo, err := internal.AbsPath(repoPath)
-		if err != nil {
-			fmt.Printf("Error: invalid repo path %s: %v\n", repoPath, err)
-			os.Exit(1)
-		}
-		repoRoot = absRepo
-		repoPath = absRepo
-	} else {
-		root, err := internal.MainRepoRoot()
-		if err != nil {
-			fmt.Println("Error: must be run from inside a git repository")
-			os.Exit(1)
-		}
-		repoRoot = root
-	}
-
-	// Check if branch exists in the target repo (try both prefixed and unprefixed)
-	branchExists := internal.RunSilent("git", "-C", repoRoot, "rev-parse", "--verify", gitBranch) == nil
-	if !branchExists && gitBranch != name {
-		// Try the unprefixed name (user may have created the branch manually)
-		if internal.RunSilent("git", "-C", repoRoot, "rev-parse", "--verify", name) == nil {
-			gitBranch = name // use the existing unprefixed branch
-			branchExists = true
-		}
+	branchExists := internal.VerifyGitRef(repoRoot, gitBranch) == nil
+	if !branchExists && gitBranch != name && internal.VerifyGitRef(repoRoot, name) == nil {
+		gitBranch = name
+		branchExists = true
 	}
 
 	if branchExists {
 		if isCheckedOutIn(repoRoot, gitBranch) && !force {
-			fmt.Printf("Warning: branch %q is already checked out in another worktree.\n", gitBranch)
-			fmt.Println("Use --force to check it out anyway.")
-			os.Exit(1)
+			return fmt.Errorf("branch %q is already checked out in another worktree; use --force to check it out anyway", gitBranch)
 		}
 
 		gitArgs := []string{"worktree", "add"}
@@ -103,53 +86,143 @@ func createWorktree(feature, name, base, repoPath string, force bool) {
 			gitArgs = append(gitArgs, "--force")
 		}
 		gitArgs = append(gitArgs, path, gitBranch)
-		internal.Must(internal.RunDir(repoRoot, "git", gitArgs...))
+		if err := internal.RunDir(repoRoot, "git", gitArgs...); err != nil {
+			return err
+		}
 	} else {
-		internal.Must(internal.RunDir(repoRoot, "git", "worktree", "add", path, "-b", gitBranch))
+		if err := internal.RunDir(repoRoot, "git", "worktree", "add", path, "-b", gitBranch, baseRef); err != nil {
+			return err
+		}
 	}
 
-	stack, _ := internal.LoadStack(featurePath)
 	if !internal.HasBranch(stack, name) {
 		entry := internal.StackEntry{
 			Name: name,
-			Base: base,
-			Repo: repoPath,
+			Base: baseName,
+			Repo: storedRepo,
 		}
-		// Only store Branch if it differs from Name
 		if gitBranch != name {
 			entry.Branch = gitBranch
 		}
 		stack.Branches = append(stack.Branches, entry)
-		internal.Must(internal.SaveStack(featurePath, stack))
+		if err := internal.SaveStack(featurePath, stack); err != nil {
+			return err
+		}
 	}
 
-	// Inject shared files into the worktree
 	target := internal.ResolveInjectInto("")
 	if err := internal.InjectFiles(featurePath, path, target); err != nil {
 		fmt.Printf("Warning: inject failed: %v\n", err)
 	}
 
-	// Auto-install hooks if configured
 	if cfg.AutoHooks != nil && *cfg.AutoHooks {
 		if err := installHooksForWorktree(path, feature); err != nil {
 			fmt.Printf("Warning: auto-hooks install failed: %v\n", err)
 		}
 	}
 
-	if repoPath != "" {
-		fmt.Printf("Worktree created: %s (base: %s, repo: %s)\n", path, base, repoPath)
+	if storedRepo != "" {
+		fmt.Printf("Worktree created: %s (base: %s, repo: %s)\n", path, baseName, storedRepo)
 	} else {
-		fmt.Printf("Worktree created: %s (base: %s)\n", path, base)
+		fmt.Printf("Worktree created: %s (base: %s)\n", path, baseName)
 	}
+	return nil
 }
 
-// isCheckedOutIn checks if a branch is checked out in any worktree of the given repo.
-func isCheckedOutIn(repoDir, branch string) bool {
-	out, err := exec.Command("git", "-C", repoDir, "worktree", "list", "--porcelain").Output()
+func resolveSourceRepo(featurePath string, stack internal.Stack, requestedRepo string) (string, string, error) {
+	if requestedRepo != "" {
+		absRepo, err := internal.AbsPath(requestedRepo)
+		if err != nil {
+			return "", "", fmt.Errorf("invalid repo path %s: %w", requestedRepo, err)
+		}
+		repoRoot, err := internal.GitRepoRootIn(absRepo)
+		if err != nil {
+			return "", "", fmt.Errorf("%s is not a Git repository", requestedRepo)
+		}
+		return repoRoot, repoRoot, nil
+	}
+
+	if repoRoot, err := internal.MainRepoRoot(); err == nil {
+		return repoRoot, "", nil
+	}
+
+	type candidate struct {
+		root       string
+		storedRepo string
+	}
+	candidates := make(map[string]candidate)
+	for _, entry := range stack.Branches {
+		if entry.Repo != "" {
+			root, err := internal.GitRepoRootIn(entry.Repo)
+			if err == nil {
+				candidates[root] = candidate{root: root, storedRepo: root}
+			}
+			continue
+		}
+
+		worktreePath := filepath.Join(featurePath, "worktrees", entry.Name)
+		if _, err := os.Stat(worktreePath); err != nil {
+			continue
+		}
+		root, err := internal.MainRepoRootIn(worktreePath)
+		if err == nil {
+			candidates[root] = candidate{root: root}
+		}
+	}
+
+	if len(candidates) == 1 {
+		for _, c := range candidates {
+			return c.root, c.storedRepo, nil
+		}
+	}
+	if len(candidates) > 1 {
+		return "", "", fmt.Errorf("feature uses multiple repositories; specify --repo")
+	}
+	return "", "", fmt.Errorf("could not infer source repository; run from a Git repo or specify --repo")
+}
+
+func resolveCreationBase(repoRoot, storedRepo string, stack internal.Stack, requestedBase string) (string, string, error) {
+	if requestedBase == "" {
+		baseName, err := internal.DefaultBranchIn(repoRoot)
+		if err != nil {
+			return "", "", err
+		}
+		remoteRef := "origin/" + baseName
+		if internal.VerifyGitRef(repoRoot, remoteRef) == nil {
+			return baseName, remoteRef, nil
+		}
+		if internal.VerifyGitRef(repoRoot, baseName) == nil {
+			return baseName, baseName, nil
+		}
+		return "", "", fmt.Errorf("default branch %q does not exist in %s", baseName, repoRoot)
+	}
+
+	baseRef := requestedBase
+	if parent := internal.GetBranch(stack, requestedBase); parent.Name != "" {
+		if !sameStackRepo(parent.Repo, storedRepo) {
+			return "", "", fmt.Errorf("base %q belongs to a different repository", requestedBase)
+		}
+		baseRef = parent.GitBranch()
+	}
+	if err := internal.VerifyGitRef(repoRoot, baseRef); err != nil {
+		return "", "", fmt.Errorf("base ref %q does not exist in %s", requestedBase, repoRoot)
+	}
+	return requestedBase, baseRef, nil
+}
+
+func sameStackRepo(a, b string) bool {
+	if a == "" && b == "" {
+		return true
+	}
+	return a == b
+}
+
+func isCheckedOutIn(repoRoot, branch string) bool {
+	out, err := exec.Command("git", "-C", repoRoot, "worktree", "list", "--porcelain").Output()
 	if err != nil {
 		return false
 	}
-	for _, line := range strings.Split(string(out), "\n") {
+	for line := range strings.SplitSeq(string(out), "\n") {
 		if strings.TrimSpace(line) == "branch refs/heads/"+branch {
 			return true
 		}

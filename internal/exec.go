@@ -16,21 +16,29 @@ func RequireTool(name string) {
 }
 
 func MainRepoRoot() (string, error) {
-	// git-common-dir returns the .git dir of the main repo even from a worktree.
-	// In a non-worktree checkout it returns ".git" (relative).
-	out, err := exec.Command("git", "rev-parse", "--git-common-dir").Output()
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return MainRepoRootIn(cwd)
+}
+
+// MainRepoRootIn returns the primary repository root for a repo or linked worktree.
+func MainRepoRootIn(path string) (string, error) {
+	out, err := exec.Command("git", "-C", path, "rev-parse", "--git-common-dir").Output()
 	if err != nil {
 		return "", err
 	}
 	gitDir := strings.TrimSpace(string(out))
-
-	if gitDir == ".git" {
-		// Not inside a worktree — fall back to normal detection.
-		return RepoRoot()
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(path, gitDir)
 	}
+	gitDir = filepath.Clean(gitDir)
 
-	// gitDir is absolute (e.g. /path/to/repo/.git), resolve to parent.
-	return filepath.Dir(filepath.Clean(gitDir)), nil
+	if filepath.Base(gitDir) == ".git" {
+		return filepath.Dir(gitDir), nil
+	}
+	return filepath.Dir(gitDir), nil
 }
 
 func RepoRoot() (string, error) {
@@ -46,19 +54,59 @@ func BranchExists(branch string) bool {
 	return err == nil
 }
 
-// DefaultBranch returns the repo's default branch name (e.g., main, master).
-// Detects from origin/HEAD, falls back to "main".
+// DefaultBranch returns the current repository's default branch name.
+// Deprecated for repo-aware flows; prefer DefaultBranchIn.
 func DefaultBranch() string {
-	out, err := exec.Command("git", "rev-parse", "--abbrev-ref", "origin/HEAD").Output()
-	if err == nil {
-		branch := strings.TrimSpace(string(out))
-		// origin/HEAD returns "origin/main" — strip the "origin/" prefix
-		if strings.HasPrefix(branch, "origin/") {
-			return strings.TrimPrefix(branch, "origin/")
-		}
-		return branch
+	branch, err := DefaultBranchIn("")
+	if err != nil {
+		return "main"
 	}
-	return "main"
+	return branch
+}
+
+// DefaultBranchIn returns the selected repository's default branch name.
+// It prefers origin/HEAD, then the repository's initial branch, and finally main.
+func DefaultBranchIn(repoPath string) (string, error) {
+	args := []string{"rev-parse", "--abbrev-ref", "origin/HEAD"}
+	if repoPath != "" {
+		args = append([]string{"-C", repoPath}, args...)
+	}
+	if out, err := exec.Command("git", args...).Output(); err == nil {
+		branch := strings.TrimSpace(string(out))
+		return strings.TrimPrefix(branch, "origin/"), nil
+	}
+
+	args = []string{"symbolic-ref", "--short", "HEAD"}
+	if repoPath != "" {
+		args = append([]string{"-C", repoPath}, args...)
+	}
+	if out, err := exec.Command("git", args...).Output(); err == nil {
+		return strings.TrimSpace(string(out)), nil
+	}
+
+	return "main", nil
+}
+
+// VerifyGitRef checks that ref resolves to a commit in the selected repository.
+func VerifyGitRef(repoPath, ref string) error {
+	args := []string{"rev-parse", "--verify", ref + "^{commit}"}
+	if repoPath != "" {
+		args = append([]string{"-C", repoPath}, args...)
+	}
+	return exec.Command("git", args...).Run()
+}
+
+// GitRepoRootIn validates repoPath and returns its top-level directory.
+func GitRepoRootIn(repoPath string) (string, error) {
+	args := []string{"rev-parse", "--show-toplevel"}
+	if repoPath != "" {
+		args = append([]string{"-C", repoPath}, args...)
+	}
+	out, err := exec.Command("git", args...).Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // AbsPath returns the absolute path, resolving relative paths.

@@ -30,7 +30,7 @@ create a first worktree branch, and --open to launch the agent.
 Note: injected files appear as untracked in git status. Add them to
 .gitignore or place them in an already-ignored subfolder.`,
 		Args: cobra.ExactArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			feature := args[0]
 			root := internal.FeaturePath(feature)
 
@@ -60,10 +60,9 @@ Note: injected files appear as untracked in git status. Add them to
 
 			// Quick start: create worktree if -n specified
 			if newBranch != "" {
-				if !cmd.Flags().Changed("base") {
-					base = internal.DefaultBranch()
+				if err := createWorktree(feature, newBranch, base, "", force); err != nil {
+					return err
 				}
-				createWorktree(feature, newBranch, base, "", force)
 
 				if open {
 					path := internal.WorktreePath(feature, newBranch)
@@ -74,6 +73,7 @@ Note: injected files appear as untracked in git status. Add them to
 					}
 				}
 			}
+			return nil
 		},
 	}
 

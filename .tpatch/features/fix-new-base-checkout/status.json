@@ -2,13 +2,16 @@
   "id": "fix-new-base-checkout",
   "slug": "fix-new-base-checkout",
   "title": "Ensure tws new and tws add -n create new Git branches from the configured base ref in the selected repository. Explicit refs are literal; omitted bases use that repository's origin/HEAD. Infer a single source repo when invoked from a feature directory, fail on ambiguity, and validate before writing workspace metadata. Update embedded skills when agent-facing behavior changes.",
-  "state": "implementing",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-07-18T08:16:09Z",
-  "updated_at": "2026-07-18T08:38:51Z",
-  "last_command": "apply --mode started",
-  "notes": "Implementation in progress",
-  "apply": {},
+  "updated_at": "2026-07-19T16:45:30Z",
+  "last_command": "record",
+  "notes": "landed at 2026-07-19T16:45:30Z",
+  "apply": {
+    "base_commit": "841c895f8671ef5769f9d0645ac6da3c6d95cac3",
+    "has_patch": true
+  },
   "reconcile": {},
   "depends_on": [
     {
