@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "feature": "fix-sync-continue-descendants",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_74d7b7415eb1",
+      "kind": "record",
+      "patch_sha256": "c4a6ac330d222fe74efd10ea1b55811ddfd4da53d79f3deba7433e3fcbf886b8",
+      "git_patch_id": "96742fcbbd88507618ca49e14a542af2179a079c",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "12d75e3930fa493607d0e216d0c48e1f5ab415c01f250dd49a6d74bcd95254a2",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "patches/001-record.patch",
+      "base_commit": "35541ada8dc5c6831011b38f86535a3ecf22ab93",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "internal/cli/sync.go",
+        "internal/cli/sync_continue_integration_test.go",
+        "internal/cli/sync_helpers.go"
+      ],
+      "dependencies": [
+        {
+          "slug": "sync-continue",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        }
+      ],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}

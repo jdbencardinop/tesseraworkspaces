@@ -2,13 +2,16 @@
   "id": "fix-sync-continue-descendants",
   "slug": "fix-sync-continue-descendants",
   "title": "Fix tws sync --continue so descendants deferred by a parent conflict return to pending, later conflicts preserve state, and Sync complete is printed only after all relevant parent-child ancestry edges are current. Update embedded skills when agent-facing behavior changes.",
-  "state": "implementing",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-07-18T08:16:09Z",
-  "updated_at": "2026-07-18T18:14:35Z",
-  "last_command": "apply --mode started",
-  "notes": "Implementation in progress",
-  "apply": {},
+  "updated_at": "2026-07-20T19:53:36Z",
+  "last_command": "record",
+  "notes": "landed at 2026-07-20T19:53:36Z",
+  "apply": {
+    "base_commit": "35541ada8dc5c6831011b38f86535a3ecf22ab93",
+    "has_patch": true
+  },
   "reconcile": {},
   "depends_on": [
     {

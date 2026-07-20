@@ -1,0 +1,3 @@
+ internal/cli/sync.go         | 131 ++++++++++++------------
+ internal/cli/sync_helpers.go | 230 ++++++++++++++++++-------------------------
+ 2 files changed, 162 insertions(+), 199 deletions(-)

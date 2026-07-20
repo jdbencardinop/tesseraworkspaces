@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
 	"github.com/spf13/cobra"
@@ -24,37 +23,32 @@ func syncCmd() *cobra.Command {
 			}
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			internal.RequireTool("git")
 			feature := args[0]
 			featurePath := internal.FeaturePath(feature)
 
 			if abort {
-				handleSyncAbort(featurePath)
-				return
+				return handleSyncAbort(feature, featurePath)
 			}
-
 			if cont {
-				handleSyncContinue(feature, featurePath, verbose, push)
-				return
+				return handleSyncContinue(feature, featurePath, push)
 			}
-
-			// Check for existing state
 			if internal.HasSyncState(featurePath) {
 				state, _ := internal.LoadSyncState(featurePath)
-				fmt.Printf("Previous sync incomplete (failed on: %s)\n", state.FailedBranch)
-				fmt.Println("  Use --continue to resume after resolving conflicts")
-				fmt.Println("  Use --abort to discard sync state and start fresh")
-				os.Exit(1)
+				return fmt.Errorf("previous sync incomplete (failed on: %s); use --continue or --abort", state.FailedBranch)
 			}
 
-			syncFeature(feature, verbose)
-
+			result := syncFeature(feature, verbose)
+			if !result.Complete {
+				return fmt.Errorf("sync incomplete")
+			}
+			fmt.Println("Sync complete.")
 			if push {
-				fmt.Println()
-				fmt.Println("Pushing...")
+				fmt.Println("\nPushing...")
 				pushFeature(feature, false)
 			}
+			return nil
 		},
 	}
 
@@ -66,74 +60,79 @@ func syncCmd() *cobra.Command {
 	return cmd
 }
 
-func handleSyncAbort(featurePath string) {
-	if !internal.HasSyncState(featurePath) {
+func handleSyncAbort(feature, featurePath string) error {
+	state, err := internal.LoadSyncState(featurePath)
+	if err != nil {
 		fmt.Println("Nothing to abort — no sync in progress.")
-		return
+		return nil
+	}
+	if state.FailedBranch != "" {
+		path := internal.WorktreePath(feature, state.FailedBranch)
+		if isRebaseInProgress(path) {
+			_ = internal.RunSilentDir(path, "git", "rebase", "--abort")
+		}
 	}
 	internal.DeleteSyncState(featurePath)
 	fmt.Println("Sync state cleared.")
+	return nil
 }
 
-func handleSyncContinue(feature, featurePath string, verbose, push bool) {
+func handleSyncContinue(feature, featurePath string, push bool) error {
 	state, err := internal.LoadSyncState(featurePath)
 	if err != nil {
-		fmt.Println("Nothing to continue — no sync in progress.")
-		return
+		return fmt.Errorf("nothing to continue — no sync in progress")
 	}
-
-	// Verify the failed branch's rebase was completed
 	failedPath := internal.WorktreePath(feature, state.FailedBranch)
-	if _, err := os.Stat(failedPath); err == nil {
-		// Check if there's still a rebase in progress
-		if isRebaseInProgress(failedPath) {
-			fmt.Printf("Rebase still in progress in %s\n", state.FailedBranch)
-			fmt.Println("  Resolve conflicts, run: git add . && git rebase --continue")
-			fmt.Println("  Then run: tws sync <feature> --continue")
-			os.Exit(1)
-		}
+	if state.FailedBranch != "" && isRebaseInProgress(failedPath) {
+		return fmt.Errorf("rebase still in progress in %s; resolve conflicts, run git add . && git rebase --continue, then retry", state.FailedBranch)
 	}
 
-	fmt.Printf("Resuming sync (previously failed on: %s)\n", state.FailedBranch)
-
-	// Mark failed branch as completed
-	state.Completed = append(state.Completed, state.FailedBranch)
-	fmt.Println(formatSyncStatus(state.FailedBranch, "active", "resolved"))
-
-	// Load stack and continue with pending branches
 	stack, err := internal.LoadStack(featurePath)
 	if err != nil {
-		fmt.Println("Error: could not load stack.yaml")
-		os.Exit(1)
+		return fmt.Errorf("load stack: %w", err)
+	}
+	if state.FailedBranch != "" {
+		failedEntry := internal.GetBranch(stack, state.FailedBranch)
+		if failedEntry.Name == "" {
+			return fmt.Errorf("failed branch %q no longer exists in stack", state.FailedBranch)
+		}
+		if !branchContainsConfiguredParent(feature, stack, failedEntry) {
+			return fmt.Errorf("resolved branch %s still does not contain its configured parent %s", failedEntry.Name, failedEntry.Base)
+		}
+		fmt.Println(formatSyncStatus(state.FailedBranch, "active", "resolved"))
 	}
 
+	done := make(map[string]bool)
+	for _, name := range state.Completed {
+		done[name] = true
+	}
+	if state.FailedBranch != "" {
+		done[state.FailedBranch] = true
+	}
 	sorted, err := internal.TopoSort(stack)
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
-
-	// Build skip set from completed + skipped branches
-	skip := make(map[string]bool)
-	for _, b := range state.Completed {
-		skip[b] = true
+	fmt.Printf("Resuming sync with %d pending branch(es)\n", len(state.Pending))
+	result := syncWithStackFiltered(feature, featurePath, stack, sorted, done)
+	if !result.Complete {
+		return fmt.Errorf("sync incomplete")
 	}
-	for _, b := range state.Skipped {
-		skip[b] = true
-	}
-
-	// Continue with remaining branches
-	syncWithStackFiltered(feature, featurePath, stack, sorted, skip)
-
-	// Clean up state
-	internal.DeleteSyncState(featurePath)
 	fmt.Println("Sync complete.")
-
 	if push {
-		fmt.Println()
-		fmt.Println("Pushing...")
+		fmt.Println("\nPushing...")
 		pushFeature(feature, false)
 	}
+	return nil
+}
+
+func branchContainsConfiguredParent(feature string, stack internal.Stack, child internal.StackEntry) bool {
+	parent := internal.GetBranch(stack, child.Base)
+	if parent.Name == "" || !sameStackRepo(parent.Repo, child.Repo) {
+		return true
+	}
+	path := internal.WorktreePath(feature, child.Name)
+	return internal.RunSilentDir(path, "git", "merge-base", "--is-ancestor", parent.GitBranch(), child.GitBranch()) == nil
 }
 
 func isRebaseInProgress(worktreePath string) bool {
@@ -147,17 +146,16 @@ func isRebaseInProgress(worktreePath string) bool {
 	return err == nil
 }
 
-func syncFeature(feature string, verbose bool) {
+func syncFeature(feature string, verbose bool) syncResult {
 	featurePath := internal.FeaturePath(feature)
 
 	stack, err := internal.LoadStack(featurePath)
 	if err != nil {
 		fetchQuiet("", "", verbose)
 		syncFallback(featurePath)
-		return
+		return syncResult{Complete: true}
 	}
 
-	// Fetch per-repo
 	repos := internal.UniqueRepos(stack, featurePath)
 	for repo, wtPath := range repos {
 		fetchQuiet(repo, wtPath, verbose)
@@ -166,10 +164,9 @@ func syncFeature(feature string, verbose bool) {
 	sorted, err := internal.TopoSort(stack)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
-		return
+		return syncResult{}
 	}
-
-	syncWithStack(feature, featurePath, stack, sorted)
+	return syncWithStack(feature, featurePath, stack, sorted)
 }
 
 func fetchQuiet(repo, wtPath string, verbose bool) {
