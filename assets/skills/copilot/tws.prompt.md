@@ -37,12 +37,13 @@ You are working in a project that uses `tws` for feature-scoped workspaces with 
 ## Stacked & Divergent Branches
 
 ```sh
-tws new auth auth-models                          # base: main
-tws new auth auth-middleware --base auth-models    # stacks on auth-models
-tws new auth auth-tests --base auth-models         # diverges (parallel)
+tws new auth auth-models                              # selected repo's origin/HEAD
+tws new auth auth-middleware --base auth-models        # stacks on auth-models
+tws new auth auth-tests --base auth-models             # diverges (parallel)
+tws new auth wiki-docs --repo ../wiki --base master     # base resolved in wiki repo
 ```
 
-Sync rebases in topological order. Divergent stacks (A→B, A→C) are supported.
+Explicit base refs are literal (`master` is local, `origin/master` is remote); tags and commit SHAs are accepted. Sync rebases in topological order. After resolving a conflict, `tws sync <feature> --continue` resumes deferred descendants and only reports completion after parent-child ancestry is current.
 
 ## Context Injection
 

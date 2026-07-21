@@ -1,0 +1,4 @@
+ .tpatch/FEATURES.md                             |  1 +
+ assets/skills/claude/tesseraworkspaces/SKILL.md | 14 +++++++++-----
+ assets/skills/copilot/tws.prompt.md             |  9 +++++----
+ 3 files changed, 15 insertions(+), 9 deletions(-)

@@ -1,0 +1,30 @@
+{
+  "id": "update-skills-p0-correctness",
+  "slug": "update-skills-p0-correctness",
+  "title": "Update embedded Claude and Copilot skills for P0 configured-base semantics, feature-directory repo inference, actual Git branch identity, and sync --continue descendant completion. Depends on all three P0 fixes.",
+  "state": "applied",
+  "compatibility": "unknown",
+  "requested_at": "2026-07-21T14:20:39Z",
+  "updated_at": "2026-07-21T14:34:49Z",
+  "last_command": "record",
+  "notes": "landed at 2026-07-21T14:34:49Z",
+  "apply": {
+    "base_commit": "1defd28fd8dfe7937e31e432517117c35bf60655",
+    "has_patch": true
+  },
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "fix-new-base-checkout",
+      "kind": "hard"
+    },
+    {
+      "slug": "fix-sync-continue-descendants",
+      "kind": "hard"
+    },
+    {
+      "slug": "fix-sync-branch-identity",
+      "kind": "hard"
+    }
+  ]
+}

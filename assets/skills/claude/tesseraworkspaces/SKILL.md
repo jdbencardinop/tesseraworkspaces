@@ -59,13 +59,17 @@ tws add auth -n existing-branch --open       # with existing branch
 
 ### Stacked Branches
 
-Use `--base` to declare dependencies. Branches without `--base` default to `main` (parallel, not stacked):
+Use `--base` to declare dependencies. An omitted base uses the selected repository's `origin/HEAD`. Explicit refs are literal: `master` means local `master`, while `origin/master` means the remote-tracking ref. Tags and commit SHAs are also accepted.
 
 ```sh
-tws new auth auth-models                          # base: main
-tws new auth auth-middleware --base auth-models    # stacks on auth-models
-tws new auth auth-tests --base auth-models         # diverges (parallel to middleware)
+tws new auth auth-models                              # selected repo's origin/HEAD
+tws new auth auth-middleware --base auth-models        # stacks on auth-models
+tws new auth auth-tests --base auth-models             # diverges (parallel to middleware)
+tws new auth release-check --base origin/release        # explicit remote ref
+tws new auth wiki-docs --repo ../wiki --base master     # base resolved in wiki repo
 ```
+
+From an existing feature directory, `tws new` infers a single source repository from feature metadata/worktrees. Multi-repo features require `--repo` when the source is ambiguous.
 
 `tws sync` rebases in topological order. Divergent stacks are supported (A→B, A→C). If a rebase fails, only that branch's descendants are skipped — sibling lineages continue.
 
@@ -138,7 +142,7 @@ tws push <feature> --dry-run     # preview what would be pushed
 
 If `test_command` is configured, it runs after each successful rebase. Validation failure skips dependent branches.
 
-**Conflict recovery:** When sync hits a conflict, it saves state and prints instructions. After resolving, run `tws sync <feature> --continue` to resume with remaining branches.
+**Conflict recovery:** When sync hits a conflict, it saves state and prints instructions. After resolving, run `tws sync <feature> --continue`; deferred descendants return to pending and are rebased before completion. If another branch fails, the updated state is preserved. `Sync complete` is printed only after configured parent-child ancestry is current.
 
 **Amend-aware:** If a parent branch was amended, sync uses `--onto` to avoid ghost conflicts from stale SHAs.
 

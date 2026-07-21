@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "feature": "update-skills-p0-correctness",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_8796777cf9c9",
+      "kind": "record",
+      "patch_sha256": "3a467deaa3498808015a44348345ab32c54f8710bcfb4857c212853616140378",
+      "git_patch_id": "980824f614cc80afeeb62406172d75272f9d6183",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "c89fb2d4288ec8ce250ac87194b9b6f11537e1f920f55c21b6640fbaf0825a2e",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "patches/001-record.patch",
+      "base_commit": "1defd28fd8dfe7937e31e432517117c35bf60655",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "assets/skills/claude/tesseraworkspaces/SKILL.md",
+        "assets/skills/copilot/tws.prompt.md"
+      ],
+      "dependencies": [
+        {
+          "slug": "fix-new-base-checkout",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "561569583f1a211912dd7ae88edbbdd73d0f709bc063d82ebca97e687f04d582",
+          "parent_recipe_sha256": "064fe46138a590c4ce5672788b825d8267bcaebaedaf476aba935bd9ca7439c1"
+        },
+        {
+          "slug": "fix-sync-branch-identity",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "3815958225ff9b475b20e15e585db43f11e0cf5292bc41d37cd727063ee7a55c",
+          "parent_recipe_sha256": "3eb1e2608c143be7e882d6fa68d872b4c57906caa83cb6dd46bbd8cf2615fb54"
+        },
+        {
+          "slug": "fix-sync-continue-descendants",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "c4a6ac330d222fe74efd10ea1b55811ddfd4da53d79f3deba7433e3fcbf886b8",
+          "parent_recipe_sha256": "12d75e3930fa493607d0e216d0c48e1f5ab415c01f250dd49a6d74bcd95254a2"
+        }
+      ],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}
