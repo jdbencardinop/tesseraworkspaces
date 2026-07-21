@@ -1,0 +1,65 @@
+diff --git a/internal/cli/sync_branch_identity_test.go b/internal/cli/sync_branch_identity_test.go
+new file mode 100644
+index 0000000..7763bda
+--- /dev/null
++++ b/internal/cli/sync_branch_identity_test.go
+@@ -0,0 +1,35 @@
++package cli
++
++import (
++	"testing"
++
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
++)
++
++func TestSyncBranchIdentityUsesGitBranch(t *testing.T) {
++	repo := setupGitRepo(t, "master")
++	withWorkspaceEnv(t, repo)
++
++	gitRun(t, repo, "branch", "user/feature/pr1", "master")
++	path := internal.WorktreePath("feature", "pr1")
++	gitRun(t, repo, "worktree", "add", path, "user/feature/pr1")
++
++	entry := internal.StackEntry{Name: "pr1", Branch: "user/feature/pr1", Base: "master"}
++	if issue := checkSyncWorktreeBranch(path, entry); issue != nil {
++		t.Fatalf("correct Git branch rejected: %s", issue)
++	}
++}
++
++func TestSyncBranchIdentityRejectsWrongGitBranch(t *testing.T) {
++	repo := setupGitRepo(t, "master")
++	withWorkspaceEnv(t, repo)
++
++	gitRun(t, repo, "branch", "wrong", "master")
++	path := internal.WorktreePath("feature", "pr1")
++	gitRun(t, repo, "worktree", "add", path, "wrong")
++
++	entry := internal.StackEntry{Name: "pr1", Branch: "user/feature/pr1", Base: "master"}
++	if issue := checkSyncWorktreeBranch(path, entry); issue == nil {
++		t.Fatal("wrong Git branch was accepted")
++	}
++}
+diff --git a/internal/cli/sync_helpers.go b/internal/cli/sync_helpers.go
+index 07d60aa..588a60c 100644
+--- a/internal/cli/sync_helpers.go
++++ b/internal/cli/sync_helpers.go
+@@ -34,7 +34,7 @@ func syncWithStackFiltered(feature, featurePath string, stack internal.Stack, so
+ 			continue
+ 		}
+ 
+-		if issue := internal.CheckWorktreeBranch(path, entry.GitBranch()); issue != nil {
++		if issue := checkSyncWorktreeBranch(path, entry); issue != nil {
+ 			fmt.Println(formatSyncStatus(entry.Name, "active", "wrong-branch"))
+ 			fmt.Printf("    %s\n    %s\n", issue.Problem, issue.Hint)
+ 			return saveIncompleteSync(featurePath, sorted, completed, entry.Name)
+@@ -172,6 +172,10 @@ func staleStackEdges(feature string, stack internal.Stack) []string {
+ 	return stale
+ }
+ 
++func checkSyncWorktreeBranch(worktreePath string, entry internal.StackEntry) *internal.HealthIssue {
++	return internal.CheckWorktreeBranch(worktreePath, entry.GitBranch())
++}
++
+ func resolveEntryBase(stack internal.Stack, entry internal.StackEntry) string {
+ 	if parent := internal.GetBranch(stack, entry.Base); parent.Name != "" && sameStackRepo(parent.Repo, entry.Repo) {
+ 		return parent.GitBranch()

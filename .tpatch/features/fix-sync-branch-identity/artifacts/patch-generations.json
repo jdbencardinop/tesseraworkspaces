@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "feature": "fix-sync-branch-identity",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_659f4dd3ee99",
+      "kind": "record",
+      "patch_sha256": "3815958225ff9b475b20e15e585db43f11e0cf5292bc41d37cd727063ee7a55c",
+      "git_patch_id": "15ea080122bba4f9242866e2b65a916770b7f20f",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "3eb1e2608c143be7e882d6fa68d872b4c57906caa83cb6dd46bbd8cf2615fb54",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "patches/001-record.patch",
+      "base_commit": "def87b5fb3ea3d3095651de73652f106e78c0b5f",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "internal/cli/sync_branch_identity_test.go",
+        "internal/cli/sync_helpers.go"
+      ],
+      "dependencies": [
+        {
+          "slug": "branch-name-decoupling",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        }
+      ],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}

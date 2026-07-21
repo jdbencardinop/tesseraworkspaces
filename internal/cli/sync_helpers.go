@@ -34,7 +34,7 @@ func syncWithStackFiltered(feature, featurePath string, stack internal.Stack, so
 			continue
 		}
 
-		if issue := internal.CheckWorktreeBranch(path, entry.GitBranch()); issue != nil {
+		if issue := checkSyncWorktreeBranch(path, entry); issue != nil {
 			fmt.Println(formatSyncStatus(entry.Name, "active", "wrong-branch"))
 			fmt.Printf("    %s\n    %s\n", issue.Problem, issue.Hint)
 			return saveIncompleteSync(featurePath, sorted, completed, entry.Name)
@@ -170,6 +170,10 @@ func staleStackEdges(feature string, stack internal.Stack) []string {
 		}
 	}
 	return stale
+}
+
+func checkSyncWorktreeBranch(worktreePath string, entry internal.StackEntry) *internal.HealthIssue {
+	return internal.CheckWorktreeBranch(worktreePath, entry.GitBranch())
 }
 
 func resolveEntryBase(stack internal.Stack, entry internal.StackEntry) string {
