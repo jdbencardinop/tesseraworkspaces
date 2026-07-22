@@ -31,6 +31,7 @@ For decoupled names, `StackEntry.Name` identifies the tws worktree while `StackE
 - **Copilot and Codex hooks**: install supported decision-reading integrations or warn clearly when the configured agent has no hook adapter.
 - **Explicit decision acknowledgement**: allow feature-root orchestration with `tws decisions ack --branch <name>`.
 - **Inter-feature messaging**: allow one feature orchestrator to target another feature with a durable message while preserving separate stacks and lifecycle state. Do not merge feature workspaces for the first version.
+- **Workspace sibling links**: maintain `<workspace-root>/spaces.yaml` as the dynamic registry for tool-owned learning, tickets, patching, research, and documentation spaces. Agents discover links through `tws space list/show`; skills teach discovery but do not embed mutable paths. Entries may be workspace-wide or feature-scoped, while each linked tool remains authoritative for its content and lifecycle.
 - **Agent work status**: surface materialized sessions, idle agents, blocked approvals, and attention needs without pretending to replace the agent harness.
 - **Context summaries**: maintain feature-level and worktree-session recaps while preserving authored source documents.
 
@@ -64,7 +65,7 @@ A tws feature directory can be an optional hub for sibling tool-owned spaces:
 
 The hub is not mandatory and does not make tws authoritative over these subspaces. Each tool owns its schema and lifecycle; tws provides location, discovery, and orchestration links.
 
-A higher-level “super tws” spanning multiple project workspace roots remains research-only. The first investigation should test whether a small registry/index that discovers existing `.tws` roots is sufficient. No nested workspace hierarchy should be introduced without a concrete cross-project workflow that cannot be solved by discovery and links.
+A higher-level “super tws” spanning multiple project workspace roots remains research-only. The workspace-level `spaces.yaml` registry should be field-tested first: it may solve most learning/ticket/patch discovery needs without another hierarchy. A later investigation can test whether a small cross-project index that discovers existing `.tws` roots adds enough value. No nested workspace hierarchy should be introduced without a concrete workflow that cannot be solved by discovery and links.
 
 ## Research / P3
 
