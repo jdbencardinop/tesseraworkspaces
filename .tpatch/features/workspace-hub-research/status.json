@@ -1,0 +1,18 @@
+{
+  "id": "workspace-hub-research",
+  "slug": "workspace-hub-research",
+  "title": "Research an optional higher-level tws hub that discovers multiple project `.tws` roots and tool-owned sibling spaces (learning, tickets, patching) without becoming their authority. Evaluate whether a registry/index provides enough value before designing a super-workspace hierarchy. Coordinate contracts with tesserapatch, tesseratickets, and learning tools such as /teach.",
+  "state": "requested",
+  "compatibility": "unknown",
+  "requested_at": "2026-07-22T05:45:39Z",
+  "updated_at": "2026-07-22T05:45:39Z",
+  "last_command": "add",
+  "apply": {},
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "tpatch-integration",
+      "kind": "soft"
+    }
+  ]
+}

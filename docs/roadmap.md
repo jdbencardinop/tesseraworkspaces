@@ -26,9 +26,11 @@ For decoupled names, `StackEntry.Name` identifies the tws worktree while `StackE
 
 ## Agent integration — P2
 
+- **Named feature templates**: manage a global/per-repo template registry with `add`, `list`, `show`, and `remove`. A template contains `feature/` assets copied to the feature root and `inject/` assets copied to the worktree injection source. This standardizes orchestrator skills, feature docs, prompts, and shared worktree context across future features.
 - **Agent-aware context files**: map local instructions to conventions understood by Claude, Copilot, Codex, and other configured agents.
 - **Copilot and Codex hooks**: install supported decision-reading integrations or warn clearly when the configured agent has no hook adapter.
 - **Explicit decision acknowledgement**: allow feature-root orchestration with `tws decisions ack --branch <name>`.
+- **Inter-feature messaging**: allow one feature orchestrator to target another feature with a durable message while preserving separate stacks and lifecycle state. Do not merge feature workspaces for the first version.
 - **Agent work status**: surface materialized sessions, idle agents, blocked approvals, and attention needs without pretending to replace the agent harness.
 - **Context summaries**: maintain feature-level and worktree-session recaps while preserving authored source documents.
 
@@ -61,6 +63,8 @@ A tws feature directory can be an optional hub for sibling tool-owned spaces:
 ```
 
 The hub is not mandatory and does not make tws authoritative over these subspaces. Each tool owns its schema and lifecycle; tws provides location, discovery, and orchestration links.
+
+A higher-level “super tws” spanning multiple project workspace roots remains research-only. The first investigation should test whether a small registry/index that discovers existing `.tws` roots is sufficient. No nested workspace hierarchy should be introduced without a concrete cross-project workflow that cannot be solved by discovery and links.
 
 ## Research / P3
 
