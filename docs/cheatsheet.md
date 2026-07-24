@@ -31,13 +31,15 @@ tws add auth -n auth-models
 ## Create branches (stacked diffs)
 
 ```sh
-tws new auth auth-models                          # first branch (base: main)
-tws new auth auth-middleware --base auth-models    # stacks on auth-models
-tws new auth auth-routes --base auth-middleware    # stacks on auth-middleware
-tws new auth auth-tests --base auth-models         # diverges (parallel to middleware)
+tws new auth auth-models                              # selected repo's origin/HEAD
+tws new auth auth-middleware --base auth-models        # stacks on auth-models
+tws new auth auth-routes --base auth-middleware        # stacks on auth-middleware
+tws new auth auth-tests --base auth-models             # diverges (parallel to middleware)
+tws new auth release-check --base origin/release        # explicit remote ref
+tws new auth wiki-docs --repo ../wiki --base master     # local master in wiki repo
 
 # Result:
-# (main)
+# (<default>)
 # └── auth-models
 #     ├── auth-middleware
 #     │   └── auth-routes
@@ -59,6 +61,8 @@ tws open auth auth-models --tmux       # wrap in tmux session
 tws open auth auth-models --no-agent   # just print the path
 tws open                               # interactive picker (fzf if available)
 tws open auth                          # pick branch within feature
+tws open auth --feature-dir            # feature orchestrator directory
+tws open auth --all                    # tmux: orchestrator + one window per worktree
 ```
 
 ## Decisions (cross-worktree communication)

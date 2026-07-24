@@ -1,0 +1,266 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 1921941..859e92f 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,31 @@
+ # Changelog
+ 
++## v1.2.0-rc.1
++
++- **Configured-base checkout** — new branches now start from the requested local branch, remote ref, tag, or commit SHA; omitted bases use the selected repo's `origin/HEAD`
++- **Feature-directory repo inference** — `tws new` can infer a single source repo from existing feature metadata/worktrees and fails clearly on multi-repo ambiguity
++- **Correct sync continuation** — `tws sync --continue` resumes deferred descendants, preserves state on later failures, and only reports completion after stack ancestry is current
++- **Decoupled branch validation** — sync validates the actual Git branch (`StackEntry.GitBranch`) while retaining short tws names for paths and output
++- **Feature-level open** — `tws open <feature> --feature-dir` opens the orchestrator directory; `--all` creates a tmux session for the feature and its worktrees
++- **P0 integration tests** — real temporary Git repos, remotes, worktrees, explicit refs, conflict continuation, and prefixed branch names
++
++## v1.1.1
++
++- **Feature-level open** — orchestrator directory and tmux `--all` mode
++
++## v1.1.0
++
++- **Directory-mirrored inject routing** — `inject/dev/file` lands at `worktree/dev/file`
++- **Branch-name decoupling** — short worktree names may map to policy-compliant Git branches via `branch_prefix`
++- **Default branch detection** — omitted bases detect `origin/HEAD`
++- **Atomic rename** — Git operations succeed before stack metadata is mutated
++
++## v1.0.0
++
++- **Auto-read decision hooks** — Claude Code SessionStart hooks with optional `auto_hooks`
++- **Tiered skills** — global, feature-orchestrator, and worktree guidance
++- **Cross-worktree decisions** — broadcast, targeted messages, and read tracking
++
+ ## v0.7.3
+ 
+ - **Decision read tracking** — `tws decisions show` defaults to unread only, `tws decisions ack` marks all as read, `tws open` shows unread count
+diff --git a/README.md b/README.md
+index 37e58f6..554874e 100644
+--- a/README.md
++++ b/README.md
+@@ -27,12 +27,14 @@ tws add auth -n auth-models --open
+ ### Stacked & Divergent Branches
+ 
+ ```sh
+-tws new auth auth-models                          # base: main
+-tws new auth auth-middleware --base auth-models    # stacks on auth-models
+-tws new auth auth-tests --base auth-models         # parallel to middleware
++tws new auth auth-models                              # selected repo's origin/HEAD
++tws new auth auth-middleware --base auth-models        # stacks on auth-models
++tws new auth auth-tests --base auth-models             # parallel to middleware
++tws new auth release-check --base origin/release        # explicit remote ref
++tws new auth wiki-docs --repo ../wiki --base master     # local master in wiki repo
+ 
+ # Result:
+-# (main)
++# (<default>)
+ # └── auth-models
+ #     ├── auth-middleware
+ #     └── auth-tests
+@@ -167,6 +169,8 @@ Shell completions: `tws completion zsh/bash/fish/powershell`
+ - [Cheatsheet](docs/cheatsheet.md)
+ - [Configuration](docs/configuration.md)
+ - [Agent Hooks](docs/hooks.md)
++- [v1.2 RC Validation](docs/v1.2-rc-validation.md)
++- [Roadmap](docs/roadmap.md)
+ 
+ ## Install from Source
+ 
+diff --git a/docs/cheatsheet.md b/docs/cheatsheet.md
+index 2b1abf2..5c23ccb 100644
+--- a/docs/cheatsheet.md
++++ b/docs/cheatsheet.md
+@@ -31,13 +31,15 @@ tws add auth -n auth-models
+ ## Create branches (stacked diffs)
+ 
+ ```sh
+-tws new auth auth-models                          # first branch (base: main)
+-tws new auth auth-middleware --base auth-models    # stacks on auth-models
+-tws new auth auth-routes --base auth-middleware    # stacks on auth-middleware
+-tws new auth auth-tests --base auth-models         # diverges (parallel to middleware)
++tws new auth auth-models                              # selected repo's origin/HEAD
++tws new auth auth-middleware --base auth-models        # stacks on auth-models
++tws new auth auth-routes --base auth-middleware        # stacks on auth-middleware
++tws new auth auth-tests --base auth-models             # diverges (parallel to middleware)
++tws new auth release-check --base origin/release        # explicit remote ref
++tws new auth wiki-docs --repo ../wiki --base master     # local master in wiki repo
+ 
+ # Result:
+-# (main)
++# (<default>)
+ # └── auth-models
+ #     ├── auth-middleware
+ #     │   └── auth-routes
+@@ -59,6 +61,8 @@ tws open auth auth-models --tmux       # wrap in tmux session
+ tws open auth auth-models --no-agent   # just print the path
+ tws open                               # interactive picker (fzf if available)
+ tws open auth                          # pick branch within feature
++tws open auth --feature-dir            # feature orchestrator directory
++tws open auth --all                    # tmux: orchestrator + one window per worktree
+ ```
+ 
+ ## Decisions (cross-worktree communication)
+diff --git a/docs/configuration.md b/docs/configuration.md
+index 88ecaee..60e234a 100644
+--- a/docs/configuration.md
++++ b/docs/configuration.md
+@@ -96,25 +96,28 @@ Each feature can have a `stack.yaml` that tracks branch dependencies:
+ ```yaml
+ branches:
+   - name: auth-models
+-    base: main
++    branch: juanbe/feature/auth-models  # optional; defaults to name
++    base: master
+   - name: auth-middleware
+     base: auth-models
+   - name: auth-routes
+     base: auth-middleware
+ ```
+ 
+-- **name**: the branch name (matches the worktree folder name)
+-- **base**: the parent branch to rebase against during `tws sync`
++- **name**: short tws name and flat worktree folder name
++- **branch**: actual Git branch name (optional; defaults to `name`)
++- **base**: parent tws branch name or an explicit Git ref
+ 
+-`stack.yaml` is created automatically when you use `tws new`. The `--base` flag sets the parent:
++`stack.yaml` is created automatically when you use `tws new`. An omitted base uses the selected repository's `origin/HEAD`. Explicit refs are literal: `master` means local `master`, while `origin/master` means the remote-tracking ref. Tags and commit SHAs are accepted.
+ 
+ ```sh
+-tws new auth auth-models                    # base defaults to main
++tws new auth auth-models
+ tws new auth auth-middleware --base auth-models
+-tws new auth auth-routes --base auth-middleware
++tws new auth release-check --base origin/release
++tws new auth wiki-docs --repo ../wiki --base master
+ ```
+ 
+-`tws sync <feature>` rebases branches in topological order (parents first). If a rebase fails, all dependent branches are skipped.
++`tws sync <feature>` rebases branches in topological order. If a conflict occurs, resolve it and run `tws sync <feature> --continue`; deferred descendants resume and completion is reported only after relevant ancestry edges are current.
+ 
+ `tws stack <feature>` prints the dependency tree:
+ 
+@@ -125,7 +128,7 @@ tws new auth auth-routes --base auth-middleware
+         └── auth-routes
+ ```
+ 
+-Features without a `stack.yaml` fall back to rebasing all worktrees against `origin/main`.
++Features without a `stack.yaml` use the repository's detected default remote branch for fallback sync.
+ 
+ ### Divergent stacks
+ 
+diff --git a/docs/v1.2-rc-validation.md b/docs/v1.2-rc-validation.md
+new file mode 100644
+index 0000000..d4eb070
+--- /dev/null
++++ b/docs/v1.2-rc-validation.md
+@@ -0,0 +1,109 @@
++# v1.2 release-candidate validation
++
++Use `v1.2.0-rc.1` in real stacked workflows before promoting `v1.2.0`.
++
++## Install
++
++```sh
++go install github.com/jdbencardinop/tesseraworkspaces/cmd/tws@v1.2.0-rc.1
++tws --version
++```
++
++Expected:
++
++```text
++tws version v1.2.0-rc.1
++```
++
++## 1. Configured-base creation
++
++Test in a repository where the current branch differs from the intended base:
++
++```sh
++tws add rc-base-test
++tws new rc-base-test local-master --base master
++tws new rc-base-test remote-master --base origin/master
++tws stack rc-base-test
++```
++
++Verify each worktree starts at the requested ref:
++
++```sh
++git -C <local-master-worktree> rev-parse HEAD
++git rev-parse master
++
++git -C <remote-master-worktree> rev-parse HEAD
++git rev-parse origin/master
++```
++
++Also test a tag or commit SHA and an invalid ref. Invalid refs must not create a worktree or stack entry.
++
++## 2. Feature-directory repo inference
++
++From a feature that already has one worktree:
++
++```sh
++cd <workspace>/<feature>
++tws new <feature> second --base master
++```
++
++Expected: tws infers the single source repo. For a multi-repo feature, omitting `--repo` must fail with an ambiguity message.
++
++## 3. Conflict continuation
++
++Create or use a parent/child stack and trigger a real conflict in a middle branch:
++
++```sh
++tws sync <feature>
++# resolve conflict in the reported worktree
++git add <files>
++git rebase --continue
++tws sync <feature> --continue
++```
++
++Expected:
++
++- the resolved branch is acknowledged;
++- all deferred descendants are processed;
++- a later conflict retains `.sync-state.yaml` and can be continued again;
++- `Sync complete` appears only when relevant parent-child ancestry is current;
++- `--push` runs only after complete sync.
++
++## 4. Decoupled branch identity
++
++Configure a prefix:
++
++```sh
++tws config set branch_prefix 'juanbe/feature/' --repo
++tws add rc-prefix -n pr1
++```
++
++Expected:
++
++- worktree path ends in `worktrees/pr1`;
++- Git branch is `juanbe/feature/pr1`;
++- `tws doctor` and `tws sync` do not report a false branch mismatch.
++
++## 5. Regression checks
++
++Exercise:
++
++```sh
++tws add <feature> -n <branch>
++tws new <feature> <child> --base <branch>
++tws sync <feature> --push
++tws archive <feature> <branch>
++tws open <feature> --feature-dir --no-agent
++tws open <feature> --all
++```
++
++Confirm multi-repo features, archived branches, quick-start, inject files, hooks, and decisions still behave normally.
++
++## Promotion criteria
++
++Promote to `v1.2.0` when:
++
++- at least two real AKS feature stacks complete multiple create/sync cycles;
++- one real conflict is successfully resumed through descendants;
++- no wrong-base or false branch-identity regressions are reported;
++- no P0/P1 blocker remains from RC testing.

@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.2.0-rc.1
+
+- **Configured-base checkout** — new branches now start from the requested local branch, remote ref, tag, or commit SHA; omitted bases use the selected repo's `origin/HEAD`
+- **Feature-directory repo inference** — `tws new` can infer a single source repo from existing feature metadata/worktrees and fails clearly on multi-repo ambiguity
+- **Correct sync continuation** — `tws sync --continue` resumes deferred descendants, preserves state on later failures, and only reports completion after stack ancestry is current
+- **Decoupled branch validation** — sync validates the actual Git branch (`StackEntry.GitBranch`) while retaining short tws names for paths and output
+- **Feature-level open** — `tws open <feature> --feature-dir` opens the orchestrator directory; `--all` creates a tmux session for the feature and its worktrees
+- **P0 integration tests** — real temporary Git repos, remotes, worktrees, explicit refs, conflict continuation, and prefixed branch names
+
+## v1.1.1
+
+- **Feature-level open** — orchestrator directory and tmux `--all` mode
+
+## v1.1.0
+
+- **Directory-mirrored inject routing** — `inject/dev/file` lands at `worktree/dev/file`
+- **Branch-name decoupling** — short worktree names may map to policy-compliant Git branches via `branch_prefix`
+- **Default branch detection** — omitted bases detect `origin/HEAD`
+- **Atomic rename** — Git operations succeed before stack metadata is mutated
+
+## v1.0.0
+
+- **Auto-read decision hooks** — Claude Code SessionStart hooks with optional `auto_hooks`
+- **Tiered skills** — global, feature-orchestrator, and worktree guidance
+- **Cross-worktree decisions** — broadcast, targeted messages, and read tracking
+
 ## v0.7.3
 
 - **Decision read tracking** — `tws decisions show` defaults to unread only, `tws decisions ack` marks all as read, `tws open` shows unread count

@@ -96,25 +96,28 @@ Each feature can have a `stack.yaml` that tracks branch dependencies:
 ```yaml
 branches:
   - name: auth-models
-    base: main
+    branch: juanbe/feature/auth-models  # optional; defaults to name
+    base: master
   - name: auth-middleware
     base: auth-models
   - name: auth-routes
     base: auth-middleware
 ```
 
-- **name**: the branch name (matches the worktree folder name)
-- **base**: the parent branch to rebase against during `tws sync`
+- **name**: short tws name and flat worktree folder name
+- **branch**: actual Git branch name (optional; defaults to `name`)
+- **base**: parent tws branch name or an explicit Git ref
 
-`stack.yaml` is created automatically when you use `tws new`. The `--base` flag sets the parent:
+`stack.yaml` is created automatically when you use `tws new`. An omitted base uses the selected repository's `origin/HEAD`. Explicit refs are literal: `master` means local `master`, while `origin/master` means the remote-tracking ref. Tags and commit SHAs are accepted.
 
 ```sh
-tws new auth auth-models                    # base defaults to main
+tws new auth auth-models
 tws new auth auth-middleware --base auth-models
-tws new auth auth-routes --base auth-middleware
+tws new auth release-check --base origin/release
+tws new auth wiki-docs --repo ../wiki --base master
 ```
 
-`tws sync <feature>` rebases branches in topological order (parents first). If a rebase fails, all dependent branches are skipped.
+`tws sync <feature>` rebases branches in topological order. If a conflict occurs, resolve it and run `tws sync <feature> --continue`; deferred descendants resume and completion is reported only after relevant ancestry edges are current.
 
 `tws stack <feature>` prints the dependency tree:
 
@@ -125,7 +128,7 @@ tws new auth auth-routes --base auth-middleware
         └── auth-routes
 ```
 
-Features without a `stack.yaml` fall back to rebasing all worktrees against `origin/main`.
+Features without a `stack.yaml` use the repository's detected default remote branch for fallback sync.
 
 ### Divergent stacks
 

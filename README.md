@@ -27,12 +27,14 @@ tws add auth -n auth-models --open
 ### Stacked & Divergent Branches
 
 ```sh
-tws new auth auth-models                          # base: main
-tws new auth auth-middleware --base auth-models    # stacks on auth-models
-tws new auth auth-tests --base auth-models         # parallel to middleware
+tws new auth auth-models                              # selected repo's origin/HEAD
+tws new auth auth-middleware --base auth-models        # stacks on auth-models
+tws new auth auth-tests --base auth-models             # parallel to middleware
+tws new auth release-check --base origin/release        # explicit remote ref
+tws new auth wiki-docs --repo ../wiki --base master     # local master in wiki repo
 
 # Result:
-# (main)
+# (<default>)
 # └── auth-models
 #     ├── auth-middleware
 #     └── auth-tests
@@ -167,6 +169,8 @@ Shell completions: `tws completion zsh/bash/fish/powershell`
 - [Cheatsheet](docs/cheatsheet.md)
 - [Configuration](docs/configuration.md)
 - [Agent Hooks](docs/hooks.md)
+- [v1.2 RC Validation](docs/v1.2-rc-validation.md)
+- [Roadmap](docs/roadmap.md)
 
 ## Install from Source
 

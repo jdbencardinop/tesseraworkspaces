@@ -1,0 +1,6 @@
+ .tpatch/FEATURES.md   |  1 +
+ CHANGELOG.md          | 26 ++++++++++++++++++++++++++
+ README.md             | 12 ++++++++----
+ docs/cheatsheet.md    | 14 +++++++++-----
+ docs/configuration.md | 19 +++++++++++--------
+ 5 files changed, 55 insertions(+), 17 deletions(-)
