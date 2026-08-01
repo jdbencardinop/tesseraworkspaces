@@ -1,0 +1,16 @@
+{
+  "id": "workspace-mode-foundation",
+  "slug": "workspace-mode-foundation",
+  "title": "Introduce an explicit persisted workspace mode enum with `external` (current sibling multi-worktree backend, default) and `checkout` (future in-repo single-checkout backend). Add a resolved Workspace value carrying stable identity, mode, repository root, metadata root, and capability flags. Route current path resolution through the external backend without changing any existing outputs or behavior. Add extensive characterization and regression tests before checkout lifecycle behavior is implemented. Update embedded skills when agent-facing behavior changes.",
+  "state": "applied",
+  "compatibility": "unknown",
+  "requested_at": "2026-07-29T05:23:05Z",
+  "updated_at": "2026-08-01T13:13:23Z",
+  "last_command": "record",
+  "notes": "landed at 2026-08-01T13:13:23Z",
+  "apply": {
+    "base_commit": "477db4e98ddbfca416a6dc8c68a57461ef31c6bf",
+    "has_patch": true
+  },
+  "reconcile": {}
+}

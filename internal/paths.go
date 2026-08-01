@@ -51,6 +51,8 @@ func DetectWorkspaceRoot(cwd string, cfg Config) string {
 }
 
 // resolveTwsRoot contains the resolution logic with injectable dependencies.
+// It routes through resolveWorkspaceMetadataRoot to honour workspace mode
+// while preserving byte-for-byte external outputs for existing callers.
 func resolveTwsRoot(envRoot string, cwd string, repoRoot string, repoErr error, cfg Config) string {
 	// 0. TWS_ROOT env var — always wins
 	if envRoot != "" {
@@ -62,18 +64,12 @@ func resolveTwsRoot(envRoot string, cwd string, repoRoot string, repoErr error, 
 		return wsRoot
 	}
 
-	// 2. Global config keyed by repo path
-	if repoErr == nil {
-		if ws, ok := cfg.Workspaces[repoRoot]; ok {
-			return ws
-		}
-
-		// 3. Repo-relative sibling: ../<repo-name>.tws/
-		repoName := filepath.Base(repoRoot)
-		return filepath.Join(filepath.Dir(repoRoot), repoName+".tws")
+	// 2. Route through workspace resolver (handles mode + config + sibling).
+	if root := resolveWorkspaceMetadataRoot(repoRoot, repoErr, cfg); root != "" {
+		return root
 	}
 
-	// 4. Global fallback
+	// 3. Global fallback (no repo detected).
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, "tws")
 }

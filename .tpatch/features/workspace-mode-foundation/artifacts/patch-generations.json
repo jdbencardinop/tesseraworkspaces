@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "feature": "workspace-mode-foundation",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_defb778e18ab",
+      "kind": "record",
+      "patch_sha256": "1b04ea52238cc6b6f8a3cd984abb24f8712dc934c0e6cae9c44f42a3a8c18533",
+      "git_patch_id": "73d61cc63cec0d5935978daac931cfd10b72e567",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "7b7fe355e1389f6b4bcf1f83406d0de1cf6745d1cebfddf11158ca3f6ccde887",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "patches/001-record.patch",
+      "base_commit": "477db4e98ddbfca416a6dc8c68a57461ef31c6bf",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "internal/config.go",
+        "internal/paths.go",
+        "internal/workspace.go",
+        "internal/workspace_test.go"
+      ],
+      "dependencies": [],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 
@@ -8,13 +9,14 @@ import (
 )
 
 type Config struct {
-	Workspaces   map[string]string `yaml:"workspaces"`
-	AgentCommand string            `yaml:"agent_command"`
-	UseTmux      *bool             `yaml:"use_tmux"`
-	InjectInto   string            `yaml:"inject_into"`
-	TestCommand  string            `yaml:"test_command"`
-	AutoHooks    *bool             `yaml:"auto_hooks"`
-	BranchPrefix string            `yaml:"branch_prefix"`
+	Workspaces    map[string]string `yaml:"workspaces"`
+	AgentCommand  string            `yaml:"agent_command"`
+	UseTmux       *bool             `yaml:"use_tmux"`
+	InjectInto    string            `yaml:"inject_into"`
+	TestCommand   string            `yaml:"test_command"`
+	AutoHooks     *bool             `yaml:"auto_hooks"`
+	BranchPrefix  string            `yaml:"branch_prefix"`
+	WorkspaceMode string            `yaml:"workspace_mode,omitempty"`
 }
 
 func (c Config) GetAgentCommand() string {
@@ -77,13 +79,14 @@ func LoadConfig() Config {
 	if repo.BranchPrefix != "" {
 		cfg.BranchPrefix = repo.BranchPrefix
 	}
+	if repo.WorkspaceMode != "" {
+		cfg.WorkspaceMode = repo.WorkspaceMode
+	}
 	if len(repo.Workspaces) > 0 {
 		if cfg.Workspaces == nil {
 			cfg.Workspaces = make(map[string]string)
 		}
-		for k, v := range repo.Workspaces {
-			cfg.Workspaces[k] = v
-		}
+		maps.Copy(cfg.Workspaces, repo.Workspaces)
 	}
 
 	return cfg
