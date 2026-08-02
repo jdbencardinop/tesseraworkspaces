@@ -25,6 +25,15 @@ func syncCmd() *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			internal.RequireTool("git")
+
+			ws, err := internal.RequireWorkspace()
+			if err != nil {
+				return err
+			}
+			if ws.Mode == internal.ModeCheckout {
+				return fmt.Errorf("sync requires linked worktrees; not supported in checkout mode")
+			}
+
 			feature := args[0]
 			featurePath := internal.FeaturePath(feature)
 

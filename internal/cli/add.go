@@ -32,48 +32,16 @@ Note: injected files appear as untracked in git status. Add them to
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			feature := args[0]
-			root := internal.FeaturePath(feature)
 
-			wsRoot := internal.TwsRoot()
-			internal.Must(os.MkdirAll(filepath.Join(wsRoot, ".tws-workspace"), 0755))
-			internal.Must(os.MkdirAll(filepath.Join(root, "worktrees"), 0755))
-			internal.Must(os.WriteFile(filepath.Join(root, "FEATURE.md"), []byte("# "+feature+"\n"), 0644))
-
-			// Create inject/ dir
-			injectDir := internal.InjectPath(root)
-			internal.Must(os.MkdirAll(injectDir, 0755))
-
-			// Apply templates
-			applyTemplates(injectDir, templates)
-
-			// Add default CLAUDE.local.md if not provided by any template
-			claudeLocal := filepath.Join(injectDir, "CLAUDE.local.md")
-			if _, err := os.Stat(claudeLocal); os.IsNotExist(err) {
-				internal.Must(os.WriteFile(claudeLocal, []byte("# "+feature+" - shared context\n\nThis file is symlinked into every worktree for this feature.\nEdit it in the workspace inject/ directory.\n"), 0644))
+			ws, err := internal.RequireWorkspace()
+			if err != nil {
+				return err
 			}
 
-			// Install orchestrator skill in the feature dir
-			orchPath := filepath.Join(root, ".claude", "skills", "tesseraworkspaces-orchestrator", "SKILL.md")
-			installFile(orchPath, skills.ClaudeOrchestratorSkill, false)
-
-			fmt.Println("Feature added:", feature)
-
-			// Quick start: create worktree if -n specified
-			if newBranch != "" {
-				if err := createWorktree(feature, newBranch, base, "", force); err != nil {
-					return err
-				}
-
-				if open {
-					path := internal.WorktreePath(feature, newBranch)
-					if useTmux {
-						openWithTmux(feature, newBranch, path)
-					} else {
-						openDirect(path)
-					}
-				}
+			if ws.Mode == internal.ModeCheckout {
+				return addCheckout(ws, feature, templates, newBranch, base, force, open, useTmux)
 			}
-			return nil
+			return addExternal(feature, templates, newBranch, base, force, open, useTmux)
 		},
 	}
 
@@ -85,6 +53,114 @@ Note: injected files appear as untracked in git status. Add them to
 	cmd.Flags().BoolVar(&useTmux, "tmux", false, "Open in tmux session (used with --open)")
 
 	return cmd
+}
+
+// addExternal preserves existing external-mode add semantics.
+func addExternal(feature string, templates []string, newBranch, base string, force, open, useTmux bool) error {
+	root := internal.FeaturePath(feature)
+	wsRoot := internal.TwsRoot()
+
+	if err := os.MkdirAll(filepath.Join(wsRoot, ".tws-workspace"), 0755); err != nil {
+		return fmt.Errorf("creating workspace marker: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "worktrees"), 0755); err != nil {
+		return fmt.Errorf("creating worktrees directory: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "FEATURE.md"), []byte("# "+feature+"\n"), 0644); err != nil {
+		return fmt.Errorf("creating FEATURE.md: %w", err)
+	}
+
+	injectDir := internal.InjectPath(root)
+	if err := os.MkdirAll(injectDir, 0755); err != nil {
+		return fmt.Errorf("creating inject directory: %w", err)
+	}
+
+	applyTemplates(injectDir, templates)
+
+	claudeLocal := filepath.Join(injectDir, "CLAUDE.local.md")
+	if _, err := os.Stat(claudeLocal); os.IsNotExist(err) {
+		if err := os.WriteFile(claudeLocal, []byte("# "+feature+" - shared context\n\nThis file is symlinked into every worktree for this feature.\nEdit it in the workspace inject/ directory.\n"), 0644); err != nil {
+			return fmt.Errorf("creating CLAUDE.local.md: %w", err)
+		}
+	}
+
+	orchPath := filepath.Join(root, ".claude", "skills", "tesseraworkspaces-orchestrator", "SKILL.md")
+	installFile(orchPath, skills.ClaudeOrchestratorSkill, false)
+
+	fmt.Println("Feature added:", feature)
+
+	if newBranch != "" {
+		if err := createWorktree(feature, newBranch, base, "", force); err != nil {
+			return err
+		}
+		if open {
+			path := internal.WorktreePath(feature, newBranch)
+			if useTmux {
+				openWithTmux(feature, newBranch, path)
+			} else {
+				openDirect(path)
+			}
+		}
+	}
+	return nil
+}
+
+// addCheckout creates durable feature assets under .tws/features/<feature>
+// for checkout mode. Idempotent: re-running on an existing feature updates
+// only missing assets.
+func addCheckout(ws internal.Workspace, feature string, templates []string, newBranch, base string, force, open, useTmux bool) error {
+	root := ws.FeaturePath(feature)
+
+	// Create the feature directory (no worktrees/ subdirectory in checkout mode).
+	if err := os.MkdirAll(root, 0755); err != nil {
+		return fmt.Errorf("creating feature directory: %w", err)
+	}
+
+	// FEATURE.md
+	featureMD := filepath.Join(root, "FEATURE.md")
+	if _, err := os.Stat(featureMD); os.IsNotExist(err) {
+		if err := os.WriteFile(featureMD, []byte("# "+feature+"\n"), 0644); err != nil {
+			return fmt.Errorf("creating FEATURE.md: %w", err)
+		}
+	}
+
+	// inject/ directory
+	injectDir := internal.InjectPath(root)
+	if err := os.MkdirAll(injectDir, 0755); err != nil {
+		return fmt.Errorf("creating inject directory: %w", err)
+	}
+
+	applyTemplates(injectDir, templates)
+
+	// Default CLAUDE.local.md if no template provided one
+	claudeLocal := filepath.Join(injectDir, "CLAUDE.local.md")
+	if _, err := os.Stat(claudeLocal); os.IsNotExist(err) {
+		if err := os.WriteFile(claudeLocal, []byte("# "+feature+" - shared context\n\nThis file is maintained in the checkout workspace.\n"), 0644); err != nil {
+			return fmt.Errorf("creating CLAUDE.local.md: %w", err)
+		}
+	}
+
+	// Orchestrator skill in feature .claude/skills/
+	orchPath := filepath.Join(root, ".claude", "skills", "tesseraworkspaces-orchestrator", "SKILL.md")
+	installFile(orchPath, skills.ClaudeOrchestratorSkill, false)
+
+	fmt.Println("Feature added:", feature)
+
+	// In checkout mode, -n creates a branch (not a worktree).
+	if newBranch != "" {
+		if err := createCheckoutBranch(ws, feature, newBranch, base, force); err != nil {
+			return err
+		}
+		if open {
+			// In checkout mode, "open" switches to branch in the repo root.
+			if useTmux {
+				openCheckoutTmux(ws, feature, newBranch)
+			} else {
+				fmt.Printf("Branch %s created. Use 'git checkout %s' to switch.\n", newBranch, newBranch)
+			}
+		}
+	}
+	return nil
 }
 
 // applyTemplates copies files from the configured template dir and any

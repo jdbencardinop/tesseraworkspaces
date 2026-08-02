@@ -1,0 +1,22 @@
+{
+  "id": "checkout-workspace-lifecycle",
+  "slug": "checkout-workspace-lifecycle",
+  "title": "Add the explicit checkout-workspace lifecycle on top of workspace-mode-foundation. Enable a repository-local single-checkout mode with metadata under \u003crepo\u003e/.tws/features and runtime state under \u003crepo\u003e/.tws/state, ignored locally through .git/info/exclude. Add init/enable/mode commands; make add/new/rename/archive/delete/export/import mode-aware; checkout new creates logical stack entries and Git branches but no linked worktrees. Preserve external mode behavior exactly. Branch deletion remains explicit and destructive only. Update embedded skills after behavior stabilizes.",
+  "state": "applied",
+  "compatibility": "unknown",
+  "requested_at": "2026-08-02T17:02:08Z",
+  "updated_at": "2026-08-02T18:10:41Z",
+  "last_command": "record",
+  "notes": "landed at 2026-08-02T18:10:41Z",
+  "apply": {
+    "base_commit": "f464e48b62ecfb94a342e160375d21a4d746b07d",
+    "has_patch": true
+  },
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "workspace-mode-foundation",
+      "kind": "hard"
+    }
+  ]
+}

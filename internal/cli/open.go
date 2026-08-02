@@ -36,50 +36,53 @@ Use --all to create a tmux session with windows for every worktree in the featur
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			}
 		},
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ws, err := internal.RequireWorkspace()
+			if err != nil {
+				return err
+			}
+			if ws.Mode == internal.ModeCheckout {
+				return fmt.Errorf("open requires linked worktrees; not supported in checkout mode (use 'git checkout <branch>')")
+			}
+
 			// Handle --all: tmux session with all worktrees
 			if all {
 				if len(args) < 1 {
-					fmt.Println("Usage: tws open <feature> --all")
-					os.Exit(1)
+					return fmt.Errorf("usage: tws open <feature> --all")
 				}
 				openAll(args[0])
-				return
+				return nil
 			}
 
 			// Handle --feature-dir: open the feature directory
 			if featureDir {
 				if len(args) < 1 {
-					fmt.Println("Usage: tws open <feature> --feature-dir")
-					os.Exit(1)
+					return fmt.Errorf("usage: tws open <feature> --feature-dir")
 				}
 				feature := args[0]
 				path := internal.FeaturePath(feature)
 				if _, err := os.Stat(path); os.IsNotExist(err) {
-					fmt.Printf("Feature not found: %s\n", feature)
-					os.Exit(1)
+					return fmt.Errorf("feature not found: %s", feature)
 				}
 				if noAgent {
 					fmt.Printf("cd %s\n", path)
-					return
+					return nil
 				}
 				fmt.Printf("Opening feature dir: %s\n", path)
 				openDirect(path)
-				return
+				return nil
 			}
 
 			// Normal mode: open a specific worktree
 			feature, branch, err := resolveOpenArgs(args)
 			if err != nil {
-				fmt.Println(err)
-				os.Exit(1)
+				return err
 			}
 
 			path := internal.WorktreePath(feature, branch)
 
 			if _, err := os.Stat(path); os.IsNotExist(err) {
-				fmt.Printf("Worktree not found: %s\n", path)
-				os.Exit(1)
+				return fmt.Errorf("worktree not found: %s", path)
 			}
 
 			// Re-sync inject files
@@ -109,7 +112,7 @@ Use --all to create a tmux session with windows for every worktree in the featur
 			if noAgent {
 				fmt.Printf("cd %s\n", path)
 				fmt.Println("Run your agent manually from there.")
-				return
+				return nil
 			}
 
 			// Resolve tmux preference
@@ -135,6 +138,7 @@ Use --all to create a tmux session with windows for every worktree in the featur
 				}
 				openDirect(path)
 			}
+			return nil
 		},
 	}
 

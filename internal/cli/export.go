@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
 	"github.com/spf13/cobra"
@@ -32,13 +33,23 @@ func exportCmd() *cobra.Command {
 			}
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			feature := args[0]
-			featurePath := internal.FeaturePath(feature)
+
+			ws, err := internal.RequireWorkspace()
+			if err != nil {
+				return err
+			}
+
+			var featurePath string
+			if ws.Mode == internal.ModeCheckout {
+				featurePath = ws.FeaturePath(feature)
+			} else {
+				featurePath = internal.FeaturePath(feature)
+			}
 
 			if _, err := os.Stat(featurePath); os.IsNotExist(err) {
-				fmt.Printf("Feature not found: %s\n", feature)
-				os.Exit(1)
+				return fmt.Errorf("feature not found: %s", feature)
 			}
 
 			stack, _ := internal.LoadStack(featurePath)
@@ -46,16 +57,17 @@ func exportCmd() *cobra.Command {
 			export := internal.NewWorkspaceExport(feature, stack, decisions)
 
 			if toRepo {
-				exportToRepo(feature, export)
-				return
+				if ws.Mode == internal.ModeCheckout {
+					return fmt.Errorf("--to-repo is not supported in checkout mode; use '-o <tracked-path>' to write to a tracked file instead")
+				}
+				return exportToRepo(feature, export)
 			}
 
 			if full {
-				exportTarball(feature, featurePath, export, output)
-				return
+				return exportTarball(feature, featurePath, export, output)
 			}
 
-			exportYAML(export, output)
+			return exportYAML(export, output)
 		},
 	}
 
@@ -66,62 +78,59 @@ func exportCmd() *cobra.Command {
 	return cmd
 }
 
-func exportYAML(export internal.WorkspaceExport, output string) {
+func exportYAML(export internal.WorkspaceExport, output string) error {
 	data, err := internal.MarshalExport(export)
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("marshaling export: %w", err)
 	}
 
 	if output == "" {
 		fmt.Print(string(data))
 	} else {
 		if err := os.WriteFile(output, data, 0644); err != nil {
-			fmt.Printf("Error writing %s: %v\n", output, err)
-			os.Exit(1)
+			return fmt.Errorf("writing %s: %w", output, err)
 		}
 		fmt.Printf("Exported to: %s\n", output)
 	}
+	return nil
 }
 
-func exportToRepo(feature string, export internal.WorkspaceExport) {
+func exportToRepo(feature string, export internal.WorkspaceExport) error {
 	repoRoot, err := internal.MainRepoRoot()
 	if err != nil {
-		fmt.Println("Error: not inside a git repository")
-		os.Exit(1)
+		return fmt.Errorf("not inside a git repository")
 	}
 
 	dir := filepath.Join(repoRoot, ".tws", "workspaces")
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	path := filepath.Join(dir, feature+".yaml")
 	data, err := internal.MarshalExport(export)
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	if err := os.WriteFile(path, data, 0644); err != nil {
-		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	fmt.Printf("Exported to: %s\n", path)
 	fmt.Println("Commit and push to share with team members.")
+	return nil
 }
 
-func exportTarball(feature, featurePath string, export internal.WorkspaceExport, output string) {
+// exportTarball creates a tarball with durable metadata and inject files.
+// Runtime state (.tws/state) is structurally excluded.
+func exportTarball(feature, featurePath string, export internal.WorkspaceExport, output string) error {
 	if output == "" {
 		output = feature + "-workspace.tar.gz"
 	}
 
 	f, err := os.Create(output)
 	if err != nil {
-		fmt.Printf("Error creating %s: %v\n", output, err)
-		os.Exit(1)
+		return fmt.Errorf("creating %s: %w", output, err)
 	}
 	defer f.Close() //nolint:errcheck
 
@@ -135,7 +144,7 @@ func exportTarball(feature, featurePath string, export internal.WorkspaceExport,
 	yamlData, _ := internal.MarshalExport(export)
 	addToTar(tw, "workspace.yaml", yamlData)
 
-	// Write inject files
+	// Write inject files only (exclude runtime state structurally)
 	injectDir := internal.InjectPath(featurePath)
 	if _, err := os.Stat(injectDir); err == nil {
 		_ = filepath.Walk(injectDir, func(path string, info os.FileInfo, err error) error {
@@ -143,6 +152,10 @@ func exportTarball(feature, featurePath string, export internal.WorkspaceExport,
 				return nil
 			}
 			relPath, _ := filepath.Rel(featurePath, path)
+			// Structurally exclude runtime state: only include inject/ prefix
+			if !strings.HasPrefix(relPath, "inject/") && !strings.HasPrefix(relPath, "inject\\") {
+				return nil
+			}
 			data, err := os.ReadFile(path)
 			if err != nil {
 				return nil
@@ -153,6 +166,7 @@ func exportTarball(feature, featurePath string, export internal.WorkspaceExport,
 	}
 
 	fmt.Printf("Exported to: %s\n", output)
+	return nil
 }
 
 func addToTar(tw *tar.Writer, name string, data []byte) {

@@ -51,6 +51,16 @@ Use --all to install hooks across all features.
 Set auto_hooks: true in config to auto-install on every tws new.`,
 		Args: cobra.MaximumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
+			ws, wsErr := internal.RequireWorkspace()
+			if wsErr != nil {
+				fmt.Printf("Error: %v\n", wsErr)
+				return
+			}
+			if ws.Mode == internal.ModeCheckout {
+				fmt.Println("Error: hooks install requires linked worktrees; not supported in checkout mode")
+				return
+			}
+
 			if all {
 				features := internal.ListFeatures()
 				if len(features) == 0 {
@@ -113,15 +123,22 @@ func hooksRemoveCmd() *cobra.Command {
 		Use:   "remove [feature]",
 		Short: "Remove auto-read decision hooks",
 		Args:  cobra.MaximumNArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ws, err := internal.RequireWorkspace()
+			if err != nil {
+				return err
+			}
+			if ws.Mode == internal.ModeCheckout {
+				return fmt.Errorf("hooks remove requires linked worktrees; not supported in checkout mode")
+			}
+
 			var feature string
 			if len(args) > 0 {
 				feature = args[0]
 			} else {
 				feature, _ = internal.DetectFeatureFromCwd()
 				if feature == "" {
-					fmt.Println("Could not detect feature.")
-					os.Exit(1)
+					return fmt.Errorf("could not detect feature; specify a feature or run from inside a worktree")
 				}
 			}
 
@@ -135,6 +152,7 @@ func hooksRemoveCmd() *cobra.Command {
 					fmt.Printf("  [-] %s: hooks removed\n", entry.Name)
 				}
 			}
+			return nil
 		},
 	}
 }

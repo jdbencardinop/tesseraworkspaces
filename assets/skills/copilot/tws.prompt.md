@@ -59,6 +59,20 @@ tws decisions show <feature>                                 # unread only
 tws decisions ack <feature>                                  # mark as read
 ```
 
+## Checkout Workspace Mode
+
+For a small repo using one physical checkout:
+
+```sh
+tws init --mode checkout
+tws mode
+tws add auth
+tws new auth auth-models
+git switch auth-models
+```
+
+Checkout mode stores local metadata under `.tws/features/`, adds `.tws/` to the repo's local Git exclude, creates logical Git branches without linked worktrees, and preserves branches on archive/delete by default. It is single-repository; `--repo` is rejected. `tws sync`, `open`, `close`, and automatic hooks are not yet supported in checkout mode.
+
 ## Workflow
 
 1. Run `tws list` to see current state

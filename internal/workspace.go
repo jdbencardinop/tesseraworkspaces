@@ -185,3 +185,55 @@ func metadataRootExists(root string) bool {
 	info, err := os.Stat(root)
 	return err == nil && info.IsDir()
 }
+
+// ResolveCurrentWorkspaceE is an error-returning resolver for use in CLI
+// commands. Unlike ResolveCurrentWorkspace (which silently defaults to
+// external mode), this function returns an error when the per-repo config
+// contains an invalid workspace_mode value.
+func ResolveCurrentWorkspaceE(repoRoot string, cfg Config) (Workspace, error) {
+	original := cleanAbsolute(repoRoot)
+	canon := canonicalize(repoRoot)
+
+	repoConfigFile := filepath.Join(canon, ".tws", "config.yaml")
+	repoCfg := loadConfigFile(repoConfigFile)
+
+	var mode WorkspaceMode
+	if repoCfg.WorkspaceMode != "" {
+		m, ok := parseMode(repoCfg.WorkspaceMode)
+		if !ok {
+			return Workspace{}, fmt.Errorf("invalid workspace_mode %q in %s", repoCfg.WorkspaceMode, repoConfigFile)
+		}
+		mode = m
+	} else {
+		mode = ModeExternal
+	}
+
+	var metadataRoot string
+	switch mode {
+	case ModeCheckout:
+		metadataRoot = filepath.Join(canon, ".tws")
+	default:
+		metadataRoot = resolveExternalRoot(original, canon, cfg)
+	}
+
+	return Workspace{
+		RepoRoot:     canon,
+		Mode:         mode,
+		MetadataRoot: metadataRoot,
+		StableID:     stableID(canon),
+		Caps:         capsFor(mode),
+	}, nil
+}
+
+// RequireWorkspace resolves the workspace for the current repo root,
+// returning a stable CLI error if the repo root cannot be determined
+// or the workspace mode is invalid. Commands should use this instead
+// of silently ignoring errors from MainRepoRoot or ResolveCurrentWorkspace.
+func RequireWorkspace() (Workspace, error) {
+	repoRoot, err := MainRepoRoot()
+	if err != nil {
+		return Workspace{}, fmt.Errorf("not inside a git repository")
+	}
+	cfg := LoadConfig()
+	return ResolveCurrentWorkspaceE(repoRoot, cfg)
+}

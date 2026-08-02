@@ -115,6 +115,16 @@ func LoadConfigFile(path string) Config {
 	return loadConfigFile(path)
 }
 
+// LoadRepoConfig loads a per-repo config from the given path.
+func LoadRepoConfig(path string) Config {
+	return loadConfigFile(path)
+}
+
+// SaveRepoConfig writes a per-repo config to the given path.
+func SaveRepoConfig(path string, cfg Config) error {
+	return SaveConfigFile(path, cfg)
+}
+
 // TemplatePath returns the template directory path.
 // Per-repo (.tws/templates/) takes priority over global (~/.config/tws/templates/).
 // Returns empty string if neither exists.

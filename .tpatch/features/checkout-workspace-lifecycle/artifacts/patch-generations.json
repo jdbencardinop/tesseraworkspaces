@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "feature": "checkout-workspace-lifecycle",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_967cb22a3ccb",
+      "kind": "record",
+      "patch_sha256": "1aefaa7a144eb038ee4f344593dc14faa4ada99c0961cf4f8d7eaa66199694c0",
+      "git_patch_id": "933cef091f74d3746ac71b88a42ad04dc27355f7",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "21e86e0411083619cc1d189207073f09306e17b9dd11146be47e81d1d55d292d",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "patches/001-record.patch",
+      "base_commit": "f464e48b62ecfb94a342e160375d21a4d746b07d",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "assets/skills/claude/tesseraworkspaces/SKILL.md",
+        "assets/skills/copilot/tws.prompt.md",
+        "internal/cli/add.go",
+        "internal/cli/archive.go",
+        "internal/cli/checkout_lifecycle_test.go",
+        "internal/cli/close.go",
+        "internal/cli/delete.go",
+        "internal/cli/export.go",
+        "internal/cli/hooks.go",
+        "internal/cli/importcmd.go",
+        "internal/cli/init.go",
+        "internal/cli/new.go",
+        "internal/cli/open.go",
+        "internal/cli/rename.go",
+        "internal/cli/sync.go",
+        "internal/config.go",
+        "internal/stack.go",
+        "internal/workspace.go"
+      ],
+      "dependencies": [
+        {
+          "slug": "workspace-mode-foundation",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "1b04ea52238cc6b6f8a3cd984abb24f8712dc934c0e6cae9c44f42a3a8c18533",
+          "parent_recipe_sha256": "7b7fe355e1389f6b4bcf1f83406d0de1cf6745d1cebfddf11158ca3f6ccde887"
+        }
+      ],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}

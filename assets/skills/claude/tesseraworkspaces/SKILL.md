@@ -181,6 +181,22 @@ tws doctor auth           # check one feature
 
 Detects: wrong branch, uncommitted changes, missing inject symlinks.
 
+## Checkout Workspace Mode
+
+For small repositories that use one physical checkout instead of linked worktrees:
+
+```sh
+tws init --mode checkout       # enable local .tws/ metadata (git-excluded)
+tws mode                       # show resolved mode and metadata root
+tws add auth                   # metadata under .tws/features/auth
+tws new auth auth-models       # create/register a Git branch, no linked worktree
+git switch auth-models         # activate the logical branch manually
+```
+
+Checkout mode is explicit; legacy repositories remain in external mode. It is intentionally single-repository and does not accept `tws new --repo`. `tws archive` hides a logical branch without deleting the Git branch; `tws delete` preserves branches unless an explicit branch-deletion flag is supplied.
+
+Current lifecycle release does **not** support `tws sync`, `tws open`, `tws close`, or automatic hooks in checkout mode. Use Git branch switching and launch the configured agent from the repository root until checkout sync/session features land.
+
 ## When to Use
 
 - When the user wants to work on multiple branches in parallel within a feature

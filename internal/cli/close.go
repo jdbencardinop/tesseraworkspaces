@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
 	"github.com/spf13/cobra"
@@ -23,24 +22,30 @@ func closeCmd() *cobra.Command {
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			}
 		},
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ws, err := internal.RequireWorkspace()
+			if err != nil {
+				return err
+			}
+			if ws.Mode == internal.ModeCheckout {
+				return fmt.Errorf("close requires linked worktrees; not supported in checkout mode")
+			}
+
 			feature := args[0]
 			branch := args[1]
 
 			session := sanitizeSessionName(feature + "/" + branch)
 
 			if !sessionExists(session) {
-				fmt.Printf("No tmux session found for %s/%s\n", feature, branch)
-				os.Exit(1)
+				return fmt.Errorf("no tmux session found for %s/%s", feature, branch)
 			}
 
-			err := internal.Run("tmux", "kill-session", "-t", session)
-			if err != nil {
-				fmt.Printf("Error killing session: %v\n", err)
-				os.Exit(1)
+			if err := internal.Run("tmux", "kill-session", "-t", session); err != nil {
+				return fmt.Errorf("error killing session: %w", err)
 			}
 
 			fmt.Printf("Closed tmux session: %s\n", session)
+			return nil
 		},
 	}
 }

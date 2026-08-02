@@ -31,6 +31,16 @@ func newCmd() *cobra.Command {
 			}
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ws, err := internal.RequireWorkspace()
+			if err != nil {
+				return err
+			}
+			if ws.Mode == internal.ModeCheckout {
+				if repo != "" {
+					return fmt.Errorf("--repo is not supported in checkout mode; checkout workspaces use exactly one repository")
+				}
+				return createCheckoutBranch(ws, args[0], args[1], base, force)
+			}
 			return createWorktree(args[0], args[1], base, repo, force)
 		},
 	}
@@ -42,7 +52,105 @@ func newCmd() *cobra.Command {
 	return cmd
 }
 
-// createWorktree is the shared logic for creating a worktree branch.
+// createCheckoutBranch creates a git branch for checkout mode (no worktree).
+// Atomic: if metadata persistence fails after branch creation, the branch is
+// rolled back (only if this operation created it). Archived entries are
+// reactivated. Mismatched existing entries are rejected.
+func createCheckoutBranch(ws internal.Workspace, feature, name, requestedBase string, force bool) error {
+	featurePath := ws.FeaturePath(feature)
+
+	// Pre-validate feature directory exists.
+	if _, err := os.Stat(featurePath); os.IsNotExist(err) {
+		return fmt.Errorf("feature %q not found; run 'tws add %s' first", feature, feature)
+	}
+
+	stack, _ := internal.LoadStack(featurePath)
+
+	repoRoot := ws.RepoRoot
+
+	baseName, baseRef, err := resolveCreationBase(repoRoot, "", stack, requestedBase)
+	if err != nil {
+		return err
+	}
+
+	cfg := internal.LoadConfig()
+	gitBranch := name
+	if cfg.BranchPrefix != "" {
+		gitBranch = cfg.BranchPrefix + name
+	}
+
+	branchExisted := internal.VerifyGitRef(repoRoot, gitBranch) == nil
+	if !branchExisted && gitBranch != name && internal.VerifyGitRef(repoRoot, name) == nil {
+		gitBranch = name
+		branchExisted = true
+	}
+
+	// Check for existing stack entry.
+	existing := internal.GetBranch(stack, name)
+	if existing.Name != "" {
+		// If archived, reactivate.
+		if existing.Archived {
+			for i := range stack.Branches {
+				if stack.Branches[i].Name == name {
+					stack.Branches[i].Archived = false
+					break
+				}
+			}
+			if err := internal.SaveStack(featurePath, stack); err != nil {
+				return fmt.Errorf("failed to unarchive branch: %w", err)
+			}
+			fmt.Printf("Reactivated archived branch: %s (git: %s)\n", name, existing.GitBranch())
+			return nil
+		}
+		// Existing non-archived entry: validate consistency.
+		expectedBranch := gitBranch
+		if existing.Branch != "" {
+			expectedBranch = existing.Branch
+		}
+		if existing.GitBranch() != expectedBranch && existing.GitBranch() != gitBranch {
+			return fmt.Errorf("branch %q already registered with git branch %q (expected %q); use rename or delete first",
+				name, existing.GitBranch(), gitBranch)
+		}
+		fmt.Printf("Branch %s already registered (git: %s)\n", name, existing.GitBranch())
+		return nil
+	}
+
+	// Create git branch if it does not exist.
+	if !branchExisted {
+		if err := internal.RunDir(repoRoot, "git", "branch", gitBranch, baseRef); err != nil {
+			return fmt.Errorf("creating git branch %s: %w", gitBranch, err)
+		}
+	}
+
+	// Register in stack.
+	entry := internal.StackEntry{
+		Name: name,
+		Base: baseName,
+	}
+	if gitBranch != name {
+		entry.Branch = gitBranch
+	}
+	stack.Branches = append(stack.Branches, entry)
+
+	if err := internal.SaveStack(featurePath, stack); err != nil {
+		// Rollback: only delete branch if we created it.
+		if !branchExisted {
+			_ = internal.RunSilentDir(repoRoot, "git", "branch", "-d", gitBranch)
+		}
+		return fmt.Errorf("failed to persist stack (branch rolled back): %w", err)
+	}
+
+	fmt.Printf("Branch created: %s (git: %s, base: %s)\n", name, gitBranch, baseName)
+	return nil
+}
+
+// openCheckoutTmux opens a tmux session for a checkout-mode branch.
+func openCheckoutTmux(ws internal.Workspace, feature, branch string) {
+	session := sanitizeSessionName(feature + "/" + branch)
+	fmt.Printf("Checkout branch: use 'git checkout %s' then 'tmux new-session -s %s'\n", branch, session)
+}
+
+// createWorktree is the shared logic for creating a worktree branch (external mode).
 // Used by both tws new and tws add -n. Explicit base refs are literal;
 // an omitted base resolves from the selected repository's origin/HEAD.
 func createWorktree(feature, name, requestedBase, repoPath string, force bool) error {
