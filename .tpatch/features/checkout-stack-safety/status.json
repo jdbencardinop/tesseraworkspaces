@@ -1,0 +1,22 @@
+{
+  "id": "checkout-stack-safety",
+  "slug": "checkout-stack-safety",
+  "title": "Implement safe stack synchronization for checkout workspace mode using the single physical Git checkout. Enforce a clean attached checkout, acquire an operation lock, persist a transaction with original branch/HEAD and ordered plan, sequentially switch and rebase logical branches, restore the original branch on success and abort, and support interruption/conflict recovery through sync --continue/--abort. Reuse explicit-base semantics, amend-aware rebasing, validation commands, and final ancestry checks. Preserve external sync behavior exactly. Update embedded skills when behavior stabilizes.",
+  "state": "applied",
+  "compatibility": "unknown",
+  "requested_at": "2026-08-03T04:03:32Z",
+  "updated_at": "2026-08-03T05:21:18Z",
+  "last_command": "record",
+  "notes": "landed at 2026-08-03T05:21:18Z",
+  "apply": {
+    "base_commit": "16e862b0f07a746e89283ec19186a991326bc9d2",
+    "has_patch": true
+  },
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "checkout-workspace-lifecycle",
+      "kind": "hard"
+    }
+  ]
+}

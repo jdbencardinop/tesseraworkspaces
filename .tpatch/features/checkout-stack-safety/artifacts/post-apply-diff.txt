@@ -1,0 +1,6 @@
+ .tpatch/FEATURES.md                             |  1 +
+ assets/skills/claude/tesseraworkspaces/SKILL.md | 11 ++++++++++-
+ assets/skills/copilot/tws.prompt.md             |  4 +++-
+ internal/cli/checkout_lifecycle_test.go         |  8 +++-----
+ internal/cli/sync.go                            |  6 ++++--
+ 5 files changed, 21 insertions(+), 9 deletions(-)

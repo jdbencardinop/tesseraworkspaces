@@ -195,7 +195,16 @@ git switch auth-models         # activate the logical branch manually
 
 Checkout mode is explicit; legacy repositories remain in external mode. It is intentionally single-repository and does not accept `tws new --repo`. `tws archive` hides a logical branch without deleting the Git branch; `tws delete` preserves branches unless an explicit branch-deletion flag is supplied.
 
-Current lifecycle release does **not** support `tws sync`, `tws open`, `tws close`, or automatic hooks in checkout mode. Use Git branch switching and launch the configured agent from the repository root until checkout sync/session features land.
+Checkout mode supports transactional stack sync in the single physical checkout:
+
+```sh
+tws sync auth                 # sequential branch switch/rebase, then restore original branch
+tws sync auth --continue      # resume an interrupted/conflicted transaction
+tws sync auth --abort         # abort rebase and restore original branch
+tws sync auth --push          # push only after complete ancestry + restoration
+```
+
+Sync refuses dirty/detached repositories and concurrent operations, persists recovery state under `.tws/state/`, supports amend-aware rebases and validation, and restores the original branch on success/abort. `tws open`, `tws close`, and automatic hooks are still deferred to the checkout-agent-sessions feature.
 
 ## When to Use
 

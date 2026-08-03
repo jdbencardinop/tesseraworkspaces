@@ -874,14 +874,12 @@ func TestStackEntry_ArchivedField(t *testing.T) {
 
 // ---------- Mode guard tests ----------
 
-func TestCheckoutMode_SyncUnsupported(t *testing.T) {
-	// We can't easily call syncCmd through cobra without a full setup,
-	// but we can verify the mode resolution works
+func TestCheckoutMode_SyncSupported(t *testing.T) {
+	// Checkout mode now supports sync via the checkout-stack-safety transaction engine
 	dir := setupGitRepoCheckout(t)
 	ws := requireWorkspaceForTest(t, dir)
 	if ws.Mode != internal.ModeCheckout {
 		t.Fatal("expected checkout mode")
 	}
-	// The sync command checks ws.Mode == ModeCheckout and returns an error
-	// This is tested indirectly through the CLI
+	// Checkout sync is tested in checkout_sync_test.go
 }

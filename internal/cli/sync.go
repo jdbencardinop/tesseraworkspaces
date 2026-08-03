@@ -12,10 +12,11 @@ func syncCmd() *cobra.Command {
 	var push bool
 	var cont bool
 	var abort bool
+	var testCmd string
 
 	cmd := &cobra.Command{
 		Use:   "sync <feature>",
-		Short: "Rebase worktrees in dependency order",
+		Short: "Rebase branches in dependency order",
 		Args:  cobra.ExactArgs(1),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			if len(args) == 0 {
@@ -31,7 +32,7 @@ func syncCmd() *cobra.Command {
 				return err
 			}
 			if ws.Mode == internal.ModeCheckout {
-				return fmt.Errorf("sync requires linked worktrees; not supported in checkout mode")
+				return runCheckoutSync(args[0], push, testCmd, cont, abort, verbose)
 			}
 
 			feature := args[0]
@@ -65,6 +66,7 @@ func syncCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&push, "push", false, "Push all branches after syncing")
 	cmd.Flags().BoolVar(&cont, "continue", false, "Resume after conflict resolution")
 	cmd.Flags().BoolVar(&abort, "abort", false, "Discard sync state and start fresh")
+	cmd.Flags().StringVar(&testCmd, "test", "", "Validation command to run after each rebase (checkout mode)")
 
 	return cmd
 }
