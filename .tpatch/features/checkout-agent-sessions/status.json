@@ -22,6 +22,10 @@
     {
       "slug": "fix-checkout-lifecycle-layout",
       "kind": "hard"
+    },
+    {
+      "slug": "fix-checkout-feature-path-routing",
+      "kind": "hard"
     }
   ]
 }
