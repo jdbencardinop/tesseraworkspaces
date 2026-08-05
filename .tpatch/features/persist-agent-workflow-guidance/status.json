@@ -1,0 +1,16 @@
+{
+  "id": "persist-agent-workflow-guidance",
+  "slug": "persist-agent-workflow-guidance",
+  "title": "Add repository-root AGENTS.md and CLAUDE.md pointers plus a durable engineering workflow document so Claude Code, Copilot CLI, and future agents can recover the roadmap, current mode program, tpatch Path B/land process, review loop, tests, release cadence, and coding safety conventions after context compaction or a new session.",
+  "state": "applied",
+  "compatibility": "unknown",
+  "requested_at": "2026-08-05T16:22:23Z",
+  "updated_at": "2026-08-05T16:32:06Z",
+  "last_command": "record",
+  "notes": "landed at 2026-08-05T16:32:06Z",
+  "apply": {
+    "base_commit": "dd432a82aa0cebec70d66c0327fbb6a21bda58c1",
+    "has_patch": true
+  },
+  "reconcile": {}
+}

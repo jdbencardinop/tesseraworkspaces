@@ -1,0 +1,176 @@
+diff --git a/AGENTS.md b/AGENTS.md
+new file mode 100644
+index 0000000..3713175
+--- /dev/null
++++ b/AGENTS.md
+@@ -0,0 +1,18 @@
++# Agent entrypoint
++
++Read these files before making changes:
++
++1. [`docs/engineering-workflow.md`](docs/engineering-workflow.md) — required implementation, review, test, tpatch land, and release process.
++2. [`docs/roadmap.md`](docs/roadmap.md) — priorities, tool boundaries, and current workspace-mode program.
++3. [`.tpatch/steering/local.md`](.tpatch/steering/local.md) — project-specific tpatch rules.
++4. [`.claude/skills/tessera-patch/SKILL.md`](.claude/skills/tessera-patch/SKILL.md) — tpatch Path B schemas and commands.
++
++## Core rules
++
++- Preserve external multi-worktree behavior unless the feature explicitly changes it.
++- Checkout mode is explicit, single-repository, and one physical checkout.
++- Keep one logical tpatch feature per implementation boundary.
++- Prefer Path B/manual artifacts; use `tpatch land` for one traceable feature commit.
++- Run focused integration tests plus full tests, vet, golangci-lint, and build before landing.
++- Use real temporary Git repos/remotes/worktrees for Git behavior tests.
++- Do not push/tag until the landed commit is clean and approved.
+diff --git a/CLAUDE.md b/CLAUDE.md
+new file mode 100644
+index 0000000..211ead4
+--- /dev/null
++++ b/CLAUDE.md
+@@ -0,0 +1,3 @@
++# Claude Code entrypoint
++
++Follow [`AGENTS.md`](AGENTS.md). It links the canonical workflow, roadmap, tpatch steering, and local tpatch skill.
+diff --git a/docs/engineering-workflow.md b/docs/engineering-workflow.md
+new file mode 100644
+index 0000000..31764e9
+--- /dev/null
++++ b/docs/engineering-workflow.md
+@@ -0,0 +1,104 @@
++# Engineering workflow
++
++This document is the durable implementation contract for human and coding-agent work on tesseraworkspaces.
++
++## Current product direction
++
++`tws` supports two explicit workspace modes:
++
++- **external** — existing sibling workspace with linked Git worktrees; default and backward compatible.
++- **checkout** — repository-local `.tws/features/` metadata and one physical Git checkout.
++
++Current shipped checkout slices:
++
++1. workspace mode foundation;
++2. lifecycle and logical branches;
++3. transactional stack sync;
++4. namespaced feature layout with legacy migration;
++5. single-owner direct/tmux agent sessions.
++
++Next roadmap feature: **checkout doctor observability**. See [`roadmap.md`](roadmap.md).
++
++## Tpatch workflow
++
++Use tpatch as structured patch management, not primarily as a generator.
++
++1. Check `tpatch status <slug>` and `tpatch next <slug>`.
++2. Register with an explicit clean slug.
++3. Add hard/soft dependencies and run `tpatch feature deps --validate-all`.
++4. Author concise Path B artifacts:
++   - `analysis.md`
++   - `spec.md`
++   - `exploration.md`
++5. Advance phases with `--manual` — the coding agent is the provider.
++6. Mark implementation started.
++7. Implement and test without committing.
++8. Preview with `tpatch land <slug> --dry-run`.
++9. Land with `tpatch land <slug>` for one commit with feature trailers.
++10. Run `tpatch verify <slug>` and record known historical verifier limitations honestly.
++
++Do not batch unrelated features into one record range. Override collisions only with a precise understood reason.
++
++## Implementation and review loop
++
++For each feature:
++
++1. Dispatch one isolated Opus implementer with exact scope, files, tests, compatibility rules, and non-goals.
++2. Parent agent audits the returned diff before importing it.
++3. Run focused and full gates.
++4. Dispatch three isolated Opus reviewers:
++   - code quality/security;
++   - architecture/correctness/tests;
++   - CLI UX/discoverability.
++5. Consolidate only blocking findings; non-blocking observations may become backlog items.
++6. Dispatch a revision implementer with exact findings.
++7. Repeat reviews until all blockers are approved.
++8. Run final gates, land, push, and tag the next patch version.
++
++Review agents never commit, push, tag, or modify unrelated files.
++
++## Required gates
++
++Before landing:
++
++```bash
++gofmt -w <changed-go-files>
++go test ./... -count=1
++go vet ./...
++golangci-lint run ./...
++make build
++git diff --check
++tpatch feature deps --validate-all
++```
++
++Also run feature-specific CLI smoke tests. Git behavior requires real temporary repositories and local bare remotes; do not rely only on mocks.
++
++After landing, rerun full gates and check a clean tree before push/tag.
++
++## Coding conventions
++
++- Prefer error-returning helpers and Cobra `RunE`; avoid `os.Exit` or fatal helpers inside reusable logic.
++- Validate all system boundaries before mutation.
++- Persist transaction/session state atomically before irreversible Git actions.
++- Metadata changes happen only after Git success, with rollback where practical.
++- Never use `git reset --hard`, force push, or destructive cleanup as a shortcut.
++- Use `--force-with-lease` for rewritten branches.
++- Keep external and checkout mode dispatch explicit; do not infer checkout mode merely from `.tws/` existence.
++- Preserve external-mode paths and behavior with regression tests.
++- In checkout mode, reject dirty/detached/concurrent operations instead of auto-stashing.
++- Use `StackEntry.Name` for tws identity and `StackEntry.GitBranch()` for Git operations.
++- Use repo-scoped base resolution. Explicit refs are literal; omitted base uses selected repo `origin/HEAD`.
++- Agent skills/documentation must be updated when user-facing behavior changes.
++
++## Release cadence
++
++- Each approved landed feature gets the next patch tag unless it changes incompatible storage/semantics; use an RC in that case.
++- Tag only after push-ready clean-tree audit and full gates.
++- Verify the built binary reports the exact tag.
++- Watch GitHub Actions for main and tag runs before starting dependent work when CI behavior changed.
++
++## Known tpatch metadata maintenance
++
++Some old bundled features have canonical patches that fail dependency-closure verification while recipes replay and product tests pass. This is tracked by `repair-historical-tpatch-artifacts` and intentionally deferred until tpatch is upgraded.
++
++Do not distort dependencies merely to silence verification. Repair topologically and preserve append-only history.
+diff --git a/docs/roadmap.md b/docs/roadmap.md
+index 9876afa..e7fc83b 100644
+--- a/docs/roadmap.md
++++ b/docs/roadmap.md
+@@ -2,7 +2,19 @@
+ 
+ This roadmap is organized by correctness and user value rather than release date. `tws` remains a Git worktree orchestrator: it may integrate with specialized tools, but it should not duplicate their source of truth.
+ 
+-## Now — P0 correctness
++## Now — checkout workspace program
++
++Shipped foundations:
++
++- explicit external/checkout workspace modes;
++- checkout lifecycle and logical branch metadata;
++- transactional checkout stack sync;
++- `.tws/features/` layout with legacy migration;
++- single-owner checkout direct/tmux agent sessions.
++
++Next: **checkout doctor observability** — mode/identity, current logical branch, stale sync/session locks, ancestry, context links, and recovery guidance.
++
++## Completed P0 correctness
+ 
+ ### Configured base controls branch creation
+ 
+@@ -69,6 +81,7 @@ A higher-level “super tws” spanning multiple project workspace roots remains
+ 
+ ## Research / P3
+ 
++- **Historical tpatch artifact repair**: after upgrading tpatch, audit old bundled shared-file features topologically, repair canonical patch boundaries/dependencies carefully, regenerate recipes, and publish a verification report. This is backlog maintenance and does not block product work while code gates and recipe replay remain green.
+ - PR provider adapters for GitHub and Azure DevOps.
+ - Workspace portability refinements and structured retrospective export.
+ - Template conflict resolution (`keep`, `replace`, `diff`, `edit`).

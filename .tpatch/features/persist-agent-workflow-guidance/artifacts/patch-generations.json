@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "feature": "persist-agent-workflow-guidance",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_cc23e37786d1",
+      "kind": "record",
+      "patch_sha256": "52edadbff6b65a717a2dc0c96fd8e7180392bfe1d196ca0740fa82821614b185",
+      "git_patch_id": "b86f42d1c7697b624aeda2cc820d9199a3d8433f",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "cb2536e1145e95725534ea1429e2021c80e22e86cd1e290f69e838e460e0c0c9",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "patches/001-record.patch",
+      "base_commit": "dd432a82aa0cebec70d66c0327fbb6a21bda58c1",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "AGENTS.md",
+        "CLAUDE.md",
+        "docs/engineering-workflow.md",
+        "docs/roadmap.md"
+      ],
+      "dependencies": [],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}

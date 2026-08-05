@@ -2,7 +2,19 @@
 
 This roadmap is organized by correctness and user value rather than release date. `tws` remains a Git worktree orchestrator: it may integrate with specialized tools, but it should not duplicate their source of truth.
 
-## Now — P0 correctness
+## Now — checkout workspace program
+
+Shipped foundations:
+
+- explicit external/checkout workspace modes;
+- checkout lifecycle and logical branch metadata;
+- transactional checkout stack sync;
+- `.tws/features/` layout with legacy migration;
+- single-owner checkout direct/tmux agent sessions.
+
+Next: **checkout doctor observability** — mode/identity, current logical branch, stale sync/session locks, ancestry, context links, and recovery guidance.
+
+## Completed P0 correctness
 
 ### Configured base controls branch creation
 
@@ -69,6 +81,7 @@ A higher-level “super tws” spanning multiple project workspace roots remains
 
 ## Research / P3
 
+- **Historical tpatch artifact repair**: after upgrading tpatch, audit old bundled shared-file features topologically, repair canonical patch boundaries/dependencies carefully, regenerate recipes, and publish a verification report. This is backlog maintenance and does not block product work while code gates and recipe replay remain green.
 - PR provider adapters for GitHub and Azure DevOps.
 - Workspace portability refinements and structured retrospective export.
 - Template conflict resolution (`keep`, `replace`, `diff`, `edit`).
