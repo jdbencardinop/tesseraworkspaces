@@ -73,7 +73,9 @@ git switch auth-models
 
 Checkout mode stores local metadata under `.tws/features/`, adds `.tws/` to the repo's local Git exclude, creates logical Git branches without linked worktrees, and preserves branches on archive/delete by default. It is single-repository; `--repo` is rejected.
 
-`tws sync <feature>` is transactional in checkout mode: it requires a clean attached checkout, switches/rebases logical branches sequentially, persists recovery state under `.tws/state/`, and restores the original branch. Use `--continue` after resolving conflicts and `--abort` to recover. `open`, `close`, and automatic hooks are not yet supported in checkout mode.
+`tws sync <feature>` is transactional in checkout mode: it requires a clean attached checkout, switches/rebases logical branches sequentially, persists recovery state under `.tws/state/`, and restores the original branch. Use `--continue` after resolving conflicts and `--abort` to recover.
+
+`tws open <feature> <branch>` runs the configured agent in the repository root and restores the original branch after the agent/follow-up shell exits. `--tmux` keeps the branch owned by a recorded tmux session until `tws close`. Only one checkout session may own the repository; `--all` and automatic hooks remain unsupported.
 
 ## Workflow
 

@@ -1,0 +1,1385 @@
+diff --git a/assets/skills/claude/tesseraworkspaces/SKILL.md b/assets/skills/claude/tesseraworkspaces/SKILL.md
+index df2b23e..ecd48e9 100644
+--- a/assets/skills/claude/tesseraworkspaces/SKILL.md
++++ b/assets/skills/claude/tesseraworkspaces/SKILL.md
+@@ -216,7 +216,17 @@ tws sync auth --abort         # abort rebase and restore original branch
+ tws sync auth --push          # push only after complete ancestry + restoration
+ ```
+ 
+-Sync refuses dirty/detached repositories and concurrent operations, persists recovery state under `.tws/state/`, supports amend-aware rebases and validation, and restores the original branch on success/abort. `tws open`, `tws close`, and automatic hooks are still deferred to the checkout-agent-sessions feature.
++Sync refuses dirty/detached repositories and concurrent operations, persists recovery state under `.tws/state/`, supports amend-aware rebases and validation, and restores the original branch on success/abort.
++
++Checkout mode supports one branch-owning agent session at a time:
++
++```sh
++tws open auth auth-models          # run agent + shell, then restore original branch
++tws open auth auth-models --tmux   # recorded tmux session keeps branch active
++tws close auth auth-models         # kill recorded tmux, clean context, restore
++```
++
++Sessions reject dirty/detached repos, active sync, archived/multi-repo entries, and concurrent owners. Injected context is locally excluded and only tws-owned links are cleaned. `--all` and automatic hooks remain unsupported in checkout mode.
+ 
+ ## When to Use
+ 
+diff --git a/assets/skills/copilot/tws.prompt.md b/assets/skills/copilot/tws.prompt.md
+index b2bd294..a6e9a6e 100644
+--- a/assets/skills/copilot/tws.prompt.md
++++ b/assets/skills/copilot/tws.prompt.md
+@@ -73,7 +73,9 @@ git switch auth-models
+ 
+ Checkout mode stores local metadata under `.tws/features/`, adds `.tws/` to the repo's local Git exclude, creates logical Git branches without linked worktrees, and preserves branches on archive/delete by default. It is single-repository; `--repo` is rejected.
+ 
+-`tws sync <feature>` is transactional in checkout mode: it requires a clean attached checkout, switches/rebases logical branches sequentially, persists recovery state under `.tws/state/`, and restores the original branch. Use `--continue` after resolving conflicts and `--abort` to recover. `open`, `close`, and automatic hooks are not yet supported in checkout mode.
++`tws sync <feature>` is transactional in checkout mode: it requires a clean attached checkout, switches/rebases logical branches sequentially, persists recovery state under `.tws/state/`, and restores the original branch. Use `--continue` after resolving conflicts and `--abort` to recover.
++
++`tws open <feature> <branch>` runs the configured agent in the repository root and restores the original branch after the agent/follow-up shell exits. `--tmux` keeps the branch owned by a recorded tmux session until `tws close`. Only one checkout session may own the repository; `--all` and automatic hooks remain unsupported.
+ 
+ ## Workflow
+ 
+diff --git a/internal/cli/checkout_close.go b/internal/cli/checkout_close.go
+new file mode 100644
+index 0000000..81fb1cf
+--- /dev/null
++++ b/internal/cli/checkout_close.go
+@@ -0,0 +1,37 @@
++package cli
++
++import (
++	"fmt"
++
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
++)
++
++func runCheckoutClose(ws internal.Workspace, args []string) error {
++	feature, name, err := resolveCheckoutCloseArgs(ws, args)
++	if err != nil {
++		return err
++	}
++	return internal.CloseCheckoutSession(ws, feature, name, nil)
++}
++
++func resolveCheckoutCloseArgs(ws internal.Workspace, args []string) (string, string, error) {
++	state, err := internal.LoadCheckoutAgentSession(ws)
++	if err != nil {
++		return "", "", fmt.Errorf("no checkout session found")
++	}
++	feature, name := state.Feature, state.Name
++	switch len(args) {
++	case 0:
++	case 1:
++		if args[0] != feature {
++			return "", "", fmt.Errorf("active checkout session is %s/%s", feature, name)
++		}
++	case 2:
++		if args[0] != feature || args[1] != name {
++			return "", "", fmt.Errorf("active checkout session is %s/%s", feature, name)
++		}
++	default:
++		return "", "", fmt.Errorf("too many arguments")
++	}
++	return feature, name, nil
++}
+diff --git a/internal/cli/checkout_session_cli_test.go b/internal/cli/checkout_session_cli_test.go
+new file mode 100644
+index 0000000..f423060
+--- /dev/null
++++ b/internal/cli/checkout_session_cli_test.go
+@@ -0,0 +1,93 @@
++package cli
++
++import (
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
++)
++
++func setupSessionCLI(t *testing.T) (string, internal.Workspace) {
++	t.Helper()
++	repo := setupGitRepoCheckout(t)
++	ws := requireWorkspaceForTest(t, repo)
++	fp := ws.FeaturePath("feature")
++	if err := os.MkdirAll(filepath.Join(fp, "inject"), 0755); err != nil {
++		t.Fatal(err)
++	}
++	gitInDir(t, repo, "branch", "one")
++	if err := internal.SaveStack(fp, internal.Stack{Branches: []internal.StackEntry{{Name: "one", Base: "main"}}}); err != nil {
++		t.Fatal(err)
++	}
++	old, _ := os.Getwd()
++	t.Cleanup(func() { _ = os.Chdir(old) })
++	if err := os.Chdir(repo); err != nil {
++		t.Fatal(err)
++	}
++	return repo, ws
++}
++func TestCheckoutOpenResolveForms(t *testing.T) {
++	_, ws := setupSessionCLI(t)
++	for _, args := range [][]string{{"feature", "one"}, {"feature"}, nil} {
++		f, n, err := resolveCheckoutOpenArgs(ws, args)
++		if err != nil || f != "feature" || n != "one" {
++			t.Fatalf("args=%v f=%s n=%s err=%v", args, f, n, err)
++		}
++	}
++}
++func TestCheckoutOpenFeatureDirNoBranches(t *testing.T) {
++	_, ws := setupSessionCLI(t)
++	empty := ws.FeaturePath("empty")
++	if err := os.MkdirAll(empty, 0755); err != nil {
++		t.Fatal(err)
++	}
++	cmd := openCmd()
++	cmd.SetArgs([]string{"empty", "--feature-dir", "--no-agent"})
++	if err := cmd.Execute(); err != nil {
++		t.Fatal(err)
++	}
++}
++func TestCheckoutNoAgentDoesNotSwitch(t *testing.T) {
++	repo, ws := setupSessionCLI(t)
++	before := gitInDir(t, repo, "branch", "--show-current")
++	if err := runCheckoutOpen(ws, []string{"feature", "one"}, false, false, true, nilFlagSet{}); err != nil {
++		t.Fatal(err)
++	}
++	if after := gitInDir(t, repo, "branch", "--show-current"); after != before {
++		t.Fatalf("%s -> %s", before, after)
++	}
++}
++func TestCheckoutCloseResolveState(t *testing.T) {
++	_, ws := setupSessionCLI(t)
++	s := &internal.CheckoutAgentSession{SchemaVersion: 1, WorkspaceID: ws.StableID, Feature: "feature", Name: "one", GitBranch: "one", OriginalBranch: "main", OriginalHEAD: "x", Mode: internal.AgentSessionTmux, LockToken: "x"}
++	if err := internal.SaveCheckoutAgentSession(ws, s); err != nil {
++		t.Fatal(err)
++	}
++	for _, args := range [][]string{nil, {"feature"}, {"feature", "one"}} {
++		f, n, err := resolveCheckoutCloseArgs(ws, args)
++		if err != nil || f != "feature" || n != "one" {
++			t.Fatalf("%v %s %s %v", args, f, n, err)
++		}
++	}
++}
++func TestExternalCloseStillRequiresTwoArgs(t *testing.T) {
++	repo := setupGitRepoCheckout(t)
++	if err := os.RemoveAll(filepath.Join(repo, ".tws")); err != nil {
++		t.Fatal(err)
++	}
++	old, _ := os.Getwd()
++	t.Cleanup(func() { _ = os.Chdir(old) })
++	_ = os.Chdir(repo)
++	cmd := closeCmd()
++	cmd.SetArgs(nil)
++	err := cmd.Execute()
++	if err == nil || !strings.Contains(err.Error(), "usage") {
++		t.Fatalf("%v", err)
++	}
++}
++
++type nilFlagSet struct{}
++
++func (nilFlagSet) Changed(string) bool { return false }
+diff --git a/internal/cli/close.go b/internal/cli/close.go
+index b2a3c7b..116639c 100644
+--- a/internal/cli/close.go
++++ b/internal/cli/close.go
+@@ -9,10 +9,24 @@ import (
+ 
+ func closeCmd() *cobra.Command {
+ 	return &cobra.Command{
+-		Use:   "close <feature> <branch>",
+-		Short: "Kill tmux session for a worktree",
+-		Args:  cobra.ExactArgs(2),
++		Use:   "close [feature] [branch]",
++		Short: "Close a worktree session (tmux or checkout)",
++		Args:  cobra.RangeArgs(0, 2),
+ 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
++			ws, err := internal.RequireWorkspace()
++			if err == nil && ws.Mode == internal.ModeCheckout {
++				state, loadErr := internal.LoadCheckoutAgentSession(ws)
++				if loadErr != nil {
++					return nil, cobra.ShellCompDirectiveNoFileComp
++				}
++				if len(args) == 0 {
++					return []string{state.Feature}, cobra.ShellCompDirectiveNoFileComp
++				}
++				if len(args) == 1 && args[0] == state.Feature {
++					return []string{state.Name}, cobra.ShellCompDirectiveNoFileComp
++				}
++				return nil, cobra.ShellCompDirectiveNoFileComp
++			}
+ 			switch len(args) {
+ 			case 0:
+ 				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
+@@ -27,8 +41,19 @@ func closeCmd() *cobra.Command {
+ 			if err != nil {
+ 				return err
+ 			}
++
++			// Checkout mode: delegate to checkout close
+ 			if ws.Mode == internal.ModeCheckout {
+-				return fmt.Errorf("close requires linked worktrees; not supported in checkout mode")
++				if cerr := runCheckoutClose(ws, args); cerr != nil {
++					return cerr
++				}
++				fmt.Println("Checkout session closed.")
++				return nil
++			}
++
++			// External mode: requires exactly 2 args
++			if len(args) != 2 {
++				return fmt.Errorf("usage: tws close <feature> <branch>")
+ 			}
+ 
+ 			feature := args[0]
+diff --git a/internal/cli/open.go b/internal/cli/open.go
+index ff307f1..336a63a 100644
+--- a/internal/cli/open.go
++++ b/internal/cli/open.go
+@@ -41,8 +41,32 @@ Use --all to create a tmux session with windows for every worktree in the featur
+ 			if err != nil {
+ 				return err
+ 			}
++			// Checkout mode: delegate to checkout session flow
+ 			if ws.Mode == internal.ModeCheckout {
+-				return fmt.Errorf("open requires linked worktrees; not supported in checkout mode (use 'git checkout <branch>')")
++				if all {
++					return fmt.Errorf("--all not supported in checkout mode")
++				}
++
++				// --feature-dir handled before branch resolution
++				if featureDir {
++					if len(args) < 1 {
++						return fmt.Errorf("usage: tws open <feature> --feature-dir")
++					}
++					feature := args[0]
++					fp, ferr := ws.ResolveFeaturePath(feature)
++					if ferr != nil {
++						return ferr
++					}
++					if noAgent {
++						fmt.Printf("cd %s\n", fp)
++						return nil
++					}
++					fmt.Printf("Opening feature dir: %s\n", fp)
++					openDirect(fp)
++					return nil
++				}
++
++				return runCheckoutOpen(ws, args, useTmux, noTmux, noAgent, cmd.Flags())
+ 			}
+ 
+ 			// Handle --all: tmux session with all worktrees
+diff --git a/internal/cli/open_checkout.go b/internal/cli/open_checkout.go
+new file mode 100644
+index 0000000..7b633e9
+--- /dev/null
++++ b/internal/cli/open_checkout.go
+@@ -0,0 +1,108 @@
++package cli
++
++import (
++	"fmt"
++	"sort"
++
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
++)
++
++func runCheckoutOpen(ws internal.Workspace, args []string, useTmux, noTmux, noAgent bool, cmdFlag interface{ Changed(string) bool }) error {
++	feature, name, err := resolveCheckoutOpenArgs(ws, args)
++	if err != nil {
++		return err
++	}
++	if noAgent {
++		fmt.Println(ws.RepoRoot)
++		return nil
++	}
++	featurePath, err := ws.ResolveFeaturePath(feature)
++	if err != nil {
++		return err
++	}
++	stack, err := internal.LoadStack(featurePath)
++	if err != nil {
++		return err
++	}
++	entry := internal.GetBranch(stack, name)
++	if entry.Name == "" {
++		return fmt.Errorf("branch %q not found in feature %q", name, feature)
++	}
++	cfg := internal.LoadConfig()
++	command := internal.CheckoutSessionAgentCommand(cfg.GetAgentCommand(), ws.RepoRoot)
++	tmux := useTmux
++	if !cmdFlag.Changed("tmux") && !noTmux && cfg.UseTmux != nil {
++		tmux = *cfg.UseTmux
++	}
++	if noTmux {
++		tmux = false
++	}
++	if tmux {
++		return internal.OpenCheckoutTmux(ws, feature, entry, command, nil, internal.ResolveInjectInto(""))
++	}
++	return internal.OpenCheckoutDirect(ws, feature, entry, command, nil, nil, internal.ResolveInjectInto(""))
++}
++
++func resolveCheckoutOpenArgs(ws internal.Workspace, args []string) (string, string, error) {
++	switch len(args) {
++	case 2:
++		return args[0], args[1], nil
++	case 1:
++		names, err := checkoutActiveNames(ws, args[0])
++		if err != nil {
++			return "", "", err
++		}
++		if len(names) == 1 {
++			return args[0], names[0], nil
++		}
++		name, err := pick("Select branch:", names)
++		return args[0], name, err
++	case 0:
++		features, err := ws.ListFeaturesResolved()
++		if err != nil {
++			return "", "", err
++		}
++		if len(features) == 0 {
++			return "", "", fmt.Errorf("no features found")
++		}
++		feature := features[0]
++		if len(features) > 1 {
++			feature, err = pick("Select feature:", features)
++			if err != nil {
++				return "", "", err
++			}
++		}
++		names, err := checkoutActiveNames(ws, feature)
++		if err != nil {
++			return "", "", err
++		}
++		if len(names) == 1 {
++			return feature, names[0], nil
++		}
++		name, err := pick("Select branch:", names)
++		return feature, name, err
++	default:
++		return "", "", fmt.Errorf("too many arguments")
++	}
++}
++func checkoutActiveNames(ws internal.Workspace, feature string) ([]string, error) {
++	path, err := ws.ResolveFeaturePath(feature)
++	if err != nil {
++		return nil, err
++	}
++	stack, err := internal.LoadStack(path)
++	if err != nil {
++		return nil, err
++	}
++	var names []string
++	for _, entry := range stack.Branches {
++		if !entry.Archived && entry.Repo == "" {
++			names = append(names, entry.Name)
++		}
++	}
++	sort.Strings(names)
++	if len(names) == 0 {
++		return nil, fmt.Errorf("no active branches in feature %q", feature)
++	}
++	return names, nil
++}
+diff --git a/internal/session.go b/internal/session.go
+new file mode 100644
+index 0000000..a44d572
+--- /dev/null
++++ b/internal/session.go
+@@ -0,0 +1,738 @@
++package internal
++
++import (
++	"crypto/rand"
++	"crypto/sha256"
++	"encoding/hex"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"strings"
++	"syscall"
++	"time"
++)
++
++const checkoutSessionSchema = 1
++
++type AgentSessionMode string
++
++const (
++	AgentSessionDirect AgentSessionMode = "direct"
++	AgentSessionTmux   AgentSessionMode = "tmux"
++)
++
++type SessionContextLink struct {
++	Path   string `json:"path"`
++	Target string `json:"target"`
++}
++
++type CheckoutAgentSession struct {
++	SchemaVersion  int                  `json:"schema_version"`
++	WorkspaceID    string               `json:"workspace_id"`
++	Feature        string               `json:"feature"`
++	Name           string               `json:"name"`
++	GitBranch      string               `json:"git_branch"`
++	OriginalBranch string               `json:"original_branch"`
++	OriginalHEAD   string               `json:"original_head"`
++	Mode           AgentSessionMode     `json:"mode"`
++	PID            int                  `json:"pid,omitempty"`
++	TmuxSession    string               `json:"tmux_session,omitempty"`
++	Stage          string               `json:"stage"`
++	StartedAt      string               `json:"started_at"`
++	RepoDir        string               `json:"repo_dir"`
++	Links          []SessionContextLink `json:"links,omitempty"`
++	ExcludeEntries []string             `json:"exclude_entries,omitempty"`
++	LockToken      string               `json:"lock_token"`
++}
++
++type sessionLockOwner struct {
++	Token     string `json:"token"`
++	PID       int    `json:"pid"`
++	CreatedAt string `json:"created_at"`
++}
++
++type SessionAgentRunner interface {
++	Run(dir string, command []string) error
++}
++type SessionShellRunner interface{ Run(dir string) error }
++type SessionTmuxRunner interface {
++	NewSession(name, dir string, command []string) error
++	AttachSession(name string) error
++	HasSession(name string) bool
++	KillSession(name string) error
++}
++
++func runSessionCommand(dir string, command []string) error {
++	if len(command) == 0 {
++		return fmt.Errorf("empty command")
++	}
++	cmd := exec.Command(command[0], command[1:]...)
++	cmd.Dir, cmd.Stdin, cmd.Stdout, cmd.Stderr = dir, os.Stdin, os.Stdout, os.Stderr
++	return cmd.Run()
++}
++
++type RealSessionAgentRunner struct{}
++
++func (RealSessionAgentRunner) Run(dir string, command []string) error {
++	return runSessionCommand(dir, command)
++}
++
++type RealSessionShellRunner struct{}
++
++func (RealSessionShellRunner) Run(dir string) error {
++	shell := os.Getenv("SHELL")
++	if shell == "" {
++		shell = "/bin/sh"
++	}
++	return runSessionCommand(dir, []string{shell})
++}
++
++type RealSessionTmuxRunner struct{}
++
++func (RealSessionTmuxRunner) NewSession(name, dir string, command []string) error {
++	args := []string{"new-session", "-d", "-s", name, "-c", dir}
++	if len(command) > 0 {
++		args = append(args, "--")
++		args = append(args, command...)
++	}
++	return exec.Command("tmux", args...).Run()
++}
++func (RealSessionTmuxRunner) AttachSession(name string) error {
++	cmd := exec.Command("tmux", "attach-session", "-t", name)
++	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
++	return cmd.Run()
++}
++func (RealSessionTmuxRunner) HasSession(name string) bool {
++	return exec.Command("tmux", "has-session", "-t", name).Run() == nil
++}
++func (RealSessionTmuxRunner) KillSession(name string) error {
++	return exec.Command("tmux", "kill-session", "-t", name).Run()
++}
++
++func sessionStateDir(ws Workspace) string  { return filepath.Join(ws.MetadataRoot, "state", "sessions") }
++func sessionStatePath(ws Workspace) string { return filepath.Join(sessionStateDir(ws), "active.json") }
++func sessionLockDir(ws Workspace) string {
++	return filepath.Join(ws.MetadataRoot, "state", "checkout-session.lock")
++}
++func sessionLockOwnerPath(ws Workspace) string {
++	return filepath.Join(sessionLockDir(ws), "owner.json")
++}
++
++func CheckoutAgentSessionName(workspaceID, feature, name string) string {
++	identity := workspaceID + "/" + feature + "/" + name
++	sum := sha256.Sum256([]byte(identity))
++	suffix := hex.EncodeToString(sum[:4])
++	prefix := sanitizeSessionPart(workspaceID + "_" + feature + "_" + name)
++	max := 64 - len(suffix) - 1
++	if len(prefix) > max {
++		prefix = prefix[:max]
++	}
++	return prefix + "_" + suffix
++}
++func sanitizeSessionPart(s string) string {
++	var b strings.Builder
++	for _, r := range s {
++		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
++			b.WriteRune(r)
++		} else {
++			b.WriteByte('_')
++		}
++	}
++	return strings.Trim(b.String(), "_")
++}
++
++func SaveCheckoutAgentSession(ws Workspace, s *CheckoutAgentSession) error {
++	data, err := json.MarshalIndent(s, "", "  ")
++	if err != nil {
++		return err
++	}
++	return atomicSessionWrite(sessionStatePath(ws), data, 0600)
++}
++func LoadCheckoutAgentSession(ws Workspace) (*CheckoutAgentSession, error) {
++	data, err := os.ReadFile(sessionStatePath(ws))
++	if err != nil {
++		return nil, err
++	}
++	var s CheckoutAgentSession
++	if err := json.Unmarshal(data, &s); err != nil {
++		return nil, err
++	}
++	return &s, nil
++}
++func HasCheckoutAgentSession(ws Workspace) bool {
++	_, err := os.Stat(sessionStatePath(ws))
++	return err == nil
++}
++func atomicSessionWrite(path string, data []byte, mode os.FileMode) error {
++	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
++		return err
++	}
++	f, err := os.CreateTemp(filepath.Dir(path), ".tmp-session-")
++	if err != nil {
++		return err
++	}
++	name := f.Name()
++	defer os.Remove(name) //nolint:errcheck
++	if err := f.Chmod(mode); err != nil {
++		_ = f.Close()
++		return err
++	}
++	if _, err := f.Write(data); err != nil {
++		_ = f.Close()
++		return err
++	}
++	if err := f.Sync(); err != nil {
++		_ = f.Close()
++		return err
++	}
++	if err := f.Close(); err != nil {
++		return err
++	}
++	return os.Rename(name, path)
++}
++
++func acquireAgentSessionLock(ws Workspace, tmux SessionTmuxRunner) (string, error) {
++	if err := os.MkdirAll(filepath.Dir(sessionLockDir(ws)), 0700); err != nil {
++		return "", err
++	}
++	if err := os.Mkdir(sessionLockDir(ws), 0700); err != nil {
++		if !os.IsExist(err) {
++			return "", err
++		}
++		data, readErr := os.ReadFile(sessionLockOwnerPath(ws))
++		if readErr != nil {
++			return "", fmt.Errorf("checkout session lock is initializing or invalid")
++		}
++		var owner sessionLockOwner
++		if json.Unmarshal(data, &owner) != nil || owner.PID <= 0 || owner.Token == "" {
++			return "", fmt.Errorf("invalid checkout session lock; use tws close to recover")
++		}
++		if s, e := LoadCheckoutAgentSession(ws); e == nil {
++			if s.Mode == AgentSessionTmux && s.TmuxSession != "" && tmux.HasSession(s.TmuxSession) {
++				return "", fmt.Errorf("checkout session %s/%s is active", s.Feature, s.Name)
++			}
++			if s.Mode == AgentSessionDirect && processAlive(s.PID) {
++				return "", fmt.Errorf("checkout session %s/%s is active", s.Feature, s.Name)
++			}
++		}
++		if processAlive(owner.PID) {
++			return "", fmt.Errorf("checkout session lock is held by live process %d", owner.PID)
++		}
++		current, _ := os.ReadFile(sessionLockOwnerPath(ws))
++		if string(current) != string(data) {
++			return "", fmt.Errorf("checkout session lock changed during recovery")
++		}
++		if err := os.RemoveAll(sessionLockDir(ws)); err != nil {
++			return "", err
++		}
++		if err := os.Mkdir(sessionLockDir(ws), 0700); err != nil {
++			return "", err
++		}
++	}
++	buf := make([]byte, 16)
++	if _, err := rand.Read(buf); err != nil {
++		_ = os.RemoveAll(sessionLockDir(ws))
++		return "", err
++	}
++	token := hex.EncodeToString(buf)
++	owner := sessionLockOwner{Token: token, PID: os.Getpid(), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
++	data, _ := json.Marshal(owner)
++	if err := atomicSessionWrite(sessionLockOwnerPath(ws), data, 0600); err != nil {
++		_ = os.RemoveAll(sessionLockDir(ws))
++		return "", err
++	}
++	return token, nil
++}
++func releaseAgentSessionLock(ws Workspace, token string) error {
++	data, err := os.ReadFile(sessionLockOwnerPath(ws))
++	if err != nil {
++		return err
++	}
++	var owner sessionLockOwner
++	if err := json.Unmarshal(data, &owner); err != nil {
++		return err
++	}
++	if owner.Token != token {
++		return fmt.Errorf("checkout session lock ownership changed")
++	}
++	return os.RemoveAll(sessionLockDir(ws))
++}
++func processAlive(pid int) bool {
++	if pid <= 0 {
++		return false
++	}
++	p, err := os.FindProcess(pid)
++	return err == nil && p.Signal(syscall.Signal(0)) == nil
++}
++
++func CheckoutSessionPreconditions(ws Workspace, feature string, entry StackEntry) error {
++	if entry.Archived {
++		return fmt.Errorf("branch %q is archived", entry.Name)
++	}
++	if entry.Repo != "" {
++		return fmt.Errorf("checkout sessions do not support multi-repo entries")
++	}
++	if VerifyGitRef(ws.RepoRoot, entry.GitBranch()) != nil {
++		return fmt.Errorf("git branch %q does not exist", entry.GitBranch())
++	}
++	if _, err := sessionCurrentBranch(ws.RepoRoot); err != nil {
++		return fmt.Errorf("HEAD is detached")
++	}
++	if sessionGitOperation(ws.RepoRoot) {
++		return fmt.Errorf("another Git operation is in progress")
++	}
++	active, err := anyCheckoutSyncActive(ws.MetadataRoot)
++	if err != nil {
++		return err
++	}
++	if active {
++		return fmt.Errorf("checkout sync is active in this repository")
++	}
++	dirty, err := sessionDirty(ws.RepoRoot)
++	if err != nil {
++		return err
++	}
++	if dirty {
++		return fmt.Errorf("working tree is dirty; commit or stash changes first")
++	}
++	return nil
++}
++func anyCheckoutSyncActive(root string) (bool, error) {
++	entries, err := os.ReadDir(filepath.Join(root, "state"))
++	if os.IsNotExist(err) {
++		return false, nil
++	}
++	if err != nil {
++		return false, err
++	}
++	for _, e := range entries {
++		n := e.Name()
++		if strings.HasSuffix(n, "-checkout-sync.yaml") || strings.HasSuffix(n, "-checkout-sync.lock") {
++			return true, nil
++		}
++	}
++	return false, nil
++}
++
++func CheckoutSessionAgentCommand(configured, repo string) []string {
++	parts := strings.Fields(configured)
++	if len(parts) == 0 {
++		parts = []string{"claude"}
++	}
++	base := parts[0]
++	if (base == "claude" || base == "claude-dev" || base == "cc") && checkoutClaudeSessionExists(repo) {
++		parts = append(parts, "-c")
++	}
++	return parts
++}
++func checkoutClaudeSessionExists(repo string) bool {
++	home, err := os.UserHomeDir()
++	if err != nil {
++		return false
++	}
++	abs, _ := filepath.Abs(repo)
++	encoded := strings.ReplaceAll(abs, string(filepath.Separator), "-")
++	_, err = os.Stat(filepath.Join(home, ".claude", "projects", encoded))
++	return err == nil
++}
++
++func PlanCheckoutSessionLinks(ws Workspace, feature, into string) ([]SessionContextLink, error) {
++	featurePath, err := ws.ResolveFeaturePath(feature)
++	if err != nil {
++		return nil, err
++	}
++	source := InjectPath(featurePath)
++	if _, err := os.Stat(source); os.IsNotExist(err) {
++		return nil, nil
++	}
++	base := ws.RepoRoot
++	if into != "" && into != "." {
++		clean := filepath.Clean(into)
++		if filepath.IsAbs(into) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
++			return nil, fmt.Errorf("unsafe inject target %q", into)
++		}
++		base = filepath.Join(base, clean)
++	}
++	var links []SessionContextLink
++	err = filepath.Walk(source, func(path string, info os.FileInfo, e error) error {
++		if e != nil {
++			return e
++		}
++		if info.IsDir() {
++			return nil
++		}
++		rel, _ := filepath.Rel(source, path)
++		dest := filepath.Join(base, rel)
++		if err := ensureSessionDestination(ws.RepoRoot, dest); err != nil {
++			return err
++		}
++		if _, err := os.Lstat(dest); err == nil {
++			return fmt.Errorf("context injection collision: %s exists", dest)
++		}
++		if trackedPath(ws.RepoRoot, dest) {
++			return fmt.Errorf("context injection collision: tracked path %s", dest)
++		}
++		links = append(links, SessionContextLink{Path: dest, Target: path})
++		return nil
++	})
++	return links, err
++}
++func ensureSessionDestination(repo, dest string) error {
++	absRepo, _ := filepath.Abs(repo)
++	absDest, _ := filepath.Abs(dest)
++	if absDest != absRepo && !strings.HasPrefix(absDest, absRepo+string(filepath.Separator)) {
++		return fmt.Errorf("inject path escapes repository")
++	}
++	rel, _ := filepath.Rel(absRepo, filepath.Dir(absDest))
++	cur := absRepo
++	for _, p := range strings.Split(rel, string(filepath.Separator)) {
++		if p == "" || p == "." {
++			continue
++		}
++		cur = filepath.Join(cur, p)
++		info, err := os.Lstat(cur)
++		if os.IsNotExist(err) {
++			continue
++		}
++		if err != nil {
++			return err
++		}
++		if info.Mode()&os.ModeSymlink != 0 {
++			return fmt.Errorf("inject parent is a symlink: %s", cur)
++		}
++	}
++	return nil
++}
++func trackedPath(repo, path string) bool {
++	rel, _ := filepath.Rel(repo, path)
++	cmd := exec.Command("git", "ls-files", "--error-unmatch", "--", rel)
++	cmd.Dir = repo
++	return cmd.Run() == nil
++}
++
++func ApplyCheckoutSessionLinks(repo string, links []SessionContextLink) ([]string, error) {
++	var created []SessionContextLink
++	var excludes []string
++	for _, l := range links {
++		if err := os.MkdirAll(filepath.Dir(l.Path), 0755); err != nil {
++			rollbackSessionLinks(repo, created, excludes)
++			return nil, err
++		}
++		if err := os.Symlink(l.Target, l.Path); err != nil {
++			rollbackSessionLinks(repo, created, excludes)
++			return nil, err
++		}
++		created = append(created, l)
++		rel, _ := filepath.Rel(repo, l.Path)
++		excludes = append(excludes, filepath.ToSlash(rel))
++	}
++	if err := addSessionExcludes(repo, excludes); err != nil {
++		rollbackSessionLinks(repo, created, excludes)
++		return nil, err
++	}
++	return excludes, nil
++}
++func CleanupCheckoutSessionLinks(repo string, links []SessionContextLink, excludes []string) error {
++	var errs []error
++	var removed []string
++	for _, l := range links {
++		target, err := os.Readlink(l.Path)
++		if os.IsNotExist(err) {
++			continue
++		}
++		if err != nil {
++			errs = append(errs, err)
++			continue
++		}
++		if target != l.Target {
++			continue
++		}
++		if err := os.Remove(l.Path); err != nil {
++			errs = append(errs, err)
++		} else {
++			rel, _ := filepath.Rel(repo, l.Path)
++			removed = append(removed, filepath.ToSlash(rel))
++		}
++	}
++	if len(removed) > 0 {
++		if err := removeSessionExcludes(repo, removed); err != nil {
++			errs = append(errs, err)
++		}
++	}
++	return errors.Join(errs...)
++}
++func addSessionExcludes(repo string, add []string) error {
++	path := filepath.Join(repo, ".git", "info", "exclude")
++	data, _ := os.ReadFile(path)
++	lines := strings.Split(string(data), "\n")
++	seen := map[string]bool{}
++	for _, l := range lines {
++		seen[l] = true
++	}
++	for _, l := range add {
++		if !seen[l] {
++			lines = append(lines, l)
++			seen[l] = true
++		}
++	}
++	return atomicSessionWrite(path, []byte(strings.Join(lines, "\n")), 0644)
++}
++func removeSessionExcludes(repo string, remove []string) error {
++	path := filepath.Join(repo, ".git", "info", "exclude")
++	data, err := os.ReadFile(path)
++	if os.IsNotExist(err) {
++		return nil
++	}
++	if err != nil {
++		return err
++	}
++	set := map[string]bool{}
++	for _, l := range remove {
++		set[l] = true
++	}
++	var kept []string
++	for _, l := range strings.Split(string(data), "\n") {
++		if !set[l] {
++			kept = append(kept, l)
++		}
++	}
++	return atomicSessionWrite(path, []byte(strings.Join(kept, "\n")), 0644)
++}
++func rollbackSessionLinks(repo string, links []SessionContextLink, excludes []string) {
++	for _, l := range links {
++		_ = os.Remove(l.Path)
++	}
++	_ = removeSessionExcludes(repo, excludes)
++}
++
++func sessionCurrentBranch(repo string) (string, error) {
++	return sessionGitOutput(repo, "symbolic-ref", "--short", "HEAD")
++}
++func sessionHEAD(repo string) (string, error) { return sessionGitOutput(repo, "rev-parse", "HEAD") }
++func sessionGitOutput(repo string, args ...string) (string, error) {
++	cmd := exec.Command("git", args...)
++	cmd.Dir = repo
++	out, err := cmd.Output()
++	return strings.TrimSpace(string(out)), err
++}
++func sessionSwitch(repo, branch string) error {
++	cmd := exec.Command("git", "switch", branch)
++	cmd.Dir = repo
++	out, err := cmd.CombinedOutput()
++	if err != nil {
++		return fmt.Errorf("git switch %s: %s: %w", branch, strings.TrimSpace(string(out)), err)
++	}
++	return nil
++}
++func sessionDirty(repo string) (bool, error) {
++	out, err := sessionGitOutput(repo, "status", "--porcelain")
++	return out != "", err
++}
++func sessionGitOperation(repo string) bool {
++	for _, p := range []string{"rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"} {
++		path, err := sessionGitOutput(repo, "rev-parse", "--git-path", p)
++		if err == nil {
++			if _, e := os.Stat(path); e == nil {
++				return true
++			}
++		}
++	}
++	return false
++}
++
++func OpenCheckoutDirect(ws Workspace, feature string, entry StackEntry, command []string, agent SessionAgentRunner, shell SessionShellRunner, into string) error {
++	if err := CheckoutSessionPreconditions(ws, feature, entry); err != nil {
++		return err
++	}
++	tmux := RealSessionTmuxRunner{}
++	token, err := acquireAgentSessionLock(ws, tmux)
++	if err != nil {
++		return err
++	}
++	orig, err := sessionCurrentBranch(ws.RepoRoot)
++	if err != nil {
++		_ = releaseAgentSessionLock(ws, token)
++		return err
++	}
++	head, err := sessionHEAD(ws.RepoRoot)
++	if err != nil {
++		_ = releaseAgentSessionLock(ws, token)
++		return err
++	}
++	links, err := PlanCheckoutSessionLinks(ws, feature, into)
++	if err != nil {
++		_ = releaseAgentSessionLock(ws, token)
++		return err
++	}
++	if err := sessionSwitch(ws.RepoRoot, entry.GitBranch()); err != nil {
++		_ = releaseAgentSessionLock(ws, token)
++		return err
++	}
++	excludes, err := ApplyCheckoutSessionLinks(ws.RepoRoot, links)
++	if err != nil {
++		_ = sessionSwitch(ws.RepoRoot, orig)
++		_ = releaseAgentSessionLock(ws, token)
++		return err
++	}
++	state := &CheckoutAgentSession{SchemaVersion: checkoutSessionSchema, WorkspaceID: ws.StableID, Feature: feature, Name: entry.Name, GitBranch: entry.GitBranch(), OriginalBranch: orig, OriginalHEAD: head, Mode: AgentSessionDirect, PID: os.Getpid(), Stage: "agent", StartedAt: time.Now().UTC().Format(time.RFC3339), RepoDir: ws.RepoRoot, Links: links, ExcludeEntries: excludes, LockToken: token}
++	if err := SaveCheckoutAgentSession(ws, state); err != nil {
++		_ = CleanupCheckoutSessionLinks(ws.RepoRoot, links, excludes)
++		_ = sessionSwitch(ws.RepoRoot, orig)
++		_ = releaseAgentSessionLock(ws, token)
++		return err
++	}
++	if agent == nil {
++		agent = RealSessionAgentRunner{}
++	}
++	if shell == nil {
++		shell = RealSessionShellRunner{}
++	}
++	agentErr := agent.Run(ws.RepoRoot, command)
++	var shellErr error
++	if agentErr == nil {
++		state.Stage = "shell"
++		if err := SaveCheckoutAgentSession(ws, state); err != nil {
++			return errors.Join(err, finishCheckoutSession(ws, state))
++		}
++		shellErr = shell.Run(ws.RepoRoot)
++	}
++	return errors.Join(wrapSessionErr("agent", agentErr), wrapSessionErr("shell", shellErr), finishCheckoutSession(ws, state))
++}
++
++func OpenCheckoutTmux(ws Workspace, feature string, entry StackEntry, command []string, tmux SessionTmuxRunner, into string) error {
++	if err := CheckoutSessionPreconditions(ws, feature, entry); err != nil {
++		return err
++	}
++	if tmux == nil {
++		tmux = RealSessionTmuxRunner{}
++	}
++	token, err := acquireAgentSessionLock(ws, tmux)
++	if err != nil {
++		return err
++	}
++	orig, err := sessionCurrentBranch(ws.RepoRoot)
++	if err != nil {
++		_ = releaseAgentSessionLock(ws, token)
++		return err
++	}
++	head, err := sessionHEAD(ws.RepoRoot)
++	if err != nil {
++		_ = releaseAgentSessionLock(ws, token)
++		return err
++	}
++	links, err := PlanCheckoutSessionLinks(ws, feature, into)
++	if err != nil {
++		_ = releaseAgentSessionLock(ws, token)
++		return err
++	}
++	if err := sessionSwitch(ws.RepoRoot, entry.GitBranch()); err != nil {
++		_ = releaseAgentSessionLock(ws, token)
++		return err
++	}
++	excludes, err := ApplyCheckoutSessionLinks(ws.RepoRoot, links)
++	if err != nil {
++		_ = sessionSwitch(ws.RepoRoot, orig)
++		_ = releaseAgentSessionLock(ws, token)
++		return err
++	}
++	name := CheckoutAgentSessionName(ws.StableID, feature, entry.Name)
++	if err := tmux.NewSession(name, ws.RepoRoot, command); err != nil {
++		_ = CleanupCheckoutSessionLinks(ws.RepoRoot, links, excludes)
++		_ = sessionSwitch(ws.RepoRoot, orig)
++		_ = releaseAgentSessionLock(ws, token)
++		return err
++	}
++	if !tmux.HasSession(name) {
++		_ = CleanupCheckoutSessionLinks(ws.RepoRoot, links, excludes)
++		_ = sessionSwitch(ws.RepoRoot, orig)
++		_ = releaseAgentSessionLock(ws, token)
++		return fmt.Errorf("tmux session %q did not start", name)
++	}
++	state := &CheckoutAgentSession{SchemaVersion: checkoutSessionSchema, WorkspaceID: ws.StableID, Feature: feature, Name: entry.Name, GitBranch: entry.GitBranch(), OriginalBranch: orig, OriginalHEAD: head, Mode: AgentSessionTmux, TmuxSession: name, Stage: "tmux", StartedAt: time.Now().UTC().Format(time.RFC3339), RepoDir: ws.RepoRoot, Links: links, ExcludeEntries: excludes, LockToken: token}
++	if err := SaveCheckoutAgentSession(ws, state); err != nil {
++		_ = tmux.KillSession(name)
++		_ = CleanupCheckoutSessionLinks(ws.RepoRoot, links, excludes)
++		_ = sessionSwitch(ws.RepoRoot, orig)
++		_ = releaseAgentSessionLock(ws, token)
++		return err
++	}
++	if err := tmux.AttachSession(name); err != nil {
++		if tmux.HasSession(name) {
++			return fmt.Errorf("tmux attach failed but session %q remains active; use tws close %s %s: %w", name, feature, entry.Name, err)
++		}
++		return finishCheckoutSession(ws, state)
++	}
++	return nil
++}
++
++func CloseCheckoutSession(ws Workspace, feature, name string, tmux SessionTmuxRunner) error {
++	state, err := LoadCheckoutAgentSession(ws)
++	if err != nil {
++		return err
++	}
++	if state.Feature != feature || state.Name != name {
++		return fmt.Errorf("active checkout session is %s/%s", state.Feature, state.Name)
++	}
++	if tmux == nil {
++		tmux = RealSessionTmuxRunner{}
++	}
++	if state.Mode == AgentSessionTmux && state.TmuxSession != "" && tmux.HasSession(state.TmuxSession) {
++		if err := tmux.KillSession(state.TmuxSession); err != nil {
++			return err
++		}
++	}
++	if state.Mode == AgentSessionDirect && state.PID > 0 && state.PID != os.Getpid() && processAlive(state.PID) {
++		return fmt.Errorf("direct checkout session is still active")
++	}
++	return finishCheckoutSession(ws, state)
++}
++func finishCheckoutSession(ws Workspace, state *CheckoutAgentSession) error {
++	if err := restoreCheckoutSession(ws, state); err != nil {
++		return err
++	}
++	if err := os.Remove(sessionStatePath(ws)); err != nil && !os.IsNotExist(err) {
++		return err
++	}
++	return releaseAgentSessionLock(ws, state.LockToken)
++}
++func restoreCheckoutSession(ws Workspace, state *CheckoutAgentSession) error {
++	dirty, err := sessionDirty(ws.RepoRoot)
++	if err != nil {
++		return err
++	}
++	if dirty {
++		return fmt.Errorf("cannot restore original branch: working tree is dirty; session state retained")
++	}
++	current, err := sessionCurrentBranch(ws.RepoRoot)
++	if err != nil {
++		return err
++	}
++	if current != state.GitBranch {
++		return fmt.Errorf("cannot restore: current branch %q is not session branch %q", current, state.GitBranch)
++	}
++	if err := CleanupCheckoutSessionLinks(ws.RepoRoot, state.Links, state.ExcludeEntries); err != nil {
++		return err
++	}
++	if err := sessionSwitch(ws.RepoRoot, state.OriginalBranch); err != nil {
++		return err
++	}
++	if state.OriginalBranch != state.GitBranch {
++		head, err := sessionHEAD(ws.RepoRoot)
++		if err != nil {
++			return err
++		}
++		if head != state.OriginalHEAD {
++			return fmt.Errorf("original branch HEAD changed during session; manual recovery required")
++		}
++	}
++	return nil
++}
++func wrapSessionErr(label string, err error) error {
++	if err == nil {
++		return nil
++	}
++	return fmt.Errorf("%s: %w", label, err)
++}
+diff --git a/internal/session_test.go b/internal/session_test.go
+new file mode 100644
+index 0000000..b2f5136
+--- /dev/null
++++ b/internal/session_test.go
+@@ -0,0 +1,250 @@
++package internal
++
++import (
++	"errors"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"strings"
++	"sync"
++	"testing"
++)
++
++type testAgent struct {
++	err   error
++	calls int
++	dir   string
++	args  []string
++}
++
++func (f *testAgent) Run(dir string, args []string) error {
++	f.calls++
++	f.dir = dir
++	f.args = append([]string(nil), args...)
++	return f.err
++}
++
++type testShell struct {
++	err   error
++	calls int
++}
++
++func (f *testShell) Run(string) error { f.calls++; return f.err }
++
++type testTmux struct {
++	sessions  map[string]bool
++	created   []string
++	attachErr error
++	vanish    bool
++	killed    []string
++}
++
++func newTestTmux() *testTmux { return &testTmux{sessions: map[string]bool{}} }
++func (f *testTmux) NewSession(name, dir string, args []string) error {
++	f.sessions[name] = true
++	f.created = append(f.created, strings.Join(args, "\x00"))
++	return nil
++}
++func (f *testTmux) AttachSession(name string) error {
++	if f.vanish {
++		delete(f.sessions, name)
++	}
++	return f.attachErr
++}
++func (f *testTmux) HasSession(name string) bool { return f.sessions[name] }
++func (f *testTmux) KillSession(name string) error {
++	delete(f.sessions, name)
++	f.killed = append(f.killed, name)
++	return nil
++}
++
++func setupSessionRepo(t *testing.T) (string, Workspace, StackEntry) {
++	t.Helper()
++	repo := t.TempDir()
++	gitS(t, repo, "init", "-b", "main")
++	gitS(t, repo, "config", "user.name", "Test")
++	gitS(t, repo, "config", "user.email", "t@e")
++	if err := os.WriteFile(filepath.Join(repo, "README"), []byte("x"), 0644); err != nil {
++		t.Fatal(err)
++	}
++	gitS(t, repo, "add", "README")
++	gitS(t, repo, "commit", "-m", "base")
++	gitS(t, repo, "branch", "feature-branch")
++	if err := os.WriteFile(filepath.Join(repo, ".git", "info", "exclude"), []byte(".tws/\n"), 0644); err != nil {
++		t.Fatal(err)
++	}
++	ws := Workspace{RepoRoot: repo, MetadataRoot: filepath.Join(repo, ".tws"), Mode: ModeCheckout, StableID: "ws-123"}
++	fp := ws.FeaturePath("feature")
++	if err := os.MkdirAll(filepath.Join(fp, "inject"), 0755); err != nil {
++		t.Fatal(err)
++	}
++	entry := StackEntry{Name: "short", Branch: "feature-branch", Base: "main"}
++	if err := SaveStack(fp, Stack{Branches: []StackEntry{entry}}); err != nil {
++		t.Fatal(err)
++	}
++	return repo, ws, entry
++}
++func gitS(t *testing.T, dir string, args ...string) string {
++	t.Helper()
++	cmd := exec.Command("git", args...)
++	cmd.Dir = dir
++	cmd.Env = append(os.Environ(), "GIT_EDITOR=true")
++	out, err := cmd.CombinedOutput()
++	if err != nil {
++		t.Fatalf("git %v: %v\n%s", args, err, out)
++	}
++	return strings.TrimSpace(string(out))
++}
++
++func TestSessionNameStableBounded(t *testing.T) {
++	a := CheckoutAgentSessionName("x", strings.Repeat("feature", 20), strings.Repeat("branch", 20))
++	b := CheckoutAgentSessionName("x", strings.Repeat("feature", 20), strings.Repeat("branch", 20))
++	if a != b || len(a) > 64 {
++		t.Fatalf("%q %q", a, b)
++	}
++	if a == CheckoutAgentSessionName("x", strings.Repeat("feature", 20), strings.Repeat("branch", 19)+"z") {
++		t.Fatal("collision")
++	}
++}
++func TestSessionLockExactlyOneWinner(t *testing.T) {
++	_, ws, _ := setupSessionRepo(t)
++	start := make(chan struct{})
++	results := make(chan error, 2)
++	var wg sync.WaitGroup
++	for range 2 {
++		wg.Add(1)
++		go func() { defer wg.Done(); <-start; _, err := acquireAgentSessionLock(ws, newTestTmux()); results <- err }()
++	}
++	close(start)
++	wg.Wait()
++	close(results)
++	wins := 0
++	for err := range results {
++		if err == nil {
++			wins++
++		}
++	}
++	if wins != 1 {
++		t.Fatalf("wins=%d", wins)
++	}
++}
++func TestDirectSessionRestores(t *testing.T) {
++	repo, ws, e := setupSessionRepo(t)
++	a := &testAgent{}
++	sh := &testShell{}
++	if err := OpenCheckoutDirect(ws, "feature", e, []string{"agent"}, a, sh, ""); err != nil {
++		t.Fatal(err)
++	}
++	if a.calls != 1 || sh.calls != 1 {
++		t.Fatal("missing calls")
++	}
++	if got := gitS(t, repo, "branch", "--show-current"); got != "main" {
++		t.Fatal(got)
++	}
++	if HasCheckoutAgentSession(ws) {
++		t.Fatal("state remains")
++	}
++}
++func TestDirectAgentFailureNoShell(t *testing.T) {
++	repo, ws, e := setupSessionRepo(t)
++	a := &testAgent{err: errors.New("boom")}
++	sh := &testShell{}
++	err := OpenCheckoutDirect(ws, "feature", e, []string{"agent"}, a, sh, "")
++	if err == nil || sh.calls != 0 {
++		t.Fatalf("err=%v shell=%d", err, sh.calls)
++	}
++	if gitS(t, repo, "branch", "--show-current") != "main" {
++		t.Fatal("not restored")
++	}
++}
++func TestTmuxSessionCloseRestores(t *testing.T) {
++	repo, ws, e := setupSessionRepo(t)
++	tm := newTestTmux()
++	if err := OpenCheckoutTmux(ws, "feature", e, []string{"agent", "a b", ";x"}, tm, ""); err != nil {
++		t.Fatal(err)
++	}
++	if tm.created[0] != "agent\x00a b\x00;x" {
++		t.Fatalf("%q", tm.created)
++	}
++	if gitS(t, repo, "branch", "--show-current") != "feature-branch" {
++		t.Fatal("not active")
++	}
++	if err := CloseCheckoutSession(ws, "feature", "short", tm); err != nil {
++		t.Fatal(err)
++	}
++	if gitS(t, repo, "branch", "--show-current") != "main" {
++		t.Fatal("not restored")
++	}
++}
++func TestTmuxAttachFailureAliveRetains(t *testing.T) {
++	repo, ws, e := setupSessionRepo(t)
++	tm := newTestTmux()
++	tm.attachErr = errors.New("attach")
++	err := OpenCheckoutTmux(ws, "feature", e, []string{"agent"}, tm, "")
++	if err == nil {
++		t.Fatal("expected")
++	}
++	if gitS(t, repo, "branch", "--show-current") != "feature-branch" {
++		t.Fatal("restored unexpectedly")
++	}
++	if !HasCheckoutAgentSession(ws) {
++		t.Fatal("state missing")
++	}
++}
++func TestContextCollisionAndCleanup(t *testing.T) {
++	repo, ws, _ := setupSessionRepo(t)
++	src := InjectPath(ws.FeaturePath("feature"))
++	if err := os.WriteFile(filepath.Join(src, "CLAUDE.local.md"), []byte("x"), 0644); err != nil {
++		t.Fatal(err)
++	}
++	links, err := PlanCheckoutSessionLinks(ws, "feature", "")
++	if err != nil {
++		t.Fatal(err)
++	}
++	ex, err := ApplyCheckoutSessionLinks(repo, links)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := CleanupCheckoutSessionLinks(repo, links, ex); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := os.Lstat(filepath.Join(repo, "CLAUDE.local.md")); !os.IsNotExist(err) {
++		t.Fatal("link remains")
++	}
++}
++func TestContextUnsafeInto(t *testing.T) {
++	_, ws, _ := setupSessionRepo(t)
++	if _, err := PlanCheckoutSessionLinks(ws, "feature", "../bad"); err == nil {
++		t.Fatal("expected")
++	}
++}
++func TestSessionRejectsAnySyncState(t *testing.T) {
++	_, ws, e := setupSessionRepo(t)
++	other := ws.FeaturePath("other")
++	if err := os.MkdirAll(filepath.Dir(CheckoutTransactionPath(other)), 0700); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(CheckoutTransactionPath(other), []byte("x"), 0600); err != nil {
++		t.Fatal(err)
++	}
++	if err := CheckoutSessionPreconditions(ws, "feature", e); err == nil || !strings.Contains(err.Error(), "sync") {
++		t.Fatalf("%v", err)
++	}
++}
++func TestClaudeSessionDetection(t *testing.T) {
++	repo, _, _ := setupSessionRepo(t)
++	home := t.TempDir()
++	t.Setenv("HOME", home)
++	abs, _ := filepath.Abs(repo)
++	encoded := strings.ReplaceAll(abs, string(filepath.Separator), "-")
++	if err := os.MkdirAll(filepath.Join(home, ".claude", "projects", encoded), 0755); err != nil {
++		t.Fatal(err)
++	}
++	args := CheckoutSessionAgentCommand("claude", repo)
++	if args[len(args)-1] != "-c" {
++		t.Fatalf("%v", args)
++	}
++	if len(CheckoutSessionAgentCommand("copilot", repo)) != 1 {
++		t.Fatal("copilot flags")
++	}
++}

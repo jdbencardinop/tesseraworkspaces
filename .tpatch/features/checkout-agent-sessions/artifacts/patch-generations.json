@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "feature": "checkout-agent-sessions",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_1a22e38f3131",
+      "kind": "record",
+      "patch_sha256": "686482c3c468f8ec19ededb294c18a3bede2055f7adc90f7ec968a3f3046f0b6",
+      "git_patch_id": "f6fe1c1918e706b0c011e9fcbc61e74d6dd19d96",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "e1c404baef9a09e9ba54b7427bd3824e83bd1eec8e02a447bf62329955318562",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "patches/001-record.patch",
+      "base_commit": "f526f8fe0494c68b8be7f5dab8b2d32c9001dfe7",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "assets/skills/claude/tesseraworkspaces/SKILL.md",
+        "assets/skills/copilot/tws.prompt.md",
+        "internal/cli/checkout_close.go",
+        "internal/cli/checkout_session_cli_test.go",
+        "internal/cli/close.go",
+        "internal/cli/open.go",
+        "internal/cli/open_checkout.go",
+        "internal/session.go",
+        "internal/session_test.go"
+      ],
+      "dependencies": [
+        {
+          "slug": "checkout-stack-safety",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "481f98df0a47377796d58068eef358da635879a49f695a02c41b5492e2998d2f",
+          "parent_recipe_sha256": "aca1663d17d69ebe8797492561d2eb36f3d69292906983d127f53af0d08b69f3"
+        },
+        {
+          "slug": "checkout-workspace-lifecycle",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "1aefaa7a144eb038ee4f344593dc14faa4ada99c0961cf4f8d7eaa66199694c0",
+          "parent_recipe_sha256": "21e86e0411083619cc1d189207073f09306e17b9dd11146be47e81d1d55d292d"
+        },
+        {
+          "slug": "fix-checkout-feature-path-routing",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "ae8d2a826310ab286dc28e26a6b2965ef9fe0f902c25af75c2718ca5f1a92e93",
+          "parent_recipe_sha256": "01576e6383ec60a9df9144a6cb6231fbfded4602536dc1cecaa0a66c525aa3ed"
+        },
+        {
+          "slug": "fix-checkout-lifecycle-layout",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "b7b0777c06fbdd6361dbecc8445f9bc7a71ed749080e30936fc4d790ab59dde4",
+          "parent_recipe_sha256": "5ca9d17e1b299cf648741a1111bb8a13e11bcd6b24a578cbffc0f23f3a390eea"
+        }
+      ],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}

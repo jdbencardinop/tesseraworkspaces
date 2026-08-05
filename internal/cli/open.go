@@ -41,8 +41,32 @@ Use --all to create a tmux session with windows for every worktree in the featur
 			if err != nil {
 				return err
 			}
+			// Checkout mode: delegate to checkout session flow
 			if ws.Mode == internal.ModeCheckout {
-				return fmt.Errorf("open requires linked worktrees; not supported in checkout mode (use 'git checkout <branch>')")
+				if all {
+					return fmt.Errorf("--all not supported in checkout mode")
+				}
+
+				// --feature-dir handled before branch resolution
+				if featureDir {
+					if len(args) < 1 {
+						return fmt.Errorf("usage: tws open <feature> --feature-dir")
+					}
+					feature := args[0]
+					fp, ferr := ws.ResolveFeaturePath(feature)
+					if ferr != nil {
+						return ferr
+					}
+					if noAgent {
+						fmt.Printf("cd %s\n", fp)
+						return nil
+					}
+					fmt.Printf("Opening feature dir: %s\n", fp)
+					openDirect(fp)
+					return nil
+				}
+
+				return runCheckoutOpen(ws, args, useTmux, noTmux, noAgent, cmd.Flags())
 			}
 
 			// Handle --all: tmux session with all worktrees

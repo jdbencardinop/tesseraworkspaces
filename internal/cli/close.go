@@ -9,10 +9,24 @@ import (
 
 func closeCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "close <feature> <branch>",
-		Short: "Kill tmux session for a worktree",
-		Args:  cobra.ExactArgs(2),
+		Use:   "close [feature] [branch]",
+		Short: "Close a worktree session (tmux or checkout)",
+		Args:  cobra.RangeArgs(0, 2),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			ws, err := internal.RequireWorkspace()
+			if err == nil && ws.Mode == internal.ModeCheckout {
+				state, loadErr := internal.LoadCheckoutAgentSession(ws)
+				if loadErr != nil {
+					return nil, cobra.ShellCompDirectiveNoFileComp
+				}
+				if len(args) == 0 {
+					return []string{state.Feature}, cobra.ShellCompDirectiveNoFileComp
+				}
+				if len(args) == 1 && args[0] == state.Feature {
+					return []string{state.Name}, cobra.ShellCompDirectiveNoFileComp
+				}
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			}
 			switch len(args) {
 			case 0:
 				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
@@ -27,8 +41,19 @@ func closeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+
+			// Checkout mode: delegate to checkout close
 			if ws.Mode == internal.ModeCheckout {
-				return fmt.Errorf("close requires linked worktrees; not supported in checkout mode")
+				if cerr := runCheckoutClose(ws, args); cerr != nil {
+					return cerr
+				}
+				fmt.Println("Checkout session closed.")
+				return nil
+			}
+
+			// External mode: requires exactly 2 args
+			if len(args) != 2 {
+				return fmt.Errorf("usage: tws close <feature> <branch>")
 			}
 
 			feature := args[0]

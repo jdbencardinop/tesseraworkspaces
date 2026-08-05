@@ -216,7 +216,17 @@ tws sync auth --abort         # abort rebase and restore original branch
 tws sync auth --push          # push only after complete ancestry + restoration
 ```
 
-Sync refuses dirty/detached repositories and concurrent operations, persists recovery state under `.tws/state/`, supports amend-aware rebases and validation, and restores the original branch on success/abort. `tws open`, `tws close`, and automatic hooks are still deferred to the checkout-agent-sessions feature.
+Sync refuses dirty/detached repositories and concurrent operations, persists recovery state under `.tws/state/`, supports amend-aware rebases and validation, and restores the original branch on success/abort.
+
+Checkout mode supports one branch-owning agent session at a time:
+
+```sh
+tws open auth auth-models          # run agent + shell, then restore original branch
+tws open auth auth-models --tmux   # recorded tmux session keeps branch active
+tws close auth auth-models         # kill recorded tmux, clean context, restore
+```
+
+Sessions reject dirty/detached repos, active sync, archived/multi-repo entries, and concurrent owners. Injected context is locally excluded and only tws-owned links are cleaned. `--all` and automatic hooks remain unsupported in checkout mode.
 
 ## When to Use
 

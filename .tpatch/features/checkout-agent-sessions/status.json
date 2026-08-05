@@ -2,13 +2,16 @@
   "id": "checkout-agent-sessions",
   "slug": "checkout-agent-sessions",
   "title": "Add safe direct and tmux agent sessions for checkout workspace mode. Activate the requested logical Git branch in the single physical checkout, enforce exclusive branch-owning session state, namespace sessions by stable workspace ID, inject feature context into ignored local paths, launch/resume the configured agent, and restore the original branch when a direct session exits or `tws close` ends a tmux session. Reject open --all, dirty/detached repos, active checkout sync transactions, multi-repo state, and concurrent branch sessions. Preserve external open/close behavior exactly. Update embedded skills.",
-  "state": "implementing",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-08-05T02:12:42Z",
-  "updated_at": "2026-08-05T02:12:43Z",
-  "last_command": "apply --mode started",
-  "notes": "Implementation in progress",
-  "apply": {},
+  "updated_at": "2026-08-05T11:05:13Z",
+  "last_command": "record",
+  "notes": "landed at 2026-08-05T11:05:13Z",
+  "apply": {
+    "base_commit": "f526f8fe0494c68b8be7f5dab8b2d32c9001dfe7",
+    "has_patch": true
+  },
   "reconcile": {},
   "depends_on": [
     {
