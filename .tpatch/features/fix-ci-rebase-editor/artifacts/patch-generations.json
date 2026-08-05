@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "feature": "fix-ci-rebase-editor",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_cafb37d8695d",
+      "kind": "record",
+      "patch_sha256": "0cdff2c601eab35bb0e7cd462e8d2aac439eb945adb688ad36da8af6b5c5b9fe",
+      "git_patch_id": "d8bfd13fc1a9d02b5fbd83db721ee9523258d4a8",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "5e41a56eb16f827299c2ae9a0a1d4313822ddc8f0b46b355e48f289ac524880f",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "patches/001-record.patch",
+      "base_commit": "178a55573829a4f97774c4eb799167c595fd51a0",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "internal/cli/checkout_sync_test.go"
+      ],
+      "dependencies": [
+        {
+          "slug": "checkout-stack-safety",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "481f98df0a47377796d58068eef358da635879a49f695a02c41b5492e2998d2f",
+          "parent_recipe_sha256": "aca1663d17d69ebe8797492561d2eb36f3d69292906983d127f53af0d08b69f3"
+        }
+      ],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}

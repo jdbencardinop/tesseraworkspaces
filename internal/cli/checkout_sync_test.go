@@ -30,6 +30,7 @@ func gitRunCS(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %s failed: %s\n%s", strings.Join(args, " "), err, out)

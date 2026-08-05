@@ -1,0 +1,22 @@
+{
+  "id": "fix-ci-rebase-editor",
+  "slug": "fix-ci-rebase-editor",
+  "title": "Make checkout sync conflict-continuation integration tests deterministic in noninteractive CI by setting a no-op Git editor for test Git commands. GitHub Actions currently fails `git rebase --continue` on Linux and macOS with `Terminal is dumb, but EDITOR unset`, while local shells pass. Product behavior is unaffected. Add regression coverage and restore green main/tag CI before continuing checkout-agent-sessions.",
+  "state": "applied",
+  "compatibility": "unknown",
+  "requested_at": "2026-08-05T01:41:15Z",
+  "updated_at": "2026-08-05T01:46:42Z",
+  "last_command": "record",
+  "notes": "landed at 2026-08-05T01:46:42Z",
+  "apply": {
+    "base_commit": "178a55573829a4f97774c4eb799167c595fd51a0",
+    "has_patch": true
+  },
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "checkout-stack-safety",
+      "kind": "hard"
+    }
+  ]
+}

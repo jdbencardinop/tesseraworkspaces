@@ -1,0 +1,12 @@
+diff --git a/internal/cli/checkout_sync_test.go b/internal/cli/checkout_sync_test.go
+index 223878e..ab3ae97 100644
+--- a/internal/cli/checkout_sync_test.go
++++ b/internal/cli/checkout_sync_test.go
+@@ -30,6 +30,7 @@ func gitRunCS(t *testing.T, dir string, args ...string) string {
+ 	t.Helper()
+ 	cmd := exec.Command("git", args...)
+ 	cmd.Dir = dir
++	cmd.Env = append(os.Environ(), "GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true")
+ 	out, err := cmd.CombinedOutput()
+ 	if err != nil {
+ 		t.Fatalf("git %s failed: %s\n%s", strings.Join(args, " "), err, out)
