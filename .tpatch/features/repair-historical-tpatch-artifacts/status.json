@@ -1,0 +1,18 @@
+{
+  "id": "repair-historical-tpatch-artifacts",
+  "slug": "repair-historical-tpatch-artifacts",
+  "title": "After upgrading to the latest tpatch version, methodically audit and repair historical feature artifacts whose generated recipes replay but canonical patches fail dependency-closure verification because older bundled shared-file baselines are incomplete. Work topologically, preserve append-only generations, add truthful dependencies or narrow feature boundaries, use tpatch rebind/repair tooling if available, and produce a verification report. This is deferred backlog maintenance and must not block product work while recipe replay and code tests remain green.",
+  "state": "requested",
+  "compatibility": "unknown",
+  "requested_at": "2026-08-05T16:22:23Z",
+  "updated_at": "2026-08-05T16:22:23Z",
+  "last_command": "add",
+  "apply": {},
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "update-skills-p0-correctness",
+      "kind": "soft"
+    }
+  ]
+}
