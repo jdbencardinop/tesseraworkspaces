@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 )
 
 // WorkspaceMode describes how tws stores metadata for a repository.
@@ -202,6 +204,64 @@ func metadataRootExists(root string) bool {
 	return err == nil && info.IsDir()
 }
 
+func inferExternalRepoRoot(metadataRoot string, cfg Config) (string, error) {
+	metadataRoot = canonicalize(metadataRoot)
+	candidates := make(map[string]bool)
+	addCandidate := func(path string) {
+		if path == "" {
+			return
+		}
+		if root, err := MainRepoRootIn(path); err == nil {
+			candidates[canonicalize(root)] = true
+		}
+	}
+
+	for repo, configuredRoot := range cfg.Workspaces {
+		if canonicalize(configuredRoot) == metadataRoot {
+			addCandidate(repo)
+		}
+	}
+	if siblingRepo, ok := strings.CutSuffix(metadataRoot, ".tws"); ok {
+		addCandidate(siblingRepo)
+	}
+
+	entries, _ := os.ReadDir(metadataRoot)
+	for _, featureEntry := range entries {
+		if !featureEntry.IsDir() || featureEntry.Name() == workspaceMarker {
+			continue
+		}
+		featurePath := filepath.Join(metadataRoot, featureEntry.Name())
+		stack, err := LoadStack(featurePath)
+		if err != nil {
+			continue
+		}
+		for _, entry := range stack.Branches {
+			if entry.Repo != "" || entry.Archived {
+				continue
+			}
+			worktreePath := filepath.Join(featurePath, "worktrees", entry.Name)
+			if _, err := os.Stat(worktreePath); err == nil {
+				addCandidate(worktreePath)
+			}
+		}
+	}
+
+	if len(candidates) == 1 {
+		for root := range candidates {
+			return root, nil
+		}
+	}
+	if len(candidates) > 1 {
+		var roots []string
+		for root := range candidates {
+			roots = append(roots, root)
+		}
+		sort.Strings(roots)
+		return "", fmt.Errorf("external workspace %s maps to multiple default repositories (%s); run from a worktree or repository", metadataRoot, strings.Join(roots, ", "))
+	}
+	return "", fmt.Errorf("cannot determine source repository for external workspace %s; run from a worktree or configure the workspace path", metadataRoot)
+}
+
 // ResolveCurrentWorkspaceE is an error-returning resolver for use in CLI
 // commands. Unlike ResolveCurrentWorkspace (which silently defaults to
 // external mode), this function returns an error when the per-repo config
@@ -246,10 +306,28 @@ func ResolveCurrentWorkspaceE(repoRoot string, cfg Config) (Workspace, error) {
 // or the workspace mode is invalid. Commands should use this instead
 // of silently ignoring errors from MainRepoRoot or ResolveCurrentWorkspace.
 func RequireWorkspace() (Workspace, error) {
-	repoRoot, err := MainRepoRoot()
-	if err != nil {
-		return Workspace{}, fmt.Errorf("not inside a git repository")
-	}
 	cfg := LoadConfig()
-	return ResolveCurrentWorkspaceE(repoRoot, cfg)
+	if repoRoot, err := MainRepoRoot(); err == nil {
+		return ResolveCurrentWorkspaceE(repoRoot, cfg)
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return Workspace{}, err
+	}
+	metadataRoot := DetectWorkspaceRoot(cwd, cfg)
+	if metadataRoot == "" || !metadataRootExists(metadataRoot) {
+		return Workspace{}, fmt.Errorf("not inside a git repository or tws workspace")
+	}
+	repoRoot, err := inferExternalRepoRoot(metadataRoot, cfg)
+	if err != nil {
+		return Workspace{}, err
+	}
+	return Workspace{
+		RepoRoot:     repoRoot,
+		Mode:         ModeExternal,
+		MetadataRoot: canonicalize(metadataRoot),
+		StableID:     stableID(repoRoot),
+		Caps:         capsFor(ModeExternal),
+	}, nil
 }

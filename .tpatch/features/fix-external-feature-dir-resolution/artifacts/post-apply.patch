@@ -1,0 +1,318 @@
+diff --git a/internal/cli/external_feature_dir_test.go b/internal/cli/external_feature_dir_test.go
+new file mode 100644
+index 0000000..038df85
+--- /dev/null
++++ b/internal/cli/external_feature_dir_test.go
+@@ -0,0 +1,113 @@
++package cli
++
++import (
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
++)
++
++func TestExternalFeatureDirectoryCommandMatrix(t *testing.T) {
++	repo := setupGitRepo(t, "master")
++	withWorkspaceEnv(t, repo)
++	if err := createWorktree("feature", "root", "master", "", false); err != nil {
++		t.Fatal(err)
++	}
++	if err := createWorktree("feature", "child", "root", "", false); err != nil {
++		t.Fatal(err)
++	}
++	featurePath := internal.FeaturePath("feature")
++	if err := os.MkdirAll(filepath.Join(featurePath, "inject"), 0755); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(filepath.Join(featurePath, "inject", "CONTEXT.md"), []byte("context\n"), 0644); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.MkdirAll(filepath.Join(os.Getenv("TWS_ROOT"), ".tws-workspace"), 0755); err != nil {
++		t.Fatal(err)
++	}
++	nested := filepath.Join(featurePath, "docs", "nested")
++	if err := os.MkdirAll(nested, 0755); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := internal.AddDecision(featurePath, "root", "", "shared context", "info", ""); err != nil {
++		t.Fatal(err)
++	}
++
++	if err := os.Chdir(nested); err != nil {
++		t.Fatal(err)
++	}
++	ws, err := internal.RequireWorkspace()
++	if err != nil {
++		t.Fatal(err)
++	}
++	wantRepo, err := internal.MainRepoRootIn(repo)
++	if err != nil {
++		t.Fatal(err)
++	}
++	wantRepo, err = filepath.EvalSymlinks(wantRepo)
++	if err != nil {
++		t.Fatal(err)
++	}
++	wantWorkspace, err := filepath.EvalSymlinks(os.Getenv("TWS_ROOT"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if ws.Mode != internal.ModeExternal || ws.MetadataRoot != filepath.Clean(wantWorkspace) || ws.RepoRoot != filepath.Clean(wantRepo) {
++		t.Fatalf("unexpected workspace: %+v", ws)
++	}
++
++	commands := []*cobraCommandCase{
++		{name: "stack", run: func() error { cmd := stackCmd(); cmd.SetArgs([]string{"feature"}); return cmd.Execute() }},
++		{name: "list", run: func() error { cmd := listCmd(); cmd.SetArgs(nil); return cmd.Execute() }},
++		{name: "decisions", run: func() error {
++			cmd := decisionsCmd()
++			cmd.SetArgs([]string{"show", "feature", "--all"})
++			return cmd.Execute()
++		}},
++		{name: "doctor", run: func() error { cmd := doctorCmd(); cmd.SetArgs([]string{"feature"}); return cmd.Execute() }},
++		{name: "inject", run: func() error { cmd := injectCmd(); cmd.SetArgs([]string{"feature"}); return cmd.Execute() }},
++		{name: "sync", run: func() error { cmd := syncCmd(); cmd.SetArgs([]string{"feature"}); return cmd.Execute() }},
++	}
++	for _, tc := range commands {
++		t.Run(tc.name, func(t *testing.T) {
++			if err := tc.run(); err != nil {
++				t.Fatalf("%s from feature dir: %v", tc.name, err)
++			}
++		})
++	}
++
++	if err := os.Chdir(os.Getenv("TWS_ROOT")); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := internal.RequireWorkspace(); err != nil {
++		t.Fatalf("workspace root resolution: %v", err)
++	}
++	rootList := listCmd()
++	if err := rootList.Execute(); err != nil {
++		t.Fatalf("list from workspace root: %v", err)
++	}
++	if err := os.Chdir(nested); err != nil {
++		t.Fatal(err)
++	}
++
++	state := internal.NewSyncState()
++	state.FailedBranch = "root"
++	if err := internal.SaveSyncState(featurePath, state); err != nil {
++		t.Fatal(err)
++	}
++	cmd := syncCmd()
++	cmd.SetArgs([]string{"feature", "--abort"})
++	if err := cmd.Execute(); err != nil {
++		t.Fatalf("sync --abort from feature dir: %v", err)
++	}
++	if internal.HasSyncState(featurePath) {
++		t.Fatal("sync state remains after abort")
++	}
++}
++
++type cobraCommandCase struct {
++	name string
++	run  func() error
++}
+diff --git a/internal/workspace.go b/internal/workspace.go
+index ffb4d61..7bee69f 100644
+--- a/internal/workspace.go
++++ b/internal/workspace.go
+@@ -5,6 +5,8 @@ import (
+ 	"fmt"
+ 	"os"
+ 	"path/filepath"
++	"sort"
++	"strings"
+ )
+ 
+ // WorkspaceMode describes how tws stores metadata for a repository.
+@@ -202,6 +204,64 @@ func metadataRootExists(root string) bool {
+ 	return err == nil && info.IsDir()
+ }
+ 
++func inferExternalRepoRoot(metadataRoot string, cfg Config) (string, error) {
++	metadataRoot = canonicalize(metadataRoot)
++	candidates := make(map[string]bool)
++	addCandidate := func(path string) {
++		if path == "" {
++			return
++		}
++		if root, err := MainRepoRootIn(path); err == nil {
++			candidates[canonicalize(root)] = true
++		}
++	}
++
++	for repo, configuredRoot := range cfg.Workspaces {
++		if canonicalize(configuredRoot) == metadataRoot {
++			addCandidate(repo)
++		}
++	}
++	if siblingRepo, ok := strings.CutSuffix(metadataRoot, ".tws"); ok {
++		addCandidate(siblingRepo)
++	}
++
++	entries, _ := os.ReadDir(metadataRoot)
++	for _, featureEntry := range entries {
++		if !featureEntry.IsDir() || featureEntry.Name() == workspaceMarker {
++			continue
++		}
++		featurePath := filepath.Join(metadataRoot, featureEntry.Name())
++		stack, err := LoadStack(featurePath)
++		if err != nil {
++			continue
++		}
++		for _, entry := range stack.Branches {
++			if entry.Repo != "" || entry.Archived {
++				continue
++			}
++			worktreePath := filepath.Join(featurePath, "worktrees", entry.Name)
++			if _, err := os.Stat(worktreePath); err == nil {
++				addCandidate(worktreePath)
++			}
++		}
++	}
++
++	if len(candidates) == 1 {
++		for root := range candidates {
++			return root, nil
++		}
++	}
++	if len(candidates) > 1 {
++		var roots []string
++		for root := range candidates {
++			roots = append(roots, root)
++		}
++		sort.Strings(roots)
++		return "", fmt.Errorf("external workspace %s maps to multiple default repositories (%s); run from a worktree or repository", metadataRoot, strings.Join(roots, ", "))
++	}
++	return "", fmt.Errorf("cannot determine source repository for external workspace %s; run from a worktree or configure the workspace path", metadataRoot)
++}
++
+ // ResolveCurrentWorkspaceE is an error-returning resolver for use in CLI
+ // commands. Unlike ResolveCurrentWorkspace (which silently defaults to
+ // external mode), this function returns an error when the per-repo config
+@@ -246,10 +306,28 @@ func ResolveCurrentWorkspaceE(repoRoot string, cfg Config) (Workspace, error) {
+ // or the workspace mode is invalid. Commands should use this instead
+ // of silently ignoring errors from MainRepoRoot or ResolveCurrentWorkspace.
+ func RequireWorkspace() (Workspace, error) {
+-	repoRoot, err := MainRepoRoot()
++	cfg := LoadConfig()
++	if repoRoot, err := MainRepoRoot(); err == nil {
++		return ResolveCurrentWorkspaceE(repoRoot, cfg)
++	}
++
++	cwd, err := os.Getwd()
+ 	if err != nil {
+-		return Workspace{}, fmt.Errorf("not inside a git repository")
++		return Workspace{}, err
+ 	}
+-	cfg := LoadConfig()
+-	return ResolveCurrentWorkspaceE(repoRoot, cfg)
++	metadataRoot := DetectWorkspaceRoot(cwd, cfg)
++	if metadataRoot == "" || !metadataRootExists(metadataRoot) {
++		return Workspace{}, fmt.Errorf("not inside a git repository or tws workspace")
++	}
++	repoRoot, err := inferExternalRepoRoot(metadataRoot, cfg)
++	if err != nil {
++		return Workspace{}, err
++	}
++	return Workspace{
++		RepoRoot:     repoRoot,
++		Mode:         ModeExternal,
++		MetadataRoot: canonicalize(metadataRoot),
++		StableID:     stableID(repoRoot),
++		Caps:         capsFor(ModeExternal),
++	}, nil
+ }
+diff --git a/internal/workspace_test.go b/internal/workspace_test.go
+index 948ac66..5ac3b6d 100644
+--- a/internal/workspace_test.go
++++ b/internal/workspace_test.go
+@@ -2,6 +2,7 @@ package internal
+ 
+ import (
+ 	"os"
++	"os/exec"
+ 	"path/filepath"
+ 	"strings"
+ 	"testing"
+@@ -16,6 +17,15 @@ func setupTestRepo(t *testing.T) string {
+ 	return dir
+ }
+ 
++func setupRealTestRepo(t *testing.T) string {
++	t.Helper()
++	dir := t.TempDir()
++	if out, err := exec.Command("git", "init", "-b", "main", dir).CombinedOutput(); err != nil {
++		t.Fatalf("git init: %v\n%s", err, out)
++	}
++	return dir
++}
++
+ func writeTwsConfig(t *testing.T, dir string, content string) {
+ 	t.Helper()
+ 	twsDir := filepath.Join(dir, ".tws")
+@@ -176,6 +186,59 @@ func TestResolveWorkspace_ExternalWithSymlinkConfigKey(t *testing.T) {
+ 	}
+ }
+ 
++func TestRequireWorkspaceFromExternalFeatureDirectory(t *testing.T) {
++	repo := setupRealTestRepo(t)
++	workspaceRoot := repo + ".tws"
++	featureDir := filepath.Join(workspaceRoot, "feature", "docs")
++	if err := os.MkdirAll(filepath.Join(workspaceRoot, workspaceMarker), 0755); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.MkdirAll(featureDir, 0755); err != nil {
++		t.Fatal(err)
++	}
++	oldCWD, _ := os.Getwd()
++	t.Cleanup(func() { _ = os.Chdir(oldCWD) })
++	if err := os.Chdir(featureDir); err != nil {
++		t.Fatal(err)
++	}
++	ws, err := RequireWorkspace()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if ws.Mode != ModeExternal || ws.RepoRoot != canonicalize(repo) || ws.MetadataRoot != canonicalize(workspaceRoot) {
++		t.Fatalf("unexpected workspace: %+v", ws)
++	}
++}
++
++func TestRequireWorkspaceFromCustomExternalRoot(t *testing.T) {
++	repo := setupRealTestRepo(t)
++	workspaceRoot := filepath.Join(t.TempDir(), "custom-workspace")
++	featureDir := filepath.Join(workspaceRoot, "feature")
++	if err := os.MkdirAll(filepath.Join(workspaceRoot, workspaceMarker), 0755); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.MkdirAll(featureDir, 0755); err != nil {
++		t.Fatal(err)
++	}
++	t.Setenv("HOME", t.TempDir())
++	cfgPath := ConfigPath()
++	if err := SaveConfigFile(cfgPath, Config{Workspaces: map[string]string{repo: workspaceRoot}}); err != nil {
++		t.Fatal(err)
++	}
++	oldCWD, _ := os.Getwd()
++	t.Cleanup(func() { _ = os.Chdir(oldCWD) })
++	if err := os.Chdir(featureDir); err != nil {
++		t.Fatal(err)
++	}
++	ws, err := RequireWorkspace()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if ws.RepoRoot != canonicalize(repo) || ws.MetadataRoot != canonicalize(workspaceRoot) {
++		t.Fatalf("unexpected workspace: %+v", ws)
++	}
++}
++
+ func TestResolveWorkspace_ExternalSiblingDefault(t *testing.T) {
+ 	repo := setupTestRepo(t)
+ 	canon := canonicalize(repo)

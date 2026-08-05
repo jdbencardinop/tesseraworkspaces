@@ -1,0 +1,26 @@
+{
+  "id": "fix-external-feature-dir-resolution",
+  "slug": "fix-external-feature-dir-resolution",
+  "title": "Restore the external workspace contract after workspace-mode refactoring: feature-oriented commands must resolve an external workspace and its default source repository when invoked from the external workspace root, a feature directory, or nested docs/inject paths, not only from Git repos/worktrees. Use the .tws-workspace marker, sibling repo convention, stack/worktree metadata fallback, and explicit ambiguity errors. Preserve checkout-mode resolution and multi-repo behavior. Add a command-location regression matrix for stack, sync, decisions, doctor, list, inject, and other feature commands.",
+  "state": "applied",
+  "compatibility": "unknown",
+  "requested_at": "2026-08-05T22:41:20Z",
+  "updated_at": "2026-08-05T23:18:11Z",
+  "last_command": "record",
+  "notes": "landed at 2026-08-05T23:18:12Z",
+  "apply": {
+    "base_commit": "a043650b83c5c2186002a3c010905505343f0e46",
+    "has_patch": true
+  },
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "workspace-mode-foundation",
+      "kind": "hard"
+    },
+    {
+      "slug": "fix-checkout-feature-path-routing",
+      "kind": "hard"
+    }
+  ]
+}

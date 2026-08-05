@@ -2,6 +2,7 @@ package internal
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,6 +14,15 @@ func setupTestRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	// Initialize a bare-minimum repo structure (no actual git needed for resolution)
+	return dir
+}
+
+func setupRealTestRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "init", "-b", "main", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
 	return dir
 }
 
@@ -173,6 +183,59 @@ func TestResolveWorkspace_ExternalWithSymlinkConfigKey(t *testing.T) {
 	ws := ResolveCurrentWorkspace(linkRepo, cfg)
 	if ws.MetadataRoot != customRoot {
 		t.Errorf("MetadataRoot = %s, want %s from symlink config key", ws.MetadataRoot, customRoot)
+	}
+}
+
+func TestRequireWorkspaceFromExternalFeatureDirectory(t *testing.T) {
+	repo := setupRealTestRepo(t)
+	workspaceRoot := repo + ".tws"
+	featureDir := filepath.Join(workspaceRoot, "feature", "docs")
+	if err := os.MkdirAll(filepath.Join(workspaceRoot, workspaceMarker), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(featureDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	oldCWD, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(oldCWD) })
+	if err := os.Chdir(featureDir); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := RequireWorkspace()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ws.Mode != ModeExternal || ws.RepoRoot != canonicalize(repo) || ws.MetadataRoot != canonicalize(workspaceRoot) {
+		t.Fatalf("unexpected workspace: %+v", ws)
+	}
+}
+
+func TestRequireWorkspaceFromCustomExternalRoot(t *testing.T) {
+	repo := setupRealTestRepo(t)
+	workspaceRoot := filepath.Join(t.TempDir(), "custom-workspace")
+	featureDir := filepath.Join(workspaceRoot, "feature")
+	if err := os.MkdirAll(filepath.Join(workspaceRoot, workspaceMarker), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(featureDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", t.TempDir())
+	cfgPath := ConfigPath()
+	if err := SaveConfigFile(cfgPath, Config{Workspaces: map[string]string{repo: workspaceRoot}}); err != nil {
+		t.Fatal(err)
+	}
+	oldCWD, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(oldCWD) })
+	if err := os.Chdir(featureDir); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := RequireWorkspace()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ws.RepoRoot != canonicalize(repo) || ws.MetadataRoot != canonicalize(workspaceRoot) {
+		t.Fatalf("unexpected workspace: %+v", ws)
 	}
 }
 

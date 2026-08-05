@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "feature": "fix-external-feature-dir-resolution",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_4d3de8385479",
+      "kind": "record",
+      "patch_sha256": "a74eee8fdca17dd26dd16030e4fe54afc72e36b1a3fa4aeb403cc04bacb134fc",
+      "git_patch_id": "bb203bf6df8dfa1acc127769eec46cad56ed7645",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "d9a5f37a93ee74c18b6784aad1ca81eae3a0a7d6bcf399f3b8abfe9767f534cf",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "patches/001-record.patch",
+      "base_commit": "a043650b83c5c2186002a3c010905505343f0e46",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "internal/cli/external_feature_dir_test.go",
+        "internal/workspace.go",
+        "internal/workspace_test.go"
+      ],
+      "dependencies": [
+        {
+          "slug": "fix-checkout-feature-path-routing",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "ae8d2a826310ab286dc28e26a6b2965ef9fe0f902c25af75c2718ca5f1a92e93",
+          "parent_recipe_sha256": "01576e6383ec60a9df9144a6cb6231fbfded4602536dc1cecaa0a66c525aa3ed"
+        },
+        {
+          "slug": "workspace-mode-foundation",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "1b04ea52238cc6b6f8a3cd984abb24f8712dc934c0e6cae9c44f42a3a8c18533",
+          "parent_recipe_sha256": "7b7fe355e1389f6b4bcf1f83406d0de1cf6745d1cebfddf11158ca3f6ccde887"
+        }
+      ],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}
