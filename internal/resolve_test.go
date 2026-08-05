@@ -238,6 +238,50 @@ func TestDetectFeatureFromCwdE_LegacyLayout(t *testing.T) {
 	}
 }
 
+func TestWorktreePath_CheckoutReturnsEmpty(t *testing.T) {
+	ws := Workspace{MetadataRoot: "/repo/.tws", Mode: ModeCheckout}
+	got := ws.WorktreePath("feat", "branch")
+	if got != "" {
+		t.Errorf("WorktreePath in checkout should return empty, got %q", got)
+	}
+}
+
+func TestWorktreePath_ExternalReturnsPath(t *testing.T) {
+	ws := Workspace{MetadataRoot: "/home/user/tws", Mode: ModeExternal}
+	got := ws.WorktreePath("feat", "branch")
+	want := "/home/user/tws/feat/worktrees/branch"
+	if got != want {
+		t.Errorf("WorktreePath external got %q, want %q", got, want)
+	}
+}
+
+func TestFeaturePath_CheckoutNewLayout(t *testing.T) {
+	ws := Workspace{MetadataRoot: "/repo/.tws", Mode: ModeCheckout}
+	got := ws.FeaturePath("billing")
+	want := "/repo/.tws/features/billing"
+	if got != want {
+		t.Errorf("FeaturePath checkout got %q, want %q", got, want)
+	}
+}
+
+func TestFeaturePath_ExternalUnchanged(t *testing.T) {
+	ws := Workspace{MetadataRoot: "/home/user/tws", Mode: ModeExternal}
+	got := ws.FeaturePath("billing")
+	want := "/home/user/tws/billing"
+	if got != want {
+		t.Errorf("FeaturePath external got %q, want %q", got, want)
+	}
+}
+
+func TestErrWorktreeUnsupported(t *testing.T) {
+	if ErrWorktreeUnsupported == nil {
+		t.Fatal("ErrWorktreeUnsupported should not be nil")
+	}
+	if !strings.Contains(ErrWorktreeUnsupported.Error(), "checkout mode") {
+		t.Errorf("error should mention checkout mode, got: %v", ErrWorktreeUnsupported)
+	}
+}
+
 func TestCheckoutStateDir(t *testing.T) {
 	dir := t.TempDir()
 	ws := Workspace{MetadataRoot: dir, Mode: ModeCheckout}

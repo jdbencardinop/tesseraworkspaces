@@ -21,9 +21,9 @@ func pushCmd() *cobra.Command {
 			}
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			internal.RequireTool("git")
-			pushFeature(args[0], dryRun)
+			return pushFeature(args[0], dryRun)
 		},
 	}
 
@@ -32,17 +32,22 @@ func pushCmd() *cobra.Command {
 	return cmd
 }
 
-func pushFeature(feature string, dryRun bool) {
-	featurePath := internal.FeaturePath(feature)
+func pushFeature(feature string, dryRun bool) error {
+	featurePath, err := internal.RequireFeaturePath(feature)
+	if err != nil {
+		return err
+	}
 
 	stack, err := internal.LoadStack(featurePath)
 	if err != nil {
-		fmt.Printf("No stack.yaml found for feature: %s\n", feature)
-		os.Exit(1)
+		return fmt.Errorf("no stack.yaml found for feature: %s", feature)
 	}
 
 	for _, entry := range stack.Branches {
-		path := internal.WorktreePath(feature, entry.Name)
+		path, err := internal.RequireWorktreePath(feature, entry.Name)
+		if err != nil {
+			return err
+		}
 
 		// Skip archived branches
 		if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -61,11 +66,12 @@ func pushFeature(feature string, dryRun bool) {
 			repoDir = entry.Repo
 		}
 
-		err := internal.RunDirClean(repoDir, "git", "push", "--force-with-lease", "origin", entry.Name)
-		if err != nil {
+		runErr := internal.RunDirClean(repoDir, "git", "push", "--force-with-lease", "origin", entry.Name)
+		if runErr != nil {
 			fmt.Printf("  [x] %s (push failed)\n", entry.Name)
 		} else {
 			fmt.Printf("  [+] %s (pushed)\n", entry.Name)
 		}
 	}
+	return nil
 }

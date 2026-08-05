@@ -38,34 +38,31 @@ Tip: To keep git status clean, either:
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			}
 		},
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			feature := args[0]
-			featurePath := internal.FeaturePath(feature)
-
-			if _, err := os.Stat(featurePath); os.IsNotExist(err) {
-				fmt.Printf("Feature not found: %s\n", feature)
-				os.Exit(1)
+			featurePath, err := internal.RequireFeaturePath(feature)
+			if err != nil {
+				return err
 			}
 
 			injectDir := internal.InjectPath(featurePath)
 			if _, err := os.Stat(injectDir); os.IsNotExist(err) {
-				fmt.Printf("No inject/ directory found for feature: %s\n", feature)
-				fmt.Printf("Create it at: %s\n", injectDir)
-				os.Exit(1)
+				return fmt.Errorf("no inject/ directory found for feature: %s\nCreate it at: %s", feature, injectDir)
 			}
 
 			target := internal.ResolveInjectInto(into)
 
 			if len(args) == 2 {
 				branch := args[1]
-				path := internal.WorktreePath(feature, branch)
+				path, err := internal.RequireWorktreePath(feature, branch)
+				if err != nil {
+					return err
+				}
 				if _, err := os.Stat(path); os.IsNotExist(err) {
-					fmt.Printf("Worktree not found: %s/%s\n", feature, branch)
-					os.Exit(1)
+					return fmt.Errorf("worktree not found: %s/%s", feature, branch)
 				}
 				if err := internal.InjectFiles(featurePath, path, target); err != nil {
-					fmt.Printf("Error: %v\n", err)
-					os.Exit(1)
+					return err
 				}
 				if target != "" && target != "." {
 					fmt.Printf("Injected files into: %s/%s/%s\n", feature, branch, target)
@@ -75,11 +72,11 @@ Tip: To keep git status clean, either:
 			} else {
 				count, err := internal.InjectFilesForFeature(featurePath, target)
 				if err != nil {
-					fmt.Printf("Error: %v\n", err)
-					os.Exit(1)
+					return err
 				}
 				fmt.Printf("Injected files into %d worktree(s)\n", count)
 			}
+			return nil
 		},
 	}
 

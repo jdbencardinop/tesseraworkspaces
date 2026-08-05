@@ -64,10 +64,9 @@ func templateSyncCmd() *cobra.Command {
 }
 
 func syncFeatureTemplate(feature string, extraTemplates []string) {
-	featurePath := internal.FeaturePath(feature)
-
-	if _, err := os.Stat(featurePath); os.IsNotExist(err) {
-		fmt.Printf("%s: not found\n", feature)
+	featurePath, err := internal.RequireFeaturePath(feature)
+	if err != nil {
+		fmt.Printf("%s: %v\n", feature, err)
 		return
 	}
 

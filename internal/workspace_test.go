@@ -3,6 +3,7 @@ package internal
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -101,6 +102,19 @@ func TestResolveWorkspace_InvalidMode(t *testing.T) {
 	// Invalid mode falls back to external.
 	if ws.Mode != ModeExternal {
 		t.Errorf("expected external for invalid mode, got %s", ws.Mode)
+	}
+}
+
+func TestResolveWorkspaceE_InvalidModeReturnsError(t *testing.T) {
+	repo := setupTestRepo(t)
+	writeTwsConfig(t, repo, "workspace_mode: foobar\n")
+
+	_, err := ResolveCurrentWorkspaceE(repo, Config{})
+	if err == nil {
+		t.Fatal("expected error for invalid workspace_mode, got nil")
+	}
+	if !strings.Contains(err.Error(), "foobar") {
+		t.Errorf("error should mention the invalid mode, got: %v", err)
 	}
 }
 
@@ -258,7 +272,7 @@ func TestWorkspace_CheckoutFeaturePath(t *testing.T) {
 		Mode:         ModeCheckout,
 	}
 	got := ws.FeaturePath("billing")
-	want := "/repo/.tws/billing"
+	want := "/repo/.tws/features/billing"
 	if got != want {
 		t.Errorf("FeaturePath = %s, want %s", got, want)
 	}
@@ -270,9 +284,20 @@ func TestWorkspace_CheckoutWorktreePath(t *testing.T) {
 		Mode:         ModeCheckout,
 	}
 	got := ws.WorktreePath("billing", "add-stripe")
-	want := "/repo/.tws/billing/worktrees/add-stripe"
+	if got != "" {
+		t.Errorf("WorktreePath in checkout mode should be empty, got %s", got)
+	}
+}
+
+func TestWorkspace_LegacyFeaturePath(t *testing.T) {
+	ws := Workspace{
+		MetadataRoot: "/repo/.tws",
+		Mode:         ModeCheckout,
+	}
+	got := ws.LegacyFeaturePath("billing")
+	want := "/repo/.tws/billing"
 	if got != want {
-		t.Errorf("WorktreePath = %s, want %s", got, want)
+		t.Errorf("LegacyFeaturePath = %s, want %s", got, want)
 	}
 }
 

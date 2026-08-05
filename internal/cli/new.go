@@ -57,7 +57,10 @@ func newCmd() *cobra.Command {
 // rolled back (only if this operation created it). Archived entries are
 // reactivated. Mismatched existing entries are rejected.
 func createCheckoutBranch(ws internal.Workspace, feature, name, requestedBase string, force bool) error {
-	featurePath := ws.FeaturePath(feature)
+	featurePath, err := ws.ResolveFeaturePath(feature)
+	if err != nil {
+		return err
+	}
 
 	// Pre-validate feature directory exists.
 	if _, err := os.Stat(featurePath); os.IsNotExist(err) {

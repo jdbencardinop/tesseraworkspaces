@@ -35,13 +35,11 @@ func renameFeatureCmd() *cobra.Command {
 			}
 
 			var oldPath, newPath string
-			if ws.Mode == internal.ModeCheckout {
-				oldPath = ws.FeaturePath(oldName)
-				newPath = ws.FeaturePath(newName)
-			} else {
-				oldPath = internal.FeaturePath(oldName)
-				newPath = internal.FeaturePath(newName)
+			oldPath, err = ws.ResolveFeaturePath(oldName)
+			if err != nil {
+				return err
 			}
+			newPath = ws.FeaturePath(newName)
 
 			if _, err := os.Stat(oldPath); os.IsNotExist(err) {
 				return fmt.Errorf("feature not found: %s", oldName)
@@ -101,7 +99,10 @@ func renameBranchCmd() *cobra.Command {
 // Short Name is the metadata identity; git branch may have a prefix.
 // Metadata is updated only after git succeeds; rolled back if SaveStack fails.
 func renameBranchCheckout(ws internal.Workspace, feature, oldName, newName string) error {
-	featurePath := ws.FeaturePath(feature)
+	featurePath, err := ws.ResolveFeaturePath(feature)
+	if err != nil {
+		return err
+	}
 
 	stack, err := internal.LoadStack(featurePath)
 	if err != nil {
@@ -262,7 +263,6 @@ func renameBranchExternal(feature, oldName, newName string) error {
 func resolveGitDir(featurePath string, stack internal.Stack) string {
 	// Try active worktrees first
 	for _, entry := range stack.Branches {
-		wtPath := internal.WorktreePath("", entry.Name)
 		// Reconstruct from featurePath directly
 		path := featurePath + "/worktrees/" + entry.Name
 		if _, err := os.Stat(path); err == nil {
@@ -271,7 +271,6 @@ func resolveGitDir(featurePath string, stack internal.Stack) string {
 		if entry.Repo != "" {
 			return entry.Repo
 		}
-		_ = wtPath
 	}
 
 	// Fallback: try cwd

@@ -42,10 +42,9 @@ func exportCmd() *cobra.Command {
 			}
 
 			var featurePath string
-			if ws.Mode == internal.ModeCheckout {
-				featurePath = ws.FeaturePath(feature)
-			} else {
-				featurePath = internal.FeaturePath(feature)
+			featurePath, err = ws.ResolveFeaturePath(feature)
+			if err != nil {
+				return err
 			}
 
 			if _, err := os.Stat(featurePath); os.IsNotExist(err) {

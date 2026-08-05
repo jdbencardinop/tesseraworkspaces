@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
 	"github.com/spf13/cobra"
@@ -35,29 +34,31 @@ func decisionsListCmd() *cobra.Command {
 			}
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			var feature, featurePath string
 			if len(args) > 0 {
 				feature = args[0]
-				featurePath = internal.FeaturePath(feature)
+				fp, err := internal.RequireFeaturePath(feature)
+				if err != nil {
+					return err
+				}
+				featurePath = fp
 			} else {
 				feature, featurePath = internal.DetectFeatureFromCwd()
 				if feature == "" {
-					fmt.Println("Could not detect feature from current directory.")
-					fmt.Println("Usage: tws decisions show <feature> or run from inside a worktree.")
-					os.Exit(1)
+					return fmt.Errorf("could not detect feature from current directory; usage: tws decisions show <feature> or run from inside a worktree")
 				}
 			}
 
 			decisions, err := internal.LoadDecisions(featurePath)
 			if err != nil {
 				fmt.Printf("No decisions found for feature: %s\n", feature)
-				return
+				return nil
 			}
 
 			if len(decisions.Entries) == 0 {
 				fmt.Println("No decisions recorded yet.")
-				return
+				return nil
 			}
 
 			// Auto-detect current branch for --mine and unread filtering
@@ -93,6 +94,7 @@ func decisionsListCmd() *cobra.Command {
 					fmt.Println("No unread decisions. Use --all to see everything.")
 				}
 			}
+			return nil
 		},
 	}
 
@@ -114,30 +116,32 @@ func decisionsAckCmd() *cobra.Command {
 			}
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			var featurePath string
 			if len(args) > 0 {
-				featurePath = internal.FeaturePath(args[0])
+				fp, err := internal.RequireFeaturePath(args[0])
+				if err != nil {
+					return err
+				}
+				featurePath = fp
 			} else {
 				_, featurePath = internal.DetectFeatureFromCwd()
 				if featurePath == "" {
-					fmt.Println("Could not detect feature. Usage: tws decisions ack <feature>")
-					os.Exit(1)
+					return fmt.Errorf("could not detect feature; usage: tws decisions ack <feature>")
 				}
 			}
 
 			branch, err := currentBranch()
 			if err != nil {
-				fmt.Println("Error: could not detect current branch")
-				os.Exit(1)
+				return fmt.Errorf("could not detect current branch")
 			}
 
 			if err := internal.AckDecisions(featurePath, branch); err != nil {
-				fmt.Printf("Error: %v\n", err)
-				os.Exit(1)
+				return err
 			}
 
 			fmt.Printf("Marked all decisions as read for branch: %s\n", branch)
+			return nil
 		},
 	}
 }

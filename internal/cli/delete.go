@@ -50,7 +50,10 @@ func deleteCmd() *cobra.Command {
 // --delete-branches validates all targets before deleting any.
 // Refuses to delete the currently checked-out branch.
 func deleteCheckout(ws internal.Workspace, feature string, deleteBranches, forceDelete bool) error {
-	featurePath := ws.FeaturePath(feature)
+	featurePath, err := ws.ResolveFeaturePath(feature)
+	if err != nil {
+		return err
+	}
 
 	if _, err := os.Stat(featurePath); os.IsNotExist(err) {
 		return fmt.Errorf("feature not found: %s", feature)

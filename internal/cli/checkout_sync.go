@@ -8,7 +8,10 @@ import (
 )
 
 func runCheckoutSync(feature string, push bool, testCmd string, cont, abort, verbose bool) error {
-	featurePath := internal.FeaturePath(feature)
+	featurePath, err := internal.RequireFeaturePath(feature)
+	if err != nil {
+		return err
+	}
 
 	// Resolve repo directory (the git working directory)
 	repoDir, err := os.Getwd()

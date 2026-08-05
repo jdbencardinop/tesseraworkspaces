@@ -36,7 +36,10 @@ func syncCmd() *cobra.Command {
 			}
 
 			feature := args[0]
-			featurePath := internal.FeaturePath(feature)
+			featurePath, fpErr := ws.ResolveFeaturePath(feature)
+			if fpErr != nil {
+				return fpErr
+			}
 
 			if abort {
 				return handleSyncAbort(feature, featurePath)
@@ -56,7 +59,9 @@ func syncCmd() *cobra.Command {
 			fmt.Println("Sync complete.")
 			if push {
 				fmt.Println("\nPushing...")
-				pushFeature(feature, false)
+				if err := pushFeature(feature, false); err != nil {
+					return err
+				}
 			}
 			return nil
 		},
@@ -132,7 +137,9 @@ func handleSyncContinue(feature, featurePath string, push bool) error {
 	fmt.Println("Sync complete.")
 	if push {
 		fmt.Println("\nPushing...")
-		pushFeature(feature, false)
+		if err := pushFeature(feature, false); err != nil {
+			return err
+		}
 	}
 	return nil
 }

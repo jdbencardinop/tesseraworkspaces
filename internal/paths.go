@@ -133,17 +133,25 @@ func DetectFeatureFromCwd() (string, string) {
 	return "", ""
 }
 
-// ListFeatures returns the names of all feature directories in the workspace.
+// ListFeatures returns the sorted feature names for the resolved workspace.
+// External mode preserves the legacy sibling-workspace behavior; checkout mode
+// merges new and legacy layouts while excluding internal metadata directories.
 func ListFeatures() []string {
-	wsRoot := TwsRoot()
-	entries, err := os.ReadDir(wsRoot)
+	if ws, err := RequireWorkspace(); err == nil {
+		features, listErr := ws.ListFeaturesResolved()
+		if listErr == nil {
+			return features
+		}
+		return nil
+	}
+	entries, err := os.ReadDir(TwsRoot())
 	if err != nil {
 		return nil
 	}
 	var features []string
-	for _, e := range entries {
-		if e.IsDir() && e.Name() != ".tws-workspace" {
-			features = append(features, e.Name())
+	for _, entry := range entries {
+		if entry.IsDir() && entry.Name() != ".tws-workspace" {
+			features = append(features, entry.Name())
 		}
 	}
 	return features
@@ -152,7 +160,10 @@ func ListFeatures() []string {
 // ListBranches returns the branch names for a feature from stack.yaml,
 // or from the worktrees directory if no stack exists.
 func ListBranches(feature string) []string {
-	featurePath := FeaturePath(feature)
+	featurePath, err := RequireFeaturePath(feature)
+	if err != nil {
+		return nil
+	}
 	stack, err := LoadStack(featurePath)
 	if err == nil && len(stack.Branches) > 0 {
 		var names []string

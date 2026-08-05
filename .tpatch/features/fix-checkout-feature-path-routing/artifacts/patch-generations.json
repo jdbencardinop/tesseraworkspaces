@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "feature": "fix-checkout-feature-path-routing",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_3124ac84423f",
+      "kind": "record",
+      "patch_sha256": "ae8d2a826310ab286dc28e26a6b2965ef9fe0f902c25af75c2718ca5f1a92e93",
+      "git_patch_id": "b9c20b73b00b852a490a7284613e395ab79a5cfa",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "01576e6383ec60a9df9144a6cb6231fbfded4602536dc1cecaa0a66c525aa3ed",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "patches/001-record.patch",
+      "base_commit": "09d0974761ecf314d8682495c2454f4931a3dfe1",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "internal/cli/archive.go",
+        "internal/cli/checkout_lifecycle_test.go",
+        "internal/cli/checkout_sync.go",
+        "internal/cli/decide.go",
+        "internal/cli/decisions.go",
+        "internal/cli/delete.go",
+        "internal/cli/doctor.go",
+        "internal/cli/export.go",
+        "internal/cli/hooks.go",
+        "internal/cli/inject.go",
+        "internal/cli/new.go",
+        "internal/cli/push.go",
+        "internal/cli/rename.go",
+        "internal/cli/stack.go",
+        "internal/cli/sync.go",
+        "internal/cli/template.go",
+        "internal/paths.go",
+        "internal/resolve.go",
+        "internal/resolve_test.go",
+        "internal/workspace.go",
+        "internal/workspace_test.go"
+      ],
+      "dependencies": [
+        {
+          "slug": "fix-checkout-lifecycle-layout",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "b7b0777c06fbdd6361dbecc8445f9bc7a71ed749080e30936fc4d790ab59dde4",
+          "parent_recipe_sha256": "5ca9d17e1b299cf648741a1111bb8a13e11bcd6b24a578cbffc0f23f3a390eea"
+        }
+      ],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}

@@ -1,12 +1,17 @@
 package internal
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 )
+
+// ErrWorktreeUnsupported is returned when a caller attempts to use worktree
+// paths in checkout mode, which does not support linked worktrees.
+var ErrWorktreeUnsupported = errors.New("linked worktrees are not supported in checkout mode")
 
 // ErrAmbiguousFeature is returned when a feature exists in both legacy and
 // new layout paths.
@@ -234,4 +239,29 @@ func (w Workspace) DetectFeatureFromCwdE(cwd string) (feature, branch string) {
 // Always .tws/state/ regardless of whether features are in legacy or new layout.
 func (w Workspace) CheckoutStateDir() string {
 	return filepath.Join(w.MetadataRoot, "state")
+}
+
+// RequireFeaturePath is the package-level error-returning feature path resolver.
+// It calls RequireWorkspace and then ResolveFeaturePath. Callers must propagate
+// errors (ambiguity, invalid workspace_mode) instead of silently falling back.
+func RequireFeaturePath(feature string) (string, error) {
+	ws, err := RequireWorkspace()
+	if err != nil {
+		return "", err
+	}
+	return ws.ResolveFeaturePath(feature)
+}
+
+// RequireWorktreePath resolves a worktree path through the workspace layer.
+// Returns ErrWorktreeUnsupported in checkout mode.
+func RequireWorktreePath(feature, worktree string) (string, error) {
+	ws, err := RequireWorkspace()
+	if err != nil {
+		return "", err
+	}
+	p := ws.WorktreePath(feature, worktree)
+	if p == "" {
+		return "", ErrWorktreeUnsupported
+	}
+	return p, nil
 }

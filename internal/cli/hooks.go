@@ -95,12 +95,20 @@ Set auto_hooks: true in config to auto-install on every tws new.`,
 }
 
 func installHooksForFeature(feature string) {
-	featurePath := internal.FeaturePath(feature)
+	featurePath, err := internal.RequireFeaturePath(feature)
+	if err != nil {
+		fmt.Printf("  [x] %s: %v\n", feature, err)
+		return
+	}
 	stack, _ := internal.LoadStack(featurePath)
 
 	installed := 0
 	for _, entry := range stack.Branches {
-		wtPath := internal.WorktreePath(feature, entry.Name)
+		wtPath, err := internal.RequireWorktreePath(feature, entry.Name)
+		if err != nil {
+			fmt.Printf("  [x] %s: %v\n", entry.Name, err)
+			return
+		}
 		if _, err := os.Stat(wtPath); os.IsNotExist(err) {
 			continue
 		}
@@ -142,11 +150,17 @@ func hooksRemoveCmd() *cobra.Command {
 				}
 			}
 
-			featurePath := internal.FeaturePath(feature)
+			featurePath, fpErr := internal.RequireFeaturePath(feature)
+			if fpErr != nil {
+				return fpErr
+			}
 			stack, _ := internal.LoadStack(featurePath)
 
 			for _, entry := range stack.Branches {
-				wtPath := internal.WorktreePath(feature, entry.Name)
+				wtPath, wtErr := internal.RequireWorktreePath(feature, entry.Name)
+				if wtErr != nil {
+					return wtErr
+				}
 				settingsPath := filepath.Join(wtPath, ".claude", "settings.local.json")
 				if err := os.Remove(settingsPath); err == nil {
 					fmt.Printf("  [-] %s: hooks removed\n", entry.Name)

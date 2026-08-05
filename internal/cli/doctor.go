@@ -21,22 +21,25 @@ func doctorCmd() *cobra.Command {
 			}
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 1 {
-				checkFeature(args[0])
-				return
+				_, err := checkFeatureE(args[0])
+				return err
 			}
 
 			// Check all features
 			features := internal.ListFeatures()
 			if len(features) == 0 {
 				fmt.Println("No features found.")
-				return
+				return nil
 			}
 
 			totalIssues := 0
 			for _, feature := range features {
-				issues := checkFeature(feature)
+				issues, err := checkFeatureE(feature)
+				if err != nil {
+					return err
+				}
 				totalIssues += issues
 			}
 
@@ -45,16 +48,20 @@ func doctorCmd() *cobra.Command {
 			} else {
 				fmt.Printf("\n%d issue(s) found.\n", totalIssues)
 			}
+			return nil
 		},
 	}
 }
 
-func checkFeature(feature string) int {
-	featurePath := internal.FeaturePath(feature)
+func checkFeatureE(feature string) (int, error) {
+	featurePath, err := internal.RequireFeaturePath(feature)
+	if err != nil {
+		return 0, err
+	}
 
 	if _, err := os.Stat(featurePath); os.IsNotExist(err) {
 		fmt.Printf("%s: not found\n", feature)
-		return 0
+		return 0, nil
 	}
 
 	issues := internal.CheckFeatureHealth(featurePath)
@@ -77,5 +84,5 @@ func checkFeature(feature string) int {
 		}
 	}
 
-	return len(issues)
+	return len(issues), nil
 }

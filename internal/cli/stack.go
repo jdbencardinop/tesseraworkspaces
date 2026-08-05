@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
 	"github.com/spf13/cobra"
@@ -19,14 +18,16 @@ func stackCmd() *cobra.Command {
 			}
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			feature := args[0]
-			featurePath := internal.FeaturePath(feature)
+			featurePath, err := internal.RequireFeaturePath(feature)
+			if err != nil {
+				return err
+			}
 
 			stack, err := internal.LoadStack(featurePath)
 			if err != nil {
-				fmt.Println("No stack.yaml found for feature:", feature)
-				os.Exit(1)
+				return fmt.Errorf("no stack.yaml found for feature: %s", feature)
 			}
 
 			if _, err := internal.TopoSort(stack); err != nil {
@@ -34,6 +35,7 @@ func stackCmd() *cobra.Command {
 			}
 
 			internal.PrintTree(stack)
+			return nil
 		},
 	}
 }

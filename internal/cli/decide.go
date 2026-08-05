@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 
@@ -26,15 +25,13 @@ func decideCmd() *cobra.Command {
 			}
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			feature := args[0]
 			summary := args[1]
 
-			featurePath := internal.FeaturePath(feature)
-
-			if _, err := os.Stat(featurePath); os.IsNotExist(err) {
-				fmt.Printf("Feature not found: %s\n", feature)
-				os.Exit(1)
+			featurePath, err := internal.RequireFeaturePath(feature)
+			if err != nil {
+				return err
 			}
 
 			// Auto-detect branch from current worktree if not specified
@@ -48,11 +45,11 @@ func decideCmd() *cobra.Command {
 
 			entry, err := internal.AddDecision(featurePath, branch, to, summary, decisionType, details)
 			if err != nil {
-				fmt.Printf("Error recording decision: %v\n", err)
-				os.Exit(1)
+				return fmt.Errorf("error recording decision: %w", err)
 			}
 
 			fmt.Printf("Decision recorded:\n  %s\n", entry)
+			return nil
 		},
 	}
 

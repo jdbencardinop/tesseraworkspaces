@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
+	"github.com/spf13/cobra"
 )
 
 // ---------- test helpers ----------
@@ -749,13 +750,14 @@ func TestExternalAdd_CreatesWorktreeDir(t *testing.T) {
 	twsRoot := dir + ".tws"
 	t.Setenv("TWS_ROOT", twsRoot)
 
+	ws := internal.Workspace{MetadataRoot: twsRoot, Mode: internal.ModeExternal}
 	err := addExternal("testfeat", nil, "", "", false, false, false)
 	if err != nil {
 		t.Fatalf("addExternal failed: %v", err)
 	}
 
 	// Use FeaturePath which resolves via TWS_ROOT
-	root := internal.FeaturePath("testfeat")
+	root := ws.FeaturePath("testfeat")
 
 	if _, err := os.Stat(filepath.Join(root, "worktrees")); err != nil {
 		t.Errorf("worktrees/ directory should exist in external mode, root=%s", root)
@@ -775,6 +777,7 @@ func TestExternalNew_CreatesWorktree(t *testing.T) {
 	twsRoot := dir + ".tws"
 	t.Setenv("TWS_ROOT", twsRoot)
 
+	ws := internal.Workspace{MetadataRoot: twsRoot, Mode: internal.ModeExternal}
 	_ = addExternal("testfeat", nil, "", "", false, false, false)
 	err := createWorktree("testfeat", "branch1", "main", "", false)
 	if err != nil {
@@ -782,7 +785,7 @@ func TestExternalNew_CreatesWorktree(t *testing.T) {
 	}
 
 	// Verify worktree exists on disk
-	wtPath := internal.WorktreePath("testfeat", "branch1")
+	wtPath := ws.WorktreePath("testfeat", "branch1")
 	if _, err := os.Stat(wtPath); err != nil {
 		t.Errorf("worktree should exist on disk in external mode, path=%s", wtPath)
 	}
@@ -797,6 +800,7 @@ func TestExternalDelete_RemovesFeature(t *testing.T) {
 	twsRoot := dir + ".tws"
 	t.Setenv("TWS_ROOT", twsRoot)
 
+	ws := internal.Workspace{MetadataRoot: twsRoot, Mode: internal.ModeExternal}
 	_ = addExternal("testfeat", nil, "", "", false, false, false)
 
 	err := deleteExternal("testfeat", false, false)
@@ -804,7 +808,7 @@ func TestExternalDelete_RemovesFeature(t *testing.T) {
 		t.Fatalf("deleteExternal failed: %v", err)
 	}
 
-	root := internal.FeaturePath("testfeat")
+	root := ws.FeaturePath("testfeat")
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Error("feature directory should be deleted")
 	}
@@ -819,10 +823,11 @@ func TestExternalRename_Feature(t *testing.T) {
 	twsRoot := dir + ".tws"
 	t.Setenv("TWS_ROOT", twsRoot)
 
+	ws := internal.Workspace{MetadataRoot: twsRoot, Mode: internal.ModeExternal}
 	_ = addExternal("oldfeat", nil, "", "", false, false, false)
 
-	oldPath := internal.FeaturePath("oldfeat")
-	newPath := internal.FeaturePath("newfeat")
+	oldPath := ws.FeaturePath("oldfeat")
+	newPath := ws.FeaturePath("newfeat")
 
 	if err := os.Rename(oldPath, newPath); err != nil {
 		t.Fatalf("rename failed: %v", err)
@@ -882,4 +887,113 @@ func TestCheckoutMode_SyncSupported(t *testing.T) {
 		t.Fatal("expected checkout mode")
 	}
 	// Checkout sync is tested in checkout_sync_test.go
+}
+
+// ---------- Ambiguity propagation tests ----------
+
+// buildTestRoot constructs a minimal cobra root with the relevant subcommands for testing.
+func buildTestRoot() *cobra.Command {
+	root := &cobra.Command{Use: "tws"}
+	root.AddCommand(decisionsCmd(), injectCmd(), stackCmd(), decideCmd())
+	root.SilenceErrors = true
+	root.SilenceUsage = true
+	return root
+}
+
+func TestDecisionsShow_PropagatesAmbiguity(t *testing.T) {
+	dir := setupGitRepoCheckout(t)
+	oldCwd, _ := os.Getwd()
+	_ = os.Chdir(dir)
+	defer func() { _ = os.Chdir(oldCwd) }()
+
+	twsDir := filepath.Join(dir, ".tws")
+	// Create both new and legacy layout for "ambig-feat"
+	for _, path := range []string{filepath.Join(twsDir, "features", "ambig-feat"), filepath.Join(twsDir, "ambig-feat")} {
+		if err := os.MkdirAll(path, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	root := buildTestRoot()
+	root.SetArgs([]string{"decisions", "show", "ambig-feat"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected ambiguity error from decisions show")
+	}
+	if !strings.Contains(err.Error(), "ambiguous") {
+		t.Errorf("expected ambiguous error, got: %v", err)
+	}
+}
+
+func TestInject_PropagatesAmbiguity(t *testing.T) {
+	dir := setupGitRepoCheckout(t)
+	oldCwd, _ := os.Getwd()
+	_ = os.Chdir(dir)
+	defer func() { _ = os.Chdir(oldCwd) }()
+
+	twsDir := filepath.Join(dir, ".tws")
+	// Create both layouts
+	for _, path := range []string{filepath.Join(twsDir, "features", "ambig-feat", "inject"), filepath.Join(twsDir, "ambig-feat", "inject")} {
+		if err := os.MkdirAll(path, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	root := buildTestRoot()
+	root.SetArgs([]string{"inject", "ambig-feat"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected ambiguity error from inject")
+	}
+	if !strings.Contains(err.Error(), "ambiguous") {
+		t.Errorf("expected ambiguous error, got: %v", err)
+	}
+}
+
+func TestStack_PropagatesAmbiguity(t *testing.T) {
+	dir := setupGitRepoCheckout(t)
+	oldCwd, _ := os.Getwd()
+	_ = os.Chdir(dir)
+	defer func() { _ = os.Chdir(oldCwd) }()
+
+	twsDir := filepath.Join(dir, ".tws")
+	for _, path := range []string{filepath.Join(twsDir, "features", "ambig-feat"), filepath.Join(twsDir, "ambig-feat")} {
+		if err := os.MkdirAll(path, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	root := buildTestRoot()
+	root.SetArgs([]string{"stack", "ambig-feat"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected ambiguity error from stack")
+	}
+	if !strings.Contains(err.Error(), "ambiguous") {
+		t.Errorf("expected ambiguous error, got: %v", err)
+	}
+}
+
+func TestDecide_PropagatesAmbiguity(t *testing.T) {
+	dir := setupGitRepoCheckout(t)
+	oldCwd, _ := os.Getwd()
+	_ = os.Chdir(dir)
+	defer func() { _ = os.Chdir(oldCwd) }()
+
+	twsDir := filepath.Join(dir, ".tws")
+	for _, path := range []string{filepath.Join(twsDir, "features", "ambig-feat"), filepath.Join(twsDir, "ambig-feat")} {
+		if err := os.MkdirAll(path, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	root := buildTestRoot()
+	root.SetArgs([]string{"decide", "ambig-feat", "some decision"})
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected ambiguity error from decide")
+	}
+	if !strings.Contains(err.Error(), "ambiguous") {
+		t.Errorf("expected ambiguous error, got: %v", err)
+	}
 }

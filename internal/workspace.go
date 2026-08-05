@@ -154,16 +154,30 @@ func resolveExternalRoot(originalRepoRoot, canonicalRepoRoot string, cfg Config)
 	return canonicalRepoRoot + ".tws"
 }
 
-// FeaturePath returns the feature directory within the workspace.
-// For external mode, this is MetadataRoot/<feature>.
-// For checkout mode, this returns the legacy-compatible path (MetadataRoot/<feature>).
-// Prefer ResolveFeaturePath for mode-aware commands that need ambiguity detection.
+// FeaturePath returns the canonical write path for NEW features.
+// For external mode: MetadataRoot/<feature>.
+// For checkout mode: MetadataRoot/features/<feature> (new layout).
+// Use this for creating new features. For reading existing features that may
+// be in legacy layout, use ResolveFeaturePath.
 func (w Workspace) FeaturePath(feature string) string {
+	if w.Mode == ModeCheckout {
+		return filepath.Join(w.MetadataRoot, "features", feature)
+	}
+	return filepath.Join(w.MetadataRoot, feature)
+}
+
+// LegacyFeaturePath returns the legacy feature path (MetadataRoot/<feature>).
+// Used only for migration reads and backward-compatible lookup.
+func (w Workspace) LegacyFeaturePath(feature string) string {
 	return filepath.Join(w.MetadataRoot, feature)
 }
 
 // WorktreePath returns the worktree directory within a feature.
+// In checkout mode, linked worktrees are not supported; returns empty string.
 func (w Workspace) WorktreePath(feature, worktree string) string {
+	if w.Mode == ModeCheckout {
+		return ""
+	}
 	return filepath.Join(w.MetadataRoot, feature, "worktrees", worktree)
 }
 
