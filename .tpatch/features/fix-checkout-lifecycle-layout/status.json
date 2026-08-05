@@ -1,0 +1,22 @@
+{
+  "id": "fix-checkout-lifecycle-layout",
+  "slug": "fix-checkout-lifecycle-layout",
+  "title": "Repair the released checkout workspace lifecycle before agent sessions. Wire the documented `tws enable --mode ...` and `tws mode` commands, store new checkout feature metadata under `\u003crepo\u003e/.tws/features/\u003cfeature\u003e`, make feature listing mode-aware, and avoid treating `.tws/state`, templates, config, or other internal directories as features. Preserve backward compatibility for v1.2.2/v1.2.3 users with legacy `\u003crepo\u003e/.tws/\u003cfeature\u003e` metadata through explicit legacy discovery/migration behavior. Keep external workspace paths unchanged. Update embedded skills and lifecycle tests.",
+  "state": "applied",
+  "compatibility": "unknown",
+  "requested_at": "2026-08-05T04:09:00Z",
+  "updated_at": "2026-08-05T05:18:20Z",
+  "last_command": "record",
+  "notes": "landed at 2026-08-05T05:18:20Z",
+  "apply": {
+    "base_commit": "70a9bd845425983f1cce80bd2483c2b31aec80b7",
+    "has_patch": true
+  },
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "checkout-workspace-lifecycle",
+      "kind": "hard"
+    }
+  ]
+}

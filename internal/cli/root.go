@@ -42,6 +42,9 @@ func Execute() int {
 		exportCmd(),
 		importCmd(),
 		hooksCmd(),
+		enableCmd(),
+		modeCmd(),
+		migrateLayoutCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {

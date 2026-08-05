@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "feature": "fix-checkout-lifecycle-layout",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_52c509ab62ff",
+      "kind": "record",
+      "patch_sha256": "b7b0777c06fbdd6361dbecc8445f9bc7a71ed749080e30936fc4d790ab59dde4",
+      "git_patch_id": "1ae461438203c305048226fd6fa9b941d30c14e0",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "5ca9d17e1b299cf648741a1111bb8a13e11bcd6b24a578cbffc0f23f3a390eea",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "patches/001-record.patch",
+      "base_commit": "70a9bd845425983f1cce80bd2483c2b31aec80b7",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "assets/skills/claude/tesseraworkspaces/SKILL.md",
+        "internal/cli/enable.go",
+        "internal/cli/init.go",
+        "internal/cli/list.go",
+        "internal/cli/migrate.go",
+        "internal/cli/root.go",
+        "internal/enable.go",
+        "internal/enable_test.go",
+        "internal/migrate.go",
+        "internal/migrate_test.go",
+        "internal/resolve.go",
+        "internal/resolve_test.go",
+        "internal/workspace.go"
+      ],
+      "dependencies": [
+        {
+          "slug": "checkout-workspace-lifecycle",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "1aefaa7a144eb038ee4f344593dc14faa4ada99c0961cf4f8d7eaa66199694c0",
+          "parent_recipe_sha256": "21e86e0411083619cc1d189207073f09306e17b9dd11146be47e81d1d55d292d"
+        }
+      ],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}

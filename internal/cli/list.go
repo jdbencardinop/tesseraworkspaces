@@ -15,41 +15,43 @@ func listCmd() *cobra.Command {
 		Aliases: []string{"ls"},
 		Short:   "List features and branches",
 		Args:    cobra.NoArgs,
-		Run: func(cmd *cobra.Command, args []string) {
-			wsRoot := internal.TwsRoot()
-
-			if _, err := os.Stat(wsRoot); os.IsNotExist(err) {
-				fmt.Println("No workspace found at:", wsRoot)
-				return
-			}
-
-			entries, err := os.ReadDir(wsRoot)
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ws, err := internal.RequireWorkspace()
 			if err != nil {
-				fmt.Printf("Error reading workspace: %v\n", err)
-				os.Exit(1)
+				// Fallback to legacy TwsRoot for external mode compat.
+				wsRoot := internal.TwsRoot()
+				if _, serr := os.Stat(wsRoot); os.IsNotExist(serr) {
+					fmt.Println("No workspace found. Use 'tws init --mode checkout' or 'tws enable --mode checkout'.")
+					return nil
+				}
+				// Build a minimal workspace for listing.
+				ws = internal.Workspace{MetadataRoot: wsRoot, Mode: internal.ModeExternal}
 			}
 
-			var features []string
-			for _, e := range entries {
-				if !e.IsDir() || e.Name() == ".tws-workspace" {
-					continue
-				}
-				features = append(features, e.Name())
+			features, listErr := ws.ListFeaturesResolved()
+			if listErr != nil {
+				return listErr
 			}
 
 			if len(features) == 0 {
 				fmt.Println("No features found. Use 'tws add <feature>' to create one.")
-				return
+				return nil
 			}
 
-			fmt.Printf("Workspace: %s\n\n", wsRoot)
+			fmt.Printf("Workspace: %s (mode: %s)\n\n", ws.MetadataRoot, ws.Mode)
 
 			for _, feature := range features {
-				featurePath := filepath.Join(wsRoot, feature)
+				featurePath, resolveErr := ws.ResolveFeaturePath(feature)
+				if resolveErr != nil {
+					// Ambiguity error — report it inline.
+					fmt.Printf("%s\n  ERROR: %v\n\n", feature, resolveErr)
+					continue
+				}
+
 				fmt.Printf("%s\n", feature)
 
-				stack, err := internal.LoadStack(featurePath)
-				if err == nil && len(stack.Branches) > 0 {
+				stack, serr := internal.LoadStack(featurePath)
+				if serr == nil && len(stack.Branches) > 0 {
 					for i, entry := range stack.Branches {
 						wtPath := filepath.Join(featurePath, "worktrees", entry.Name)
 						status := "active"
@@ -61,14 +63,12 @@ func listCmd() *cobra.Command {
 							}
 						}
 
-						// Check for tmux session
 						tmuxTag := ""
 						session := sanitizeSessionName(feature + "/" + entry.Name)
 						if sessionExists(session) {
 							tmuxTag = " [tmux]"
 						}
 
-						// Health warning for active worktrees
 						healthTag := ""
 						if status == "active" {
 							if issue := internal.CheckWorktreeBranch(wtPath, entry.Name); issue != nil {
@@ -84,8 +84,8 @@ func listCmd() *cobra.Command {
 					}
 				} else {
 					wtDir := filepath.Join(featurePath, "worktrees")
-					wts, err := os.ReadDir(wtDir)
-					if err != nil || len(wts) == 0 {
+					wts, rErr := os.ReadDir(wtDir)
+					if rErr != nil || len(wts) == 0 {
 						fmt.Println("  (no branches)")
 					} else {
 						for i, wt := range wts {
@@ -102,6 +102,7 @@ func listCmd() *cobra.Command {
 				}
 				fmt.Println()
 			}
+			return nil
 		},
 	}
 }

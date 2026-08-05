@@ -40,8 +40,7 @@ type Workspace struct {
 	MetadataRoot string
 
 	// StableID is a deterministic identifier derived from the canonical
-	// repo path. Movement of the repository on disk will change this
-	// value until a global registry supplies persisted IDs.
+	// repo path. Computed on each resolution, not persisted.
 	StableID string
 
 	// Caps describes mode-specific capabilities.
@@ -156,6 +155,9 @@ func resolveExternalRoot(originalRepoRoot, canonicalRepoRoot string, cfg Config)
 }
 
 // FeaturePath returns the feature directory within the workspace.
+// For external mode, this is MetadataRoot/<feature>.
+// For checkout mode, this returns the legacy-compatible path (MetadataRoot/<feature>).
+// Prefer ResolveFeaturePath for mode-aware commands that need ambiguity detection.
 func (w Workspace) FeaturePath(feature string) string {
 	return filepath.Join(w.MetadataRoot, feature)
 }

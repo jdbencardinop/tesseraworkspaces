@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	skills "github.com/jdbencardinop/tesseraworkspaces/assets/skills"
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
@@ -42,7 +41,11 @@ Use --agent to override detection. Use --mode to set workspace_mode.`,
 
 			// Set workspace_mode if --mode is specified.
 			if mode != "" {
-				if err := enableWorkspaceMode(cwd, mode); err != nil {
+				repoRoot, err := internal.MainRepoRoot()
+				if err != nil {
+					return fmt.Errorf("not inside a git repository: %w", err)
+				}
+				if err := enableWorkspaceMode(repoRoot, mode); err != nil {
 					return err
 				}
 			}
@@ -74,84 +77,31 @@ Use --agent to override detection. Use --mode to set workspace_mode.`,
 	return cmd
 }
 
-// enableWorkspaceMode creates/updates .tws/config.yaml with the given mode.
-// Preserves WorkspaceID (stable_id) and avoids duplicating exclude entries.
+// enableWorkspaceMode delegates to the unified internal helpers.
+// Both init and enable use the same code path.
 func enableWorkspaceMode(repoRoot, mode string) error {
-	// Validate mode.
 	switch mode {
-	case "external", "checkout":
+	case "checkout":
+		if err := internal.EnableCheckoutMode(repoRoot); err != nil {
+			return err
+		}
+		fmt.Printf("Workspace mode set to: %s\n", mode)
+		return nil
+	case "external":
+		if err := internal.EnableExternalMode(repoRoot); err != nil {
+			return err
+		}
+		fmt.Printf("Workspace mode set to: %s\n", mode)
+		return nil
 	default:
 		return fmt.Errorf("invalid mode %q; supported: external, checkout", mode)
 	}
-
-	twsDir := filepath.Join(repoRoot, ".tws")
-	if err := os.MkdirAll(twsDir, 0755); err != nil {
-		return fmt.Errorf("creating .tws directory: %w", err)
-	}
-
-	configPath := filepath.Join(twsDir, "config.yaml")
-
-	// Load existing config to preserve WorkspaceID and other settings.
-	existingCfg := internal.LoadRepoConfig(configPath)
-	existingCfg.WorkspaceMode = mode
-
-	if err := internal.SaveRepoConfig(configPath, existingCfg); err != nil {
-		return fmt.Errorf("writing config: %w", err)
-	}
-
-	fmt.Printf("Workspace mode set to: %s\n", mode)
-
-	// For checkout mode, add .tws/ to git exclude (idempotent).
-	if mode == "checkout" {
-		if err := addGitExclude(repoRoot, ".tws/"); err != nil {
-			fmt.Printf("Warning: could not update git exclude: %v\n", err)
-		}
-	}
-
-	return nil
 }
 
 // addGitExclude adds a pattern to .git/info/exclude idempotently.
+// Delegates to the unified internal helper.
 func addGitExclude(repoRoot, pattern string) error {
-	excludePath := filepath.Join(repoRoot, ".git", "info", "exclude")
-
-	// Check if .git is a file (worktree) rather than a directory.
-	gitPath := filepath.Join(repoRoot, ".git")
-	info, err := os.Stat(gitPath)
-	if err != nil {
-		return fmt.Errorf(".git not found; is this a git repository?")
-	}
-	if !info.IsDir() {
-		// .git is a file (worktree reference). We require main repo root.
-		return fmt.Errorf(".git is a file (worktree); init --mode requires the main repository root")
-	}
-
-	// Ensure directory exists.
-	if err := os.MkdirAll(filepath.Dir(excludePath), 0755); err != nil {
-		return err
-	}
-
-	// Read existing content and check for duplicates.
-	existing, _ := os.ReadFile(excludePath)
-	for _, line := range strings.Split(string(existing), "\n") {
-		if strings.TrimSpace(line) == pattern {
-			return nil // Already present.
-		}
-	}
-
-	// Append the pattern.
-	f, err := os.OpenFile(excludePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close() //nolint:errcheck
-
-	content := string(existing)
-	if len(content) > 0 && !strings.HasSuffix(content, "\n") {
-		_, _ = f.WriteString("\n")
-	}
-	_, err = f.WriteString(pattern + "\n")
-	return err
+	return internal.AddGitLocalExclude(repoRoot, pattern)
 }
 
 func detectAgent(dir string) string {

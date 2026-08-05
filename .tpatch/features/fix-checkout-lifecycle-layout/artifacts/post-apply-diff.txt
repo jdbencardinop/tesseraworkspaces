@@ -1,0 +1,6 @@
+ assets/skills/claude/tesseraworkspaces/SKILL.md | 12 ++++
+ internal/cli/init.go                            | 92 ++++++-------------------
+ internal/cli/list.go                            | 53 +++++++-------
+ internal/cli/root.go                            |  3 +
+ internal/workspace.go                           |  6 +-
+ 5 files changed, 67 insertions(+), 99 deletions(-)

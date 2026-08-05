@@ -187,10 +187,22 @@ For small repositories that use one physical checkout instead of linked worktree
 
 ```sh
 tws init --mode checkout       # enable local .tws/ metadata (git-excluded)
+tws enable --mode checkout     # same as above; unified helper for both commands
 tws mode                       # show resolved mode and metadata root
 tws add auth                   # metadata under .tws/features/auth
 tws new auth auth-models       # create/register a Git branch, no linked worktree
 git switch auth-models         # activate the logical branch manually
+```
+
+Checkout mode creates `.tws/features/` and `.tws/state/` and adds `.tws/` to
+`.git/info/exclude` (local ignore, not committed). Must be run from the main
+worktree (rejects linked worktrees with `.git` file).
+
+To migrate legacy features from `.tws/<name>` to `.tws/features/<name>`:
+
+```sh
+tws migrate-layout --all       # preflight all, rollback on failure
+tws migrate-layout auth        # single feature
 ```
 
 Checkout mode is explicit; legacy repositories remain in external mode. It is intentionally single-repository and does not accept `tws new --repo`. `tws archive` hides a logical branch without deleting the Git branch; `tws delete` preserves branches unless an explicit branch-deletion flag is supplied.
