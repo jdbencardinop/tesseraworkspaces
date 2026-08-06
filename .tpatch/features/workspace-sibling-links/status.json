@@ -13,6 +13,10 @@
     {
       "slug": "workspace-hub-research",
       "kind": "soft"
+    },
+    {
+      "slug": "workspace-registry",
+      "kind": "soft"
     }
   ]
 }
