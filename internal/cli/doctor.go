@@ -13,8 +13,12 @@ func doctorCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "doctor [feature]",
 		Short: "Run health checks on workspaces",
-		Long:  "Check branch consistency, uncommitted changes, and inject symlinks. With no args, checks all features.",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `Check workspace and stack health. With no args, checks all features.
+
+Warnings such as a dirty checkout, active Git operation, stale ancestry, or
+recoverable lock/session state are reported with exit 0 for interactive use.
+Corrupt or unreadable persisted state returns a non-zero exit status.`,
+		Args: cobra.MaximumNArgs(1),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			if len(args) == 0 {
 				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
@@ -22,6 +26,16 @@ func doctorCmd() *cobra.Command {
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Checkout mode dispatch
+			ws, wsErr := internal.RequireWorkspace()
+			if wsErr == nil && ws.Mode == internal.ModeCheckout {
+				feature := ""
+				if len(args) == 1 {
+					feature = args[0]
+				}
+				return runCheckoutDoctor(ws, feature)
+			}
+
 			if len(args) == 1 {
 				_, err := checkFeatureE(args[0])
 				return err
@@ -85,4 +99,21 @@ func checkFeatureE(feature string) (int, error) {
 	}
 
 	return len(issues), nil
+}
+
+func runCheckoutDoctor(ws internal.Workspace, feature string) error {
+	report, err := internal.BuildCheckoutHealthReport(ws, nil)
+	if err != nil {
+		return err
+	}
+	if feature != "" {
+		if err := report.FilterFeature(feature); err != nil {
+			return err
+		}
+	}
+	fmt.Print(internal.FormatCheckoutHealth(report))
+	if report.HasErrors() {
+		return fmt.Errorf("checkout workspace has corrupt or unreadable state")
+	}
+	return nil
 }

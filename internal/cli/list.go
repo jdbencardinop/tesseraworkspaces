@@ -28,6 +28,11 @@ func listCmd() *cobra.Command {
 				ws = internal.Workspace{MetadataRoot: wsRoot, Mode: internal.ModeExternal}
 			}
 
+			// Checkout mode dispatch
+			if ws.Mode == internal.ModeCheckout {
+				return runCheckoutList(ws)
+			}
+
 			features, listErr := ws.ListFeaturesResolved()
 			if listErr != nil {
 				return listErr
@@ -105,4 +110,13 @@ func listCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func runCheckoutList(ws internal.Workspace) error {
+	entries, err := internal.BuildCheckoutList(ws)
+	if err != nil {
+		return err
+	}
+	fmt.Print(internal.FormatCheckoutList(ws, entries))
+	return nil
 }

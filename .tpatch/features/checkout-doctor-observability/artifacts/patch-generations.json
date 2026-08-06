@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "feature": "checkout-doctor-observability",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_9f6d50cb29c4",
+      "kind": "record",
+      "patch_sha256": "3080da47c2d6aad24ebe54f6f6b7e24bc7c1208f65ca9360ca4ea2a54d5003df",
+      "git_patch_id": "6a571d22e19ab06e8a7ee798185e3f0af5ef4506",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "b74492c495f378ea86955504528a9f9314be13e19889c8e78c2515e6d1b24199",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "patches/001-record.patch",
+      "base_commit": "ae7c93bfb95eecd56bdbaa77db8f4f03163b449c",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "assets/skills/claude/tesseraworkspaces/SKILL.md",
+        "internal/checkout_health.go",
+        "internal/checkout_health_test.go",
+        "internal/cli/checkout_doctor_test.go",
+        "internal/cli/doctor.go",
+        "internal/cli/list.go"
+      ],
+      "dependencies": [
+        {
+          "slug": "checkout-agent-sessions",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "686482c3c468f8ec19ededb294c18a3bede2055f7adc90f7ec968a3f3046f0b6",
+          "parent_recipe_sha256": "e1c404baef9a09e9ba54b7427bd3824e83bd1eec8e02a447bf62329955318562"
+        },
+        {
+          "slug": "checkout-stack-safety",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "481f98df0a47377796d58068eef358da635879a49f695a02c41b5492e2998d2f",
+          "parent_recipe_sha256": "aca1663d17d69ebe8797492561d2eb36f3d69292906983d127f53af0d08b69f3"
+        },
+        {
+          "slug": "checkout-workspace-lifecycle",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "1aefaa7a144eb038ee4f344593dc14faa4ada99c0961cf4f8d7eaa66199694c0",
+          "parent_recipe_sha256": "21e86e0411083619cc1d189207073f09306e17b9dd11146be47e81d1d55d292d"
+        },
+        {
+          "slug": "fix-checkout-feature-path-routing",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "ae8d2a826310ab286dc28e26a6b2965ef9fe0f902c25af75c2718ca5f1a92e93",
+          "parent_recipe_sha256": "01576e6383ec60a9df9144a6cb6231fbfded4602536dc1cecaa0a66c525aa3ed"
+        },
+        {
+          "slug": "fix-external-feature-dir-resolution",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "a74eee8fdca17dd26dd16030e4fe54afc72e36b1a3fa4aeb403cc04bacb134fc",
+          "parent_recipe_sha256": "d9a5f37a93ee74c18b6784aad1ca81eae3a0a7d6bcf399f3b8abfe9767f534cf"
+        }
+      ],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}

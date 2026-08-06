@@ -1,0 +1,4 @@
+ assets/skills/claude/tesseraworkspaces/SKILL.md | 21 ++++++++++++++-
+ internal/cli/doctor.go                          | 35 +++++++++++++++++++++++--
+ internal/cli/list.go                            | 14 ++++++++++
+ 3 files changed, 67 insertions(+), 3 deletions(-)

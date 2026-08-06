@@ -179,7 +179,26 @@ tws doctor                # check all features
 tws doctor auth           # check one feature
 ```
 
-Detects: wrong branch, uncommitted changes, missing inject symlinks.
+**External mode** detects: wrong branch, uncommitted changes, missing inject symlinks.
+
+**Checkout mode** produces a comprehensive read-only report covering:
+- Workspace identity (mode, stable ID, repo, metadata root)
+- Current branch (or detached HEAD), dirty state, active Git operation (merge/rebase/cherry-pick/revert)
+- Sync transactions: discovers all `.tws/state/*-checkout-sync.*` entries, classifies live/stale/invalid, shows stage/failure/lock PID and exact `--continue`/`--abort` guidance
+- Agent session: PID or tmux liveness, state/lock mismatch detection, `tws close` guidance
+- Per-entry: logical name, Git branch, archive/ref/current status, base ancestry (current/stale/missing/cross-repo), local and parent HEAD SHAs
+- Context links: inspects recorded symlink targets (healthy/missing/replaced/not-symlink)
+
+Doctor never mutates Git state, locks, or files. Warnings and informational issues do not return an error exit; only corrupt metadata or unreadable state does.
+
+### Checkout List
+
+In checkout mode, `tws list` shows:
+- Logical branch name and Git branch (when different)
+- Current branch marker
+- Archived status
+- Ancestry status (stale/missing)
+- Active session marker
 
 ## Checkout Workspace Mode
 

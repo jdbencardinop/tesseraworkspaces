@@ -2,13 +2,16 @@
   "id": "checkout-doctor-observability",
   "slug": "checkout-doctor-observability",
   "title": "Add checkout-mode doctor and list observability: report workspace mode/stable identity, current Git branch and matching logical feature/entry, dirty/detached/active Git operation state, checkout sync transaction/lock and recovery status, checkout agent/tmux session ownership and stale state, branch existence/archive status, parent-child ancestry, and injected context link health. Distinguish materialized external worktrees from checkout logical branches. Preserve external doctor/list behavior. Update embedded skills.",
-  "state": "implementing",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-08-05T16:33:57Z",
-  "updated_at": "2026-08-05T16:33:57Z",
-  "last_command": "apply --mode started",
-  "notes": "Implementation in progress",
-  "apply": {},
+  "updated_at": "2026-08-06T00:55:10Z",
+  "last_command": "record",
+  "notes": "landed at 2026-08-06T00:55:11Z",
+  "apply": {
+    "base_commit": "ae7c93bfb95eecd56bdbaa77db8f4f03163b449c",
+    "has_patch": true
+  },
   "reconcile": {},
   "depends_on": [
     {
