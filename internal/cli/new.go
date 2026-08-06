@@ -160,6 +160,9 @@ func createWorktree(feature, name, requestedBase, repoPath string, force bool) e
 	featurePath := internal.FeaturePath(feature)
 	path := internal.WorktreePath(feature, name)
 
+	if err := internal.EnsureExternalWorkspaceMarker(internal.TwsRoot()); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(featurePath, 0755); err != nil {
 		return err
 	}

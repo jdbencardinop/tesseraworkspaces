@@ -252,7 +252,9 @@ func recreateExternal(export internal.WorkspaceExport, injectSrc string) error {
 	featurePath := internal.FeaturePath(feature)
 
 	wsRoot := internal.TwsRoot()
-	os.MkdirAll(filepath.Join(wsRoot, ".tws-workspace"), 0755) //nolint:errcheck
+	if err := internal.EnsureExternalWorkspaceMarker(wsRoot); err != nil {
+		return err
+	}
 	os.MkdirAll(filepath.Join(featurePath, "worktrees"), 0755) //nolint:errcheck
 
 	if _, err := os.Stat(filepath.Join(featurePath, "FEATURE.md")); os.IsNotExist(err) {

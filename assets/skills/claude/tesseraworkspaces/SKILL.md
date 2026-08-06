@@ -38,6 +38,7 @@ tws <command> [args]
 | `tws inject <feature> [branch] [--into <path>]` | Sync inject/ files into worktrees |
 | `tws hooks install [feature]` | Install Claude Code auto-read hooks |
 | `tws hooks remove [feature]` | Remove auto-read hooks |
+| `tws registry add/list/show/check/...` | Manage opt-in global workspace discovery |
 | `tws doctor [feature]` | Run health checks |
 | `tws rename feature <old> <new>` | Rename a feature |
 | `tws rename branch <feature> <old> <new>` | Rename a branch |
@@ -171,6 +172,32 @@ tws hooks remove auth            # uninstall hooks
 This writes `.claude/settings.local.json` in each worktree with SessionStart hooks that run `tws decisions show --mine` on startup and resume. Unread decisions appear automatically at the start of each session.
 
 **Note:** `tws decisions show` and `tws decisions ack` work without a feature argument when run from inside a worktree — the feature is auto-detected from the path.
+
+### Global Workspace Registry
+
+The registry is opt-in discovery state stored under the XDG data directory. It never owns or deletes repositories/workspaces.
+
+```sh
+tws registry add /path/to/repo --alias rp
+tws registry list
+tws registry show rp
+tws registry check rp
+tws registry repair rp /new/path
+tws registry alias rp aks-rp
+tws registry remove rp
+tws registry prune --missing --force   # --force required in non-TTY use
+```
+
+`tws init --register --register-alias <name>` enrolls the current repository after a successful initialization; it fails with a not-a-Git-repository error outside a repo. Selectors are exact ID, alias, or canonical path; do not guess fuzzy names. An alias may not shadow an entry ID or a registered path.
+
+`tws registry list --json` and `tws registry check --json` emit an array (`[]` when empty) with snake_case keys.
+
+**Workspace identity and markers.** On explicit enrollment, tws writes a small opaque marker file inside tool-owned metadata. Git-backed targets use `.git/tws/workspace-id`; checkout mode and linked worktrees share the main repository's Git common directory. External workspaces use `.tws-workspace/workspace-id`. The marker survives moves and workspace-mode switches.
+
+- `tws registry check` is read-only; it never creates or repairs markers.
+- Moved target → `tws registry repair <selector> <new-path>` succeeds with no extra flag because the marker and Git identity are unchanged.
+- Replaced or deleted marker → status `mismatched`; rerun repair with `--allow-identity-change` only when the replacement is intentional.
+- `tws registry remove` and `tws registry prune` drop registry metadata only; targets and marker files are never deleted.
 
 ### Health Checks
 

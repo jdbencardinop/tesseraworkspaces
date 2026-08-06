@@ -1,0 +1,3791 @@
+diff --git a/.claude/worktrees/agent-a5ee19e3 b/.claude/worktrees/agent-a5ee19e3
+new file mode 160000
+index 0000000..9b6c10e
+--- /dev/null
++++ b/.claude/worktrees/agent-a5ee19e3
+@@ -0,0 +1 @@
++Subproject commit 9b6c10e546a052bed8cd769e6678d04aa9b07baa
+diff --git a/.claude/worktrees/agent-a7c6aa7a b/.claude/worktrees/agent-a7c6aa7a
+new file mode 160000
+index 0000000..9b6c10e
+--- /dev/null
++++ b/.claude/worktrees/agent-a7c6aa7a
+@@ -0,0 +1 @@
++Subproject commit 9b6c10e546a052bed8cd769e6678d04aa9b07baa
+diff --git a/README.md b/README.md
+index 554874e..8fce0c1 100644
+--- a/README.md
++++ b/README.md
+@@ -114,6 +114,7 @@ tws import --from-repo auth         # recreate on another machine
+ ```sh
+ tws init                            # install Claude + Copilot skills
+ tws init --agent claude             # Claude only
++tws init --register --register-alias myapp   # also enroll in the global registry
+ ```
+ 
+ ## All Commands
+@@ -141,7 +142,41 @@ tws init --agent claude             # Claude only
+ | `tws import <file> [--from-repo]` | Import workspace |
+ | `tws template sync [--all] [--template dir]` | Backfill templates |
+ | `tws close <feature> <branch>` | Kill tmux session |
+-| `tws init [--agent] [--force]` | Install agent skills |
++| `tws registry add <path> [--alias name]` | Register a repo/workspace for discovery |
++| `tws registry list/show/check [--json]` | Inspect registered workspaces |
++| `tws registry alias <selector> <alias> [--remove]` | Manage aliases |
++| `tws registry repair <selector> <new-path> [--allow-identity-change]` | Re-point a moved entry |
++| `tws registry remove <selector>` | Drop registry metadata (never deletes files) |
++| `tws registry prune --missing [--force]` | Drop entries whose targets are gone |
++| `tws init [--agent] [--force] [--register] [--register-alias name]` | Install agent skills |
++
++### Global Workspace Registry
++
++Opt-in discovery index at `${XDG_DATA_HOME:-~/.local/share}/tws/registry.yaml`
++(directory `0700`, file `0600`). Nothing is created until you enroll explicitly.
++
++```sh
++tws registry add . --alias myapp          # enroll the current repo/workspace
++tws init --register --register-alias myapp  # enroll after a successful init
++tws registry list --json                  # deterministic output; empty is []
++tws registry check                        # ok / missing / mismatched / invalid
++tws registry repair myapp /new/path       # re-point after a move
++tws registry prune --missing --force      # --force required in non-TTY use
++```
++
++Selectors are exact: entry ID, alias, or canonical path. Aliases may not shadow
++an entry ID or a registered path.
++
++**Identity and markers.** Git-backed targets carry a small opaque marker at
++`.git/tws/workspace-id`; checkout mode and linked worktrees share the main
++repository's Git common directory. External workspaces use
++`.tws-workspace/workspace-id`. Markers are created only on explicit enrollment,
++survive moves and workspace-mode switches, and detect replacement.
++
++- Moved target: `tws registry repair <selector> <new-path>` — no extra flag needed.
++- Replaced target (marker or Git identity changed): add `--allow-identity-change`.
++- `tws registry remove`/`prune` only drop registry metadata; targets and marker
++  files are never deleted.
+ 
+ ## Requirements
+ 
+diff --git a/assets/skills/claude/tesseraworkspaces/SKILL.md b/assets/skills/claude/tesseraworkspaces/SKILL.md
+index db1f3bc..3016772 100644
+--- a/assets/skills/claude/tesseraworkspaces/SKILL.md
++++ b/assets/skills/claude/tesseraworkspaces/SKILL.md
+@@ -38,6 +38,7 @@ tws <command> [args]
+ | `tws inject <feature> [branch] [--into <path>]` | Sync inject/ files into worktrees |
+ | `tws hooks install [feature]` | Install Claude Code auto-read hooks |
+ | `tws hooks remove [feature]` | Remove auto-read hooks |
++| `tws registry add/list/show/check/...` | Manage opt-in global workspace discovery |
+ | `tws doctor [feature]` | Run health checks |
+ | `tws rename feature <old> <new>` | Rename a feature |
+ | `tws rename branch <feature> <old> <new>` | Rename a branch |
+@@ -172,6 +173,32 @@ This writes `.claude/settings.local.json` in each worktree with SessionStart hoo
+ 
+ **Note:** `tws decisions show` and `tws decisions ack` work without a feature argument when run from inside a worktree — the feature is auto-detected from the path.
+ 
++### Global Workspace Registry
++
++The registry is opt-in discovery state stored under the XDG data directory. It never owns or deletes repositories/workspaces.
++
++```sh
++tws registry add /path/to/repo --alias rp
++tws registry list
++tws registry show rp
++tws registry check rp
++tws registry repair rp /new/path
++tws registry alias rp aks-rp
++tws registry remove rp
++tws registry prune --missing --force   # --force required in non-TTY use
++```
++
++`tws init --register --register-alias <name>` enrolls the current repository after a successful initialization; it fails with a not-a-Git-repository error outside a repo. Selectors are exact ID, alias, or canonical path; do not guess fuzzy names. An alias may not shadow an entry ID or a registered path.
++
++`tws registry list --json` and `tws registry check --json` emit an array (`[]` when empty) with snake_case keys.
++
++**Workspace identity and markers.** On explicit enrollment, tws writes a small opaque marker file inside tool-owned metadata. Git-backed targets use `.git/tws/workspace-id`; checkout mode and linked worktrees share the main repository's Git common directory. External workspaces use `.tws-workspace/workspace-id`. The marker survives moves and workspace-mode switches.
++
++- `tws registry check` is read-only; it never creates or repairs markers.
++- Moved target → `tws registry repair <selector> <new-path>` succeeds with no extra flag because the marker and Git identity are unchanged.
++- Replaced or deleted marker → status `mismatched`; rerun repair with `--allow-identity-change` only when the replacement is intentional.
++- `tws registry remove` and `tws registry prune` drop registry metadata only; targets and marker files are never deleted.
++
+ ### Health Checks
+ 
+ ```sh
+diff --git a/assets/skills/copilot/tws.prompt.md b/assets/skills/copilot/tws.prompt.md
+index a6e9a6e..05149d7 100644
+--- a/assets/skills/copilot/tws.prompt.md
++++ b/assets/skills/copilot/tws.prompt.md
+@@ -28,6 +28,7 @@ You are working in a project that uses `tws` for feature-scoped workspaces with
+ - `tws decisions ack [feature]` — Mark all decisions as read
+ - `tws inject <feature> [branch] [--into <path>]` — Sync inject/ files into worktrees
+ - `tws hooks install/remove [feature]` — Manage agent hooks
++- `tws registry add/list/show/check/...` — Manage opt-in global workspace discovery
+ - `tws doctor [feature]` — Run health checks
+ - `tws rename feature/branch` — Rename feature or branch
+ - `tws config show/set/get` — Manage configuration
+@@ -77,6 +78,24 @@ Checkout mode stores local metadata under `.tws/features/`, adds `.tws/` to the
+ 
+ `tws open <feature> <branch>` runs the configured agent in the repository root and restores the original branch after the agent/follow-up shell exits. `--tmux` keeps the branch owned by a recorded tmux session until `tws close`. Only one checkout session may own the repository; `--all` and automatic hooks remain unsupported.
+ 
++## Global Workspace Registry
++
++Opt-in discovery index under the XDG data directory. It never owns, moves, or deletes repositories/workspaces.
++
++```sh
++tws registry add /path/to/repo --alias rp
++tws init --register --register-alias rp    # enroll after a successful init
++tws registry list --json                   # array output; empty is []
++tws registry check                         # ok / missing / mismatched / invalid
++tws registry repair rp /new/path           # moved target: no extra flag needed
++tws registry remove rp                     # metadata only; files are untouched
++tws registry prune --missing --force       # --force required in non-TTY use
++```
++
++Selectors are exact ID, alias, or canonical path — never guess fuzzy names. An alias may not shadow an entry ID or a registered path.
++
++Enrollment writes a small opaque marker file in tool-owned metadata. Git-backed targets use `.git/tws/workspace-id`; checkout mode and linked worktrees share the main repository's Git common directory. External workspaces use `.tws-workspace/workspace-id`. Identity survives moves and workspace-mode switches and detects replacement. `tws registry check` is read-only. Use `--allow-identity-change` on repair only when the target was intentionally replaced.
++
+ ## Workflow
+ 
+ 1. Run `tws list` to see current state
+diff --git a/internal/cli/add.go b/internal/cli/add.go
+index 55a3aa9..075e669 100644
+--- a/internal/cli/add.go
++++ b/internal/cli/add.go
+@@ -60,8 +60,8 @@ func addExternal(feature string, templates []string, newBranch, base string, for
+ 	root := internal.FeaturePath(feature)
+ 	wsRoot := internal.TwsRoot()
+ 
+-	if err := os.MkdirAll(filepath.Join(wsRoot, ".tws-workspace"), 0755); err != nil {
+-		return fmt.Errorf("creating workspace marker: %w", err)
++	if err := internal.EnsureExternalWorkspaceMarker(wsRoot); err != nil {
++		return err
+ 	}
+ 	if err := os.MkdirAll(filepath.Join(root, "worktrees"), 0755); err != nil {
+ 		return fmt.Errorf("creating worktrees directory: %w", err)
+diff --git a/internal/cli/checkout_lifecycle_test.go b/internal/cli/checkout_lifecycle_test.go
+index b70fec3..b1e0707 100644
+--- a/internal/cli/checkout_lifecycle_test.go
++++ b/internal/cli/checkout_lifecycle_test.go
+@@ -638,9 +638,7 @@ func TestExport_RuntimeStateExcluded(t *testing.T) {
+ 
+ // ---------- Finding 7: Init ----------
+ 
+-func TestInit_CheckoutRegisterFails(t *testing.T) {
+-	// The init command should fail early if --register with --mode checkout
+-	// We test the enableWorkspaceMode + register logic
++func TestInit_EnableWorkspaceModeValidation(t *testing.T) {
+ 	dir := t.TempDir()
+ 
+ 	// Create a git repo
+diff --git a/internal/cli/importcmd.go b/internal/cli/importcmd.go
+index 6e8590e..e5872f5 100644
+--- a/internal/cli/importcmd.go
++++ b/internal/cli/importcmd.go
+@@ -252,7 +252,9 @@ func recreateExternal(export internal.WorkspaceExport, injectSrc string) error {
+ 	featurePath := internal.FeaturePath(feature)
+ 
+ 	wsRoot := internal.TwsRoot()
+-	os.MkdirAll(filepath.Join(wsRoot, ".tws-workspace"), 0755) //nolint:errcheck
++	if err := internal.EnsureExternalWorkspaceMarker(wsRoot); err != nil {
++		return err
++	}
+ 	os.MkdirAll(filepath.Join(featurePath, "worktrees"), 0755) //nolint:errcheck
+ 
+ 	if _, err := os.Stat(filepath.Join(featurePath, "FEATURE.md")); os.IsNotExist(err) {
+diff --git a/internal/cli/init.go b/internal/cli/init.go
+index 5eed756..f8c9cfb 100644
+--- a/internal/cli/init.go
++++ b/internal/cli/init.go
+@@ -15,6 +15,7 @@ func initCmd() *cobra.Command {
+ 	var force bool
+ 	var mode string
+ 	var register bool
++	var registerAlias string
+ 
+ 	cmd := &cobra.Command{
+ 		Use:   "init",
+@@ -28,15 +29,8 @@ Use --agent to override detection. Use --mode to set workspace_mode.`,
+ 			if err != nil {
+ 				return err
+ 			}
+-
+-			// --register with checkout mode should fail early.
+-			if register && mode == "checkout" {
+-				return fmt.Errorf("--register is not supported with --mode checkout: workspace registry is not yet implemented")
+-			}
+-
+-			// Even without checkout, --register is not implemented.
+-			if register {
+-				return fmt.Errorf("--register is not yet implemented; workspace registry is planned for a future release")
++			if registerAlias != "" && !register {
++				return fmt.Errorf("--register-alias requires --register")
+ 			}
+ 
+ 			// Set workspace_mode if --mode is specified.
+@@ -65,6 +59,24 @@ Use --agent to override detection. Use --mode to set workspace_mode.`,
+ 			default:
+ 				installFile(filepath.Join(cwd, ".claude", "skills", "tesseraworkspaces", "SKILL.md"), skills.ClaudeSkill, force)
+ 			}
++
++			// Register the repository root after successful init.
++			if register {
++				repoRoot, rootErr := internal.MainRepoRootIn(cwd)
++				if rootErr != nil {
++					return fmt.Errorf("--register requires a Git repository: %s is not inside one; run 'git init' first, or drop --register", cwd)
++				}
++				_, created, err := internal.RegistryAdd(repoRoot, registerAlias)
++				if err != nil {
++					return fmt.Errorf("registry: %w", err)
++				}
++				if created {
++					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  registered in global registry\n")
++				} else {
++					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  already registered in global registry\n")
++				}
++			}
++
+ 			return nil
+ 		},
+ 	}
+@@ -72,7 +84,8 @@ Use --agent to override detection. Use --mode to set workspace_mode.`,
+ 	cmd.Flags().StringVar(&agent, "agent", "", "Agent type: claude, copilot (default: auto-detect)")
+ 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Overwrite existing skill file")
+ 	cmd.Flags().StringVar(&mode, "mode", "", "Set workspace mode: external, checkout")
+-	cmd.Flags().BoolVar(&register, "register", false, "Register this workspace in the global registry (not yet implemented)")
++	cmd.Flags().BoolVar(&register, "register", false, "Register workspace in global registry after init")
++	cmd.Flags().StringVar(&registerAlias, "register-alias", "", "Alias for registry registration (requires --register)")
+ 
+ 	return cmd
+ }
+diff --git a/internal/cli/new.go b/internal/cli/new.go
+index ea5424a..53486c2 100644
+--- a/internal/cli/new.go
++++ b/internal/cli/new.go
+@@ -160,6 +160,9 @@ func createWorktree(feature, name, requestedBase, repoPath string, force bool) e
+ 	featurePath := internal.FeaturePath(feature)
+ 	path := internal.WorktreePath(feature, name)
+ 
++	if err := internal.EnsureExternalWorkspaceMarker(internal.TwsRoot()); err != nil {
++		return err
++	}
+ 	if err := os.MkdirAll(featurePath, 0755); err != nil {
+ 		return err
+ 	}
+diff --git a/internal/cli/registry.go b/internal/cli/registry.go
+new file mode 100644
+index 0000000..e691d89
+--- /dev/null
++++ b/internal/cli/registry.go
+@@ -0,0 +1,328 @@
++package cli
++
++import (
++	"encoding/json"
++	"fmt"
++	"io"
++	"os"
++	"sort"
++	"strings"
++
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
++	"github.com/spf13/cobra"
++)
++
++func registryCmd() *cobra.Command {
++	cmd := &cobra.Command{
++		Use:   "registry",
++		Short: "Manage the global workspace registry",
++	}
++
++	cmd.AddCommand(
++		registryAddCmd(),
++		registryListCmd(),
++		registryShowCmd(),
++		registryAliasCmd(),
++		registryCheckCmd(),
++		registryRepairCmd(),
++		registryRemoveCmd(),
++		registryPruneCmd(),
++	)
++
++	return cmd
++}
++
++func registryAddCmd() *cobra.Command {
++	var alias string
++	cmd := &cobra.Command{
++		Use:   "add [path]",
++		Short: "Register a workspace",
++		Args:  cobra.MaximumNArgs(1),
++		RunE: func(cmd *cobra.Command, args []string) error {
++			path := "."
++			if len(args) > 0 {
++				path = args[0]
++			}
++
++			entry, created, err := internal.RegistryAdd(path, alias)
++			if err != nil {
++				return err
++			}
++
++			if created {
++				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "registered: %s (%s)\n", entry.ID, entry.Path)
++			} else {
++				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "already registered: %s (%s)\n", entry.ID, entry.Path)
++			}
++			return nil
++		},
++	}
++	cmd.Flags().StringVar(&alias, "alias", "", "Alias for the workspace")
++	return cmd
++}
++
++func registryListCmd() *cobra.Command {
++	var jsonOutput bool
++	cmd := &cobra.Command{
++		Use:   "list",
++		Short: "List registered workspaces",
++		RunE: func(cmd *cobra.Command, args []string) error {
++			entries, err := internal.RegistryList()
++			if err != nil {
++				return err
++			}
++			if entries == nil {
++				entries = []internal.RegistryEntry{}
++			}
++			sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
++
++			if jsonOutput {
++				enc := json.NewEncoder(cmd.OutOrStdout())
++				enc.SetIndent("", "  ")
++				return enc.Encode(entries)
++			}
++
++			if len(entries) == 0 {
++				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no workspaces registered")
++				return nil
++			}
++
++			for _, e := range entries {
++				aliases := ""
++				if len(e.Aliases) > 0 {
++					aliases = " [" + strings.Join(e.Aliases, ", ") + "]"
++				}
++				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s  %-18s  %s%s\n", e.ID, e.Kind, e.Path, aliases)
++			}
++			return nil
++		},
++	}
++	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output as JSON")
++	return cmd
++}
++
++func registryShowCmd() *cobra.Command {
++	var jsonOutput bool
++	cmd := &cobra.Command{
++		Use:   "show <selector>",
++		Short: "Show details of a registered workspace",
++		Args:  cobra.ExactArgs(1),
++		RunE: func(cmd *cobra.Command, args []string) error {
++			entry, err := internal.RegistryResolve(args[0])
++			if err != nil {
++				return err
++			}
++			if entry == nil {
++				return fmt.Errorf("no entry matching %q", args[0])
++			}
++
++			if jsonOutput {
++				enc := json.NewEncoder(cmd.OutOrStdout())
++				enc.SetIndent("", "  ")
++				return enc.Encode(entry)
++			}
++
++			w := cmd.OutOrStdout()
++			_, _ = fmt.Fprintf(w, "ID:          %s\n", entry.ID)
++			_, _ = fmt.Fprintf(w, "Path:        %s\n", entry.Path)
++			_, _ = fmt.Fprintf(w, "Kind:        %s\n", entry.Kind)
++			if len(entry.Aliases) > 0 {
++				_, _ = fmt.Fprintf(w, "Aliases:     %s\n", strings.Join(entry.Aliases, ", "))
++			}
++			if entry.GitIdentity != "" {
++				_, _ = fmt.Fprintf(w, "Identity:    %s\n", entry.GitIdentity)
++			}
++			if entry.MarkerID != "" {
++				_, _ = fmt.Fprintf(w, "Marker:      %s\n", entry.MarkerID)
++			}
++			_, _ = fmt.Fprintf(w, "Added:       %s\n", entry.AddedAt.Format("2006-01-02 15:04:05"))
++			if !entry.UpdatedAt.IsZero() {
++				_, _ = fmt.Fprintf(w, "Updated:     %s\n", entry.UpdatedAt.Format("2006-01-02 15:04:05"))
++			}
++			return nil
++		},
++	}
++	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output as JSON")
++	return cmd
++}
++
++func registryAliasCmd() *cobra.Command {
++	var remove bool
++	cmd := &cobra.Command{
++		Use:   "alias <selector> <alias>",
++		Short: "Add or remove an alias",
++		Args:  cobra.ExactArgs(2),
++		RunE: func(cmd *cobra.Command, args []string) error {
++			if err := internal.RegistryAlias(args[0], args[1], remove); err != nil {
++				return err
++			}
++			if remove {
++				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "removed alias %q\n", args[1])
++			} else {
++				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "added alias %q\n", args[1])
++			}
++			return nil
++		},
++	}
++	cmd.Flags().BoolVar(&remove, "remove", false, "Remove the alias instead of adding")
++	return cmd
++}
++
++func registryCheckCmd() *cobra.Command {
++	var jsonOutput bool
++	cmd := &cobra.Command{
++		Use:   "check [selector]",
++		Short: "Check health of registered workspaces",
++		Args:  cobra.MaximumNArgs(1),
++		RunE: func(cmd *cobra.Command, args []string) error {
++			if len(args) == 1 {
++				entry, err := internal.RegistryResolve(args[0])
++				if err != nil {
++					return err
++				}
++				if entry == nil {
++					return fmt.Errorf("no entry matching %q", args[0])
++				}
++				result := internal.RegistryCheck(entry)
++				if jsonOutput {
++					enc := json.NewEncoder(cmd.OutOrStdout())
++					enc.SetIndent("", "  ")
++					return enc.Encode([]internal.CheckResult{result})
++				}
++				printCheckResult(cmd.OutOrStdout(), result)
++				return nil
++			}
++
++			entries, err := internal.RegistryList()
++			if err != nil {
++				return err
++			}
++
++			results := []internal.CheckResult{}
++			for i := range entries {
++				results = append(results, internal.RegistryCheck(&entries[i]))
++			}
++
++			if jsonOutput {
++				enc := json.NewEncoder(cmd.OutOrStdout())
++				enc.SetIndent("", "  ")
++				return enc.Encode(results)
++			}
++
++			if len(results) == 0 {
++				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no workspaces registered")
++				return nil
++			}
++
++			for _, r := range results {
++				printCheckResult(cmd.OutOrStdout(), r)
++			}
++			return nil
++		},
++	}
++	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output as JSON")
++	return cmd
++}
++
++// printCheckResult renders one human-readable check result plus a concise
++// recovery hint. Hints are human-output only; JSON output is unchanged.
++func printCheckResult(w io.Writer, r internal.CheckResult) {
++	_, _ = fmt.Fprintf(w, "%s  %s: %s", r.Entry.ID, r.Entry.Path, r.Status)
++	if r.Detail != "" {
++		_, _ = fmt.Fprintf(w, " (%s)", r.Detail)
++	}
++	_, _ = fmt.Fprintln(w)
++	if hint := checkRecoveryHint(r); hint != "" {
++		_, _ = fmt.Fprintf(w, "  hint: %s\n", hint)
++	}
++}
++
++func checkRecoveryHint(r internal.CheckResult) string {
++	switch r.Status {
++	case internal.StatusMissing:
++		return fmt.Sprintf("run 'tws registry repair %s <new-path>' if it moved, or 'tws registry prune --missing' to drop it", r.Entry.ID)
++	case internal.StatusMismatched, internal.StatusInvalid:
++		return fmt.Sprintf("run 'tws registry repair %s <path>' (add --allow-identity-change if the target was intentionally replaced)", r.Entry.ID)
++	default:
++		return ""
++	}
++}
++
++func registryRepairCmd() *cobra.Command {
++	var allowIdentityChange bool
++	cmd := &cobra.Command{
++		Use:   "repair <selector> <new-path>",
++		Short: "Move a registry entry to a validated new path",
++		Args:  cobra.ExactArgs(2),
++		RunE: func(cmd *cobra.Command, args []string) error {
++			if err := internal.RegistryRepair(args[0], args[1], allowIdentityChange); err != nil {
++				return err
++			}
++			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "registry entry repaired")
++			return nil
++		},
++	}
++	cmd.Flags().BoolVar(&allowIdentityChange, "allow-identity-change", false, "accept a different kind or repository identity at the new path")
++	return cmd
++}
++
++func registryRemoveCmd() *cobra.Command {
++	cmd := &cobra.Command{
++		Use:   "remove <selector>",
++		Short: "Remove a workspace from the registry (does not delete files)",
++		Args:  cobra.ExactArgs(1),
++		RunE: func(cmd *cobra.Command, args []string) error {
++			if err := internal.RegistryRemove(args[0]); err != nil {
++				return err
++			}
++			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "removed from registry")
++			return nil
++		},
++	}
++	return cmd
++}
++
++func registryPruneCmd() *cobra.Command {
++	var force bool
++	var missing bool
++	cmd := &cobra.Command{
++		Use:   "prune --missing",
++		Short: "Remove entries whose paths no longer exist",
++		Args:  cobra.NoArgs,
++		RunE: func(cmd *cobra.Command, args []string) error {
++			if !missing {
++				return fmt.Errorf("--missing is required; registry prune only removes missing targets")
++			}
++			if !isTerminal() && !force {
++				return fmt.Errorf("non-TTY environment requires --force")
++			}
++
++			removed, err := internal.RegistryPrune()
++			if err != nil {
++				return err
++			}
++
++			if len(removed) == 0 {
++				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "nothing to prune")
++				return nil
++			}
++
++			for _, e := range removed {
++				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "pruned: %s (%s)\n", e.ID, e.Path)
++			}
++			return nil
++		},
++	}
++	cmd.Flags().BoolVar(&missing, "missing", false, "Remove entries whose targets are missing")
++	cmd.Flags().BoolVar(&force, "force", false, "Required for non-TTY environments")
++	return cmd
++}
++
++// isTerminal checks if stdout is a terminal.
++func isTerminal() bool {
++	fi, err := os.Stdout.Stat()
++	if err != nil {
++		return false
++	}
++	return fi.Mode()&os.ModeCharDevice != 0
++}
+diff --git a/internal/cli/registry_test.go b/internal/cli/registry_test.go
+new file mode 100644
+index 0000000..c45681e
+--- /dev/null
++++ b/internal/cli/registry_test.go
+@@ -0,0 +1,609 @@
++package cli
++
++import (
++	"bytes"
++	"encoding/json"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
++)
++
++func setupRegistryTestEnv(t *testing.T) (home string, cleanup func()) {
++	t.Helper()
++	tmpDir := t.TempDir()
++	home = filepath.Join(tmpDir, "home")
++	if err := os.MkdirAll(home, 0755); err != nil {
++		t.Fatalf("creating test home: %v", err)
++	}
++
++	xdgData := filepath.Join(tmpDir, "data")
++	if err := os.MkdirAll(xdgData, 0755); err != nil {
++		t.Fatalf("creating test XDG data dir: %v", err)
++	}
++
++	t.Setenv("HOME", home)
++	t.Setenv("XDG_DATA_HOME", xdgData)
++
++	cleanup = func() {} // t.Setenv auto-restores; t.TempDir auto-cleans
++	return home, cleanup
++}
++
++func createCLITestRepo(t *testing.T) string {
++	t.Helper()
++	dir := t.TempDir()
++	commands := [][]string{
++		{"git", "init"},
++		{"git", "config", "user.email", "test@test.com"},
++		{"git", "config", "user.name", "Test"},
++	}
++	for _, args := range commands {
++		cmd := exec.Command(args[0], args[1:]...)
++		cmd.Dir = dir
++		if out, err := cmd.CombinedOutput(); err != nil {
++			t.Fatalf("git setup %v: %v\n%s", args, err, out)
++		}
++	}
++	testFile := filepath.Join(dir, "README")
++	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
++		t.Fatalf("writing test file: %v", err)
++	}
++	cmd := exec.Command("git", "add", ".")
++	cmd.Dir = dir
++	if out, err := cmd.CombinedOutput(); err != nil {
++		t.Fatalf("git add: %v\n%s", err, out)
++	}
++	cmd = exec.Command("git", "commit", "-m", "init")
++	cmd.Dir = dir
++	if out, err := cmd.CombinedOutput(); err != nil {
++		t.Fatalf("git commit: %v\n%s", err, out)
++	}
++	return dir
++}
++
++func TestRegistryAddCmd(t *testing.T) {
++	_, cleanup := setupRegistryTestEnv(t)
++	defer cleanup()
++
++	repo := createCLITestRepo(t)
++
++	cmd := registryCmd()
++	var out bytes.Buffer
++	cmd.SetOut(&out)
++	cmd.SetArgs([]string{"add", repo, "--alias", "test-ws"})
++	if err := cmd.Execute(); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestRegistryListCmd_JSON(t *testing.T) {
++	_, cleanup := setupRegistryTestEnv(t)
++	defer cleanup()
++
++	repo := createCLITestRepo(t)
++	if _, _, err := internal.RegistryAdd(repo, "listed"); err != nil {
++		t.Fatalf("pre-adding entry: %v", err)
++	}
++
++	cmd := registryCmd()
++	var out bytes.Buffer
++	cmd.SetOut(&out)
++	cmd.SetArgs([]string{"list", "--json"})
++	if err := cmd.Execute(); err != nil {
++		t.Fatal(err)
++	}
++
++	var entries []internal.RegistryEntry
++	if err := json.Unmarshal(out.Bytes(), &entries); err != nil {
++		t.Fatalf("parsing JSON: %v", err)
++	}
++	if len(entries) != 1 {
++		t.Fatalf("expected 1 entry, got %d", len(entries))
++	}
++}
++
++func TestRegistryShowCmd(t *testing.T) {
++	_, cleanup := setupRegistryTestEnv(t)
++	defer cleanup()
++
++	repo := createCLITestRepo(t)
++	if _, _, err := internal.RegistryAdd(repo, "showme"); err != nil {
++		t.Fatalf("pre-adding entry: %v", err)
++	}
++
++	cmd := registryCmd()
++	var out bytes.Buffer
++	cmd.SetOut(&out)
++	cmd.SetArgs([]string{"show", "showme"})
++	if err := cmd.Execute(); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestRegistryRemoveCmd(t *testing.T) {
++	_, cleanup := setupRegistryTestEnv(t)
++	defer cleanup()
++
++	repo := createCLITestRepo(t)
++	if _, _, err := internal.RegistryAdd(repo, "removecli"); err != nil {
++		t.Fatalf("pre-adding entry: %v", err)
++	}
++
++	cmd := registryCmd()
++	cmd.SetArgs([]string{"remove", "removecli"})
++	if err := cmd.Execute(); err != nil {
++		t.Fatal(err)
++	}
++
++	entries, err := internal.RegistryList()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(entries) != 0 {
++		t.Fatal("expected empty after remove")
++	}
++}
++
++func TestRegistryPruneCmd_RequiresForceNonTTY(t *testing.T) {
++	_, cleanup := setupRegistryTestEnv(t)
++	defer cleanup()
++
++	repo := createCLITestRepo(t)
++	if _, _, err := internal.RegistryAdd(repo, "willprune"); err != nil {
++		t.Fatalf("pre-adding entry: %v", err)
++	}
++	if err := os.RemoveAll(repo); err != nil {
++		t.Fatalf("removing repo: %v", err)
++	}
++
++	// In test environment stdout is not a TTY, so --force is required.
++	cmd := registryCmd()
++	cmd.SetArgs([]string{"prune", "--missing"})
++	err := cmd.Execute()
++	if err == nil {
++		t.Fatal("expected error without --force in non-TTY")
++	}
++
++	cmd = registryCmd()
++	cmd.SetArgs([]string{"prune", "--missing", "--force"})
++	if err := cmd.Execute(); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestRegistrySubcommands(t *testing.T) {
++	cmd := registryCmd()
++
++	subCmds := make(map[string]bool)
++	for _, c := range cmd.Commands() {
++		subCmds[c.Name()] = true
++	}
++
++	expected := []string{"add", "list", "show", "alias", "check", "repair", "remove", "prune"}
++	for _, name := range expected {
++		if !subCmds[name] {
++			t.Errorf("missing subcommand: %s", name)
++		}
++	}
++}
++
++// ---------- JSON shape ----------
++
++func TestRegistryListCmd_EmptyJSONIsArray(t *testing.T) {
++	_, cleanup := setupRegistryTestEnv(t)
++	defer cleanup()
++
++	cmd := registryCmd()
++	var out bytes.Buffer
++	cmd.SetOut(&out)
++	cmd.SetArgs([]string{"list", "--json"})
++	if err := cmd.Execute(); err != nil {
++		t.Fatal(err)
++	}
++	if got := strings.TrimSpace(out.String()); got != "[]" {
++		t.Fatalf("expected empty JSON array, got %q", got)
++	}
++}
++
++func TestRegistryCheckCmd_EmptyJSONIsArray(t *testing.T) {
++	_, cleanup := setupRegistryTestEnv(t)
++	defer cleanup()
++
++	cmd := registryCmd()
++	var out bytes.Buffer
++	cmd.SetOut(&out)
++	cmd.SetArgs([]string{"check", "--json"})
++	if err := cmd.Execute(); err != nil {
++		t.Fatal(err)
++	}
++	if got := strings.TrimSpace(out.String()); got != "[]" {
++		t.Fatalf("expected empty JSON array, got %q", got)
++	}
++}
++
++func TestRegistryListCmd_JSONKeyShape(t *testing.T) {
++	_, cleanup := setupRegistryTestEnv(t)
++	defer cleanup()
++
++	repo := createCLITestRepo(t)
++	if _, _, err := internal.RegistryAdd(repo, "shaped"); err != nil {
++		t.Fatal(err)
++	}
++
++	cmd := registryCmd()
++	var out bytes.Buffer
++	cmd.SetOut(&out)
++	cmd.SetArgs([]string{"list", "--json"})
++	if err := cmd.Execute(); err != nil {
++		t.Fatal(err)
++	}
++
++	var raw []map[string]json.RawMessage
++	if err := json.Unmarshal(out.Bytes(), &raw); err != nil {
++		t.Fatalf("parsing JSON: %v", err)
++	}
++	if len(raw) != 1 {
++		t.Fatalf("expected 1 entry, got %d", len(raw))
++	}
++	assertExactKeys(t, raw[0], "id", "path", "aliases", "kind", "git_identity", "marker_id", "added_at", "updated_at")
++}
++
++func TestRegistryCheckCmd_JSONKeyShape(t *testing.T) {
++	_, cleanup := setupRegistryTestEnv(t)
++	defer cleanup()
++
++	repo := createCLITestRepo(t)
++	if _, _, err := internal.RegistryAdd(repo, "shaped"); err != nil {
++		t.Fatal(err)
++	}
++
++	cmd := registryCmd()
++	var out bytes.Buffer
++	cmd.SetOut(&out)
++	cmd.SetArgs([]string{"check", "--json"})
++	if err := cmd.Execute(); err != nil {
++		t.Fatal(err)
++	}
++
++	var raw []map[string]json.RawMessage
++	if err := json.Unmarshal(out.Bytes(), &raw); err != nil {
++		t.Fatalf("parsing JSON: %v", err)
++	}
++	if len(raw) != 1 {
++		t.Fatalf("expected 1 result, got %d", len(raw))
++	}
++	assertExactKeys(t, raw[0], "entry", "status")
++
++	var entry map[string]json.RawMessage
++	if err := json.Unmarshal(raw[0]["entry"], &entry); err != nil {
++		t.Fatal(err)
++	}
++	assertExactKeys(t, entry, "id", "path", "aliases", "kind", "git_identity", "marker_id", "added_at", "updated_at")
++}
++
++func assertExactKeys(t *testing.T, obj map[string]json.RawMessage, want ...string) {
++	t.Helper()
++	expected := make(map[string]bool, len(want))
++	for _, k := range want {
++		expected[k] = true
++		if _, ok := obj[k]; !ok {
++			t.Errorf("missing JSON key %q", k)
++		}
++	}
++	for k := range obj {
++		if !expected[k] {
++			t.Errorf("unexpected JSON key %q", k)
++		}
++	}
++}
++
++// ---------- Human output ----------
++
++func TestRegistryCheckCmd_EmptyHumanOutput(t *testing.T) {
++	_, cleanup := setupRegistryTestEnv(t)
++	defer cleanup()
++
++	cmd := registryCmd()
++	var out bytes.Buffer
++	cmd.SetOut(&out)
++	cmd.SetArgs([]string{"check"})
++	if err := cmd.Execute(); err != nil {
++		t.Fatal(err)
++	}
++	if got := strings.TrimSpace(out.String()); got != "no workspaces registered" {
++		t.Fatalf("expected 'no workspaces registered', got %q", got)
++	}
++}
++
++func TestRegistryCheckCmd_MissingPrintsRecoveryHint(t *testing.T) {
++	_, cleanup := setupRegistryTestEnv(t)
++	defer cleanup()
++
++	repo := createCLITestRepo(t)
++	entry, _, err := internal.RegistryAdd(repo, "hinted")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := os.RemoveAll(entry.Path); err != nil {
++		t.Fatal(err)
++	}
++
++	cmd := registryCmd()
++	var out bytes.Buffer
++	cmd.SetOut(&out)
++	cmd.SetArgs([]string{"check", "hinted"})
++	if err := cmd.Execute(); err != nil {
++		t.Fatal(err)
++	}
++	got := out.String()
++	if !strings.Contains(got, "missing") {
++		t.Fatalf("expected missing status, got %q", got)
++	}
++	if !strings.Contains(got, "hint:") || !strings.Contains(got, "registry repair") {
++		t.Fatalf("expected a recovery hint, got %q", got)
++	}
++}
++
++func TestRegistryCommands_WriteToCommandOutput(t *testing.T) {
++	_, cleanup := setupRegistryTestEnv(t)
++	defer cleanup()
++
++	repo := createCLITestRepo(t)
++
++	for _, tc := range []struct {
++		name string
++		args []string
++		want string
++	}{
++		{"add", []string{"add", repo, "--alias", "routed"}, "registered:"},
++		{"alias", []string{"alias", "routed", "extra"}, "added alias"},
++		{"remove", []string{"remove", "routed"}, "removed from registry"},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			cmd := registryCmd()
++			var out bytes.Buffer
++			cmd.SetOut(&out)
++			cmd.SetArgs(tc.args)
++			if err := cmd.Execute(); err != nil {
++				t.Fatal(err)
++			}
++			if !strings.Contains(out.String(), tc.want) {
++				t.Fatalf("expected %q on command output, got %q", tc.want, out.String())
++			}
++		})
++	}
++}
++
++func TestRegistryRemoveCmd_AbsentRegistryFails(t *testing.T) {
++	_, cleanup := setupRegistryTestEnv(t)
++	defer cleanup()
++
++	cmd := registryCmd()
++	var out bytes.Buffer
++	cmd.SetOut(&out)
++	cmd.SetErr(&out)
++	cmd.SetArgs([]string{"remove", "nothing-here"})
++	err := cmd.Execute()
++	if err == nil {
++		t.Fatal("expected an error when removing from an absent registry")
++	}
++	if !strings.Contains(err.Error(), "no entry matching") {
++		t.Fatalf("expected selector-not-found error, got: %v", err)
++	}
++	if strings.Contains(out.String(), "removed from registry") {
++		t.Fatal("must never print success when nothing was removed")
++	}
++}
++
++// ---------- init --register ----------
++
++func TestInitCmd_RegisterEnrollsRepo(t *testing.T) {
++	_, cleanup := setupRegistryTestEnv(t)
++	defer cleanup()
++
++	repo := createCLITestRepo(t)
++	oldCWD, _ := os.Getwd()
++	t.Cleanup(func() { _ = os.Chdir(oldCWD) })
++	if err := os.Chdir(repo); err != nil {
++		t.Fatal(err)
++	}
++
++	cmd := initCmd()
++	var out bytes.Buffer
++	cmd.SetOut(&out)
++	cmd.SetArgs([]string{"--register", "--register-alias", "inited"})
++	if err := cmd.Execute(); err != nil {
++		t.Fatal(err)
++	}
++
++	entry, err := internal.RegistryResolve("inited")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if entry == nil {
++		t.Fatal("expected --register to enroll the repository")
++	}
++	if entry.Kind != internal.RegistryKindRepo {
++		t.Fatalf("expected repo kind, got %s", entry.Kind)
++	}
++	if !strings.Contains(out.String(), "registered in global registry") {
++		t.Fatalf("expected registration confirmation on command output, got %q", out.String())
++	}
++}
++
++func TestInitCmd_RegisterAliasRequiresRegister(t *testing.T) {
++	_, cleanup := setupRegistryTestEnv(t)
++	defer cleanup()
++
++	repo := createCLITestRepo(t)
++	oldCWD, _ := os.Getwd()
++	t.Cleanup(func() { _ = os.Chdir(oldCWD) })
++	if err := os.Chdir(repo); err != nil {
++		t.Fatal(err)
++	}
++
++	cmd := initCmd()
++	cmd.SetOut(&bytes.Buffer{})
++	cmd.SetErr(&bytes.Buffer{})
++	cmd.SetArgs([]string{"--register-alias", "orphan"})
++	err := cmd.Execute()
++	if err == nil || !strings.Contains(err.Error(), "--register-alias requires --register") {
++		t.Fatalf("expected --register-alias to require --register, got: %v", err)
++	}
++}
++
++func TestInitCmd_RegisterRejectsInvalidAlias(t *testing.T) {
++	_, cleanup := setupRegistryTestEnv(t)
++	defer cleanup()
++
++	repo := createCLITestRepo(t)
++	oldCWD, _ := os.Getwd()
++	t.Cleanup(func() { _ = os.Chdir(oldCWD) })
++	if err := os.Chdir(repo); err != nil {
++		t.Fatal(err)
++	}
++
++	cmd := initCmd()
++	cmd.SetOut(&bytes.Buffer{})
++	cmd.SetErr(&bytes.Buffer{})
++	cmd.SetArgs([]string{"--register", "--register-alias", "bad alias"})
++	if err := cmd.Execute(); err == nil {
++		t.Fatal("expected an invalid registration alias to be rejected")
++	}
++
++	entries, err := internal.RegistryList()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(entries) != 0 {
++		t.Fatalf("invalid alias must not enroll anything, got %d entries", len(entries))
++	}
++}
++
++func TestInitCmd_RegisterOutsideGitGivesContextualError(t *testing.T) {
++	_, cleanup := setupRegistryTestEnv(t)
++	defer cleanup()
++
++	plain := t.TempDir()
++	oldCWD, _ := os.Getwd()
++	t.Cleanup(func() { _ = os.Chdir(oldCWD) })
++	if err := os.Chdir(plain); err != nil {
++		t.Fatal(err)
++	}
++
++	cmd := initCmd()
++	cmd.SetOut(&bytes.Buffer{})
++	cmd.SetErr(&bytes.Buffer{})
++	cmd.SetArgs([]string{"--register"})
++	err := cmd.Execute()
++	if err == nil {
++		t.Fatal("expected --register outside a Git repository to fail")
++	}
++	if !strings.Contains(err.Error(), "Git repository") {
++		t.Fatalf("expected a contextual not-a-Git-repository error, got: %v", err)
++	}
++
++	// Init itself still ran to completion before registration was attempted.
++	if _, statErr := os.Stat(filepath.Join(plain, ".claude", "skills", "tesseraworkspaces", "SKILL.md")); statErr != nil {
++		t.Fatalf("registration must happen only after a successful init: %v", statErr)
++	}
++}
++
++// ---------- External workspaces created by `tws new` ----------
++
++func TestRegistryAdd_ExternalWorkspaceCreatedByNew(t *testing.T) {
++	_, cleanup := setupRegistryTestEnv(t)
++	defer cleanup()
++
++	repo := setupGitRepo(t, "master")
++	wsRoot := filepath.Join(t.TempDir(), "workspace")
++	t.Setenv("TWS_ROOT", wsRoot)
++	oldCWD, _ := os.Getwd()
++	t.Cleanup(func() { _ = os.Chdir(oldCWD) })
++	if err := os.Chdir(repo); err != nil {
++		t.Fatal(err)
++	}
++
++	if err := createWorktree("feature", "branch", "", repo, false); err != nil {
++		t.Fatalf("createWorktree: %v", err)
++	}
++
++	markerDir := filepath.Join(wsRoot, ".tws-workspace")
++	if info, err := os.Stat(markerDir); err != nil || !info.IsDir() {
++		t.Fatalf("tws new must produce the standard external workspace marker: %v", err)
++	}
++	if _, err := os.Stat(filepath.Join(markerDir, "workspace-id")); !os.IsNotExist(err) {
++		t.Fatalf("tws new must not create an enrollment identity, got: %v", err)
++	}
++	if _, err := os.Stat(internal.WorktreePath("feature", "branch")); err != nil {
++		t.Fatalf("worktree path changed: %v", err)
++	}
++
++	entry, created, err := internal.RegistryAdd(wsRoot, "from-new")
++	if err != nil {
++		t.Fatalf("registering a workspace created by tws new: %v", err)
++	}
++	if !created {
++		t.Fatal("expected a new registry entry")
++	}
++	if entry.Kind != internal.RegistryKindExternalWorkspace {
++		t.Fatalf("expected external-workspace kind, got %s", entry.Kind)
++	}
++	if entry.MarkerID == "" {
++		t.Fatal("expected a persistent marker identity")
++	}
++	if result := internal.RegistryCheck(entry); result.Status != internal.StatusOK {
++		t.Fatalf("expected ok, got %s (%s)", result.Status, result.Detail)
++	}
++}
++
++func TestRegistryCheckCmd_SelectorJSONIsArray(t *testing.T) {
++	_, cleanup := setupRegistryTestEnv(t)
++	defer cleanup()
++
++	repo := createCLITestRepo(t)
++	if _, _, err := internal.RegistryAdd(repo, "selected"); err != nil {
++		t.Fatal(err)
++	}
++
++	cmd := registryCmd()
++	var out bytes.Buffer
++	cmd.SetOut(&out)
++	cmd.SetArgs([]string{"check", "selected", "--json"})
++	if err := cmd.Execute(); err != nil {
++		t.Fatal(err)
++	}
++
++	var results []internal.CheckResult
++	if err := json.Unmarshal(out.Bytes(), &results); err != nil {
++		t.Fatalf("selector JSON must be an array: %v\n%s", err, out.String())
++	}
++	if len(results) != 1 || results[0].Status != internal.StatusOK {
++		t.Fatalf("expected one ok result, got %+v", results)
++	}
++}
++
++func TestRegistryCheckCmd_HumanOutputIncludesPath(t *testing.T) {
++	_, cleanup := setupRegistryTestEnv(t)
++	defer cleanup()
++
++	repo := createCLITestRepo(t)
++	entry, _, err := internal.RegistryAdd(repo, "visible")
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	cmd := registryCmd()
++	var out bytes.Buffer
++	cmd.SetOut(&out)
++	cmd.SetArgs([]string{"check", "visible"})
++	if err := cmd.Execute(); err != nil {
++		t.Fatal(err)
++	}
++	if !strings.Contains(out.String(), entry.Path) {
++		t.Fatalf("check output must identify the workspace path, got %q", out.String())
++	}
++}
+diff --git a/internal/cli/root.go b/internal/cli/root.go
+index a659c89..e7a0267 100644
+--- a/internal/cli/root.go
++++ b/internal/cli/root.go
+@@ -45,6 +45,7 @@ func Execute() int {
+ 		enableCmd(),
+ 		modeCmd(),
+ 		migrateLayoutCmd(),
++		registryCmd(),
+ 	)
+ 
+ 	if err := rootCmd.Execute(); err != nil {
+diff --git a/internal/registry.go b/internal/registry.go
+new file mode 100644
+index 0000000..79abee8
+--- /dev/null
++++ b/internal/registry.go
+@@ -0,0 +1,945 @@
++package internal
++
++import (
++	"bytes"
++	"crypto/rand"
++	"crypto/sha256"
++	"encoding/hex"
++	"errors"
++	"fmt"
++	"io/fs"
++	"net/url"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"regexp"
++	"strings"
++	"time"
++
++	"gopkg.in/yaml.v3"
++)
++
++// Registry schema version.
++const registryVersion = 1
++
++type RegistryKind string
++
++const (
++	RegistryKindRepo              RegistryKind = "repo"
++	RegistryKindExternalWorkspace RegistryKind = "external-workspace"
++	RegistryKindCheckoutWorkspace RegistryKind = "checkout-workspace"
++)
++
++// validRegistryKind reports whether kind is a recognised registry kind.
++func validRegistryKind(kind RegistryKind) bool {
++	switch kind {
++	case RegistryKindRepo, RegistryKindExternalWorkspace, RegistryKindCheckoutWorkspace:
++		return true
++	default:
++		return false
++	}
++}
++
++// RegistryFile is the on-disk structure for the workspace registry.
++type RegistryFile struct {
++	Version int             `yaml:"version" json:"version"`
++	Entries []RegistryEntry `yaml:"entries" json:"entries"`
++}
++
++// RegistryEntry represents a single workspace in the registry.
++type RegistryEntry struct {
++	ID          string       `yaml:"id" json:"id"`
++	Path        string       `yaml:"path" json:"path"`
++	Aliases     []string     `yaml:"aliases,omitempty" json:"aliases,omitempty"`
++	Kind        RegistryKind `yaml:"kind" json:"kind"`
++	GitIdentity string       `yaml:"git_identity,omitempty" json:"git_identity,omitempty"`
++	MarkerID    string       `yaml:"marker_id,omitempty" json:"marker_id,omitempty"`
++	AddedAt     time.Time    `yaml:"added_at" json:"added_at"`
++	UpdatedAt   time.Time    `yaml:"updated_at" json:"updated_at"`
++}
++
++// CheckStatus represents the health state of a registry entry.
++type CheckStatus string
++
++const (
++	StatusOK         CheckStatus = "ok"
++	StatusMissing    CheckStatus = "missing"
++	StatusMismatched CheckStatus = "mismatched"
++	StatusInvalid    CheckStatus = "invalid"
++)
++
++// CheckResult is the result of checking a registry entry.
++type CheckResult struct {
++	Entry  *RegistryEntry `json:"entry"`
++	Status CheckStatus    `json:"status"`
++	Detail string         `json:"detail,omitempty"`
++}
++
++// registryDir returns the directory for registry data.
++// Uses XDG_DATA_HOME if set, else ~/.local/share/tesseraworkspaces.
++func registryDir() string {
++	base := os.Getenv("XDG_DATA_HOME")
++	if base == "" {
++		home, err := os.UserHomeDir()
++		if err != nil {
++			home = os.Getenv("HOME")
++		}
++		base = filepath.Join(home, ".local", "share")
++	}
++	return filepath.Join(base, "tws")
++}
++
++// registryPath returns the file path for the registry YAML.
++func registryPath() string {
++	return filepath.Join(registryDir(), "registry.yaml")
++}
++
++// lockPath returns the file path for the registry lock file.
++func lockPath() string {
++	return filepath.Join(registryDir(), "registry.lock")
++}
++
++// RegistryLock holds an advisory POSIX file lock on the registry.
++//
++// Platform boundary: this implementation uses POSIX fcntl-style advisory
++// locking via syscall.Flock. It is supported on macOS and Linux only.
++// Windows is NOT supported; a build-tag gated stub would be needed for
++// cross-platform use.
++type RegistryLock struct {
++	f *os.File
++}
++
++// AcquireRegistryLock obtains an exclusive advisory lock on the registry.
++// Callers MUST call Release when done, and MUST check its returned error.
++func AcquireRegistryLock() (*RegistryLock, error) {
++	dir := registryDir()
++	if err := os.MkdirAll(dir, 0700); err != nil {
++		return nil, fmt.Errorf("creating registry dir: %w", err)
++	}
++
++	f, err := os.OpenFile(lockPath(), os.O_CREATE|os.O_RDWR, 0600)
++	if err != nil {
++		return nil, fmt.Errorf("opening lock file: %w", err)
++	}
++
++	if err := flockExclusive(f); err != nil {
++		_ = f.Close() // best-effort; lock was never acquired
++		return nil, fmt.Errorf("acquiring lock: %w", err)
++	}
++
++	return &RegistryLock{f: f}, nil
++}
++
++// Release releases the registry lock. The returned error MUST be checked
++// by callers; combine it with any primary operation error using errors.Join
++// so that neither is lost.
++func (l *RegistryLock) Release() error {
++	unlockErr := flockUnlock(l.f)
++	closeErr := l.f.Close()
++	return errors.Join(unlockErr, closeErr)
++}
++
++// readRegistry loads the registry file or returns nil if absent.
++// Absence does NOT create any files on disk. The schema is validated before
++// the result is handed to any caller, so a malformed or future-version
++// registry can never be silently rewritten (and thereby truncated) by a
++// mutator.
++func readRegistry() (*RegistryFile, error) {
++	data, err := os.ReadFile(registryPath())
++	if errors.Is(err, fs.ErrNotExist) {
++		return nil, nil
++	}
++	if err != nil {
++		return nil, fmt.Errorf("reading registry: %w", err)
++	}
++	return decodeRegistry(data)
++}
++
++// decodeRegistry parses and validates registry bytes.
++//
++// Version handling happens first, using a permissive probe decode, so that a
++// newer schema is reported as a version error rather than as an unknown-field
++// error. Only a supported version is then decoded strictly, which guarantees
++// unknown fields are never silently dropped on the next write.
++func decodeRegistry(data []byte) (*RegistryFile, error) {
++	var probe struct {
++		Version int `yaml:"version"`
++	}
++	if err := yaml.Unmarshal(data, &probe); err != nil {
++		return nil, fmt.Errorf("parsing registry %s: %w", registryPath(), err)
++	}
++	if probe.Version <= 0 {
++		return nil, fmt.Errorf("registry %s is malformed: missing or invalid schema version", registryPath())
++	}
++	if probe.Version > registryVersion {
++		return nil, fmt.Errorf("registry %s uses schema version %d but this tws supports version %d; upgrade tws instead of modifying the registry",
++			registryPath(), probe.Version, registryVersion)
++	}
++
++	dec := yaml.NewDecoder(bytes.NewReader(data))
++	dec.KnownFields(true)
++	var reg RegistryFile
++	if err := dec.Decode(&reg); err != nil {
++		return nil, fmt.Errorf("parsing registry %s: %w", registryPath(), err)
++	}
++	if err := validateRegistry(&reg); err != nil {
++		return nil, err
++	}
++	return &reg, nil
++}
++
++// validateRegistry enforces the core invariants that every reader and mutator
++// depends on: unique non-empty IDs, unique absolute canonical paths, known
++// kinds, well-formed aliases, and globally unambiguous selectors.
++func validateRegistry(reg *RegistryFile) error {
++	if reg.Version <= 0 || reg.Version > registryVersion {
++		return fmt.Errorf("registry %s has unsupported schema version %d", registryPath(), reg.Version)
++	}
++
++	ids := make(map[string]bool, len(reg.Entries))
++	paths := make(map[string]bool, len(reg.Entries))
++	markers := make(map[string]string, len(reg.Entries))
++	aliases := make(map[string]string, len(reg.Entries))
++
++	for i := range reg.Entries {
++		e := &reg.Entries[i]
++		if e.ID == "" {
++			return fmt.Errorf("registry %s is invalid: entry %d has an empty id", registryPath(), i)
++		}
++		if !aliasRegexp.MatchString(e.ID) {
++			return fmt.Errorf("registry %s is invalid: entry id %q is malformed", registryPath(), e.ID)
++		}
++		if ids[e.ID] {
++			return fmt.Errorf("registry %s is invalid: duplicate entry id %q", registryPath(), e.ID)
++		}
++		ids[e.ID] = true
++
++		if e.Path == "" || !filepath.IsAbs(e.Path) || filepath.Clean(e.Path) != e.Path {
++			return fmt.Errorf("registry %s is invalid: entry %s has a non-canonical path %q", registryPath(), e.ID, e.Path)
++		}
++		if paths[e.Path] {
++			return fmt.Errorf("registry %s is invalid: duplicate entry path %q", registryPath(), e.Path)
++		}
++		paths[e.Path] = true
++
++		if !validRegistryKind(e.Kind) {
++			return fmt.Errorf("registry %s is invalid: entry %s has unknown kind %q", registryPath(), e.ID, e.Kind)
++		}
++		if e.MarkerID != "" {
++			if !markerIDRegexp.MatchString(e.MarkerID) {
++				return fmt.Errorf("registry %s is invalid: entry %s has malformed marker identity", registryPath(), e.ID)
++			}
++			if owner, seen := markers[e.MarkerID]; seen {
++				return fmt.Errorf("registry %s is invalid: entries %s and %s share marker identity", registryPath(), owner, e.ID)
++			}
++			markers[e.MarkerID] = e.ID
++		}
++
++		for _, alias := range e.Aliases {
++			if err := ValidateAlias(alias); err != nil {
++				return fmt.Errorf("registry %s is invalid: entry %s: %w", registryPath(), e.ID, err)
++			}
++			if owner, seen := aliases[alias]; seen {
++				return fmt.Errorf("registry %s is invalid: alias %q is used by both %s and %s", registryPath(), alias, owner, e.ID)
++			}
++			aliases[alias] = e.ID
++		}
++	}
++
++	for alias, owner := range aliases {
++		if ids[alias] {
++			return fmt.Errorf("registry %s is invalid: alias %q on entry %s shadows an entry id", registryPath(), alias, owner)
++		}
++		if paths[alias] {
++			return fmt.Errorf("registry %s is invalid: alias %q on entry %s shadows a registered path", registryPath(), alias, owner)
++		}
++	}
++	return nil
++}
++
++// saveRegistry atomically writes the registry to disk.
++// Write, fsync, and rename errors are never masked. Cleanup failures
++// (temp close after error, temp remove) are joined so both the primary
++// error and cleanup error are visible.
++func saveRegistry(reg *RegistryFile) error {
++	dir := registryDir()
++	if err := os.MkdirAll(dir, 0700); err != nil {
++		return fmt.Errorf("creating registry dir: %w", err)
++	}
++
++	data, err := yaml.Marshal(reg)
++	if err != nil {
++		return fmt.Errorf("marshaling registry: %w", err)
++	}
++
++	f, err := os.CreateTemp(dir, ".registry-*.tmp")
++	if err != nil {
++		return fmt.Errorf("creating temp registry: %w", err)
++	}
++	tmp := f.Name()
++
++	if _, err := f.Write(data); err != nil {
++		closeErr := f.Close()
++		removeErr := os.Remove(tmp)
++		return errors.Join(fmt.Errorf("writing registry: %w", err), closeErr, removeErr)
++	}
++
++	if err := f.Sync(); err != nil {
++		closeErr := f.Close()
++		removeErr := os.Remove(tmp)
++		return errors.Join(fmt.Errorf("syncing registry: %w", err), closeErr, removeErr)
++	}
++
++	if err := f.Close(); err != nil {
++		removeErr := os.Remove(tmp)
++		return errors.Join(fmt.Errorf("closing temp registry: %w", err), removeErr)
++	}
++
++	if err := os.Chmod(tmp, 0600); err != nil {
++		removeErr := os.Remove(tmp)
++		return errors.Join(fmt.Errorf("setting registry permissions: %w", err), removeErr)
++	}
++
++	if err := os.Rename(tmp, registryPath()); err != nil {
++		removeErr := os.Remove(tmp)
++		return errors.Join(fmt.Errorf("renaming registry: %w", err), removeErr)
++	}
++
++	return nil
++}
++
++// generateID creates a short cryptographically-random hex ID.
++func generateID() (string, error) {
++	b := make([]byte, 8)
++	if _, err := rand.Read(b); err != nil {
++		return "", fmt.Errorf("generate registry ID: %w", err)
++	}
++	return hex.EncodeToString(b), nil
++}
++
++// ComputeGitIdentity returns a stable fingerprint for a git repository.
++// Uses the SHA-256 of the first commit hash + remote URL.
++func ComputeGitIdentity(path string) string {
++	var parts []string
++
++	cmd := exec.Command("git", "-C", path, "rev-list", "--max-parents=0", "HEAD")
++	if out, err := cmd.Output(); err == nil {
++		parts = append(parts, strings.TrimSpace(string(out)))
++	}
++
++	cmd = exec.Command("git", "-C", path, "remote", "get-url", "origin")
++	if out, err := cmd.Output(); err == nil {
++		parts = append(parts, normalizeRemoteURL(strings.TrimSpace(string(out))))
++	}
++
++	if len(parts) == 0 {
++		return ""
++	}
++
++	h := sha256.Sum256([]byte(strings.Join(parts, "\n")))
++	return hex.EncodeToString(h[:12])
++}
++
++func normalizeRemoteURL(raw string) string {
++	if strings.Contains(raw, "://") {
++		if parsed, err := url.Parse(raw); err == nil {
++			parsed.User = nil
++			parsed.RawQuery = ""
++			parsed.Fragment = ""
++			parsed.Host = strings.ToLower(parsed.Host)
++			return parsed.String()
++		}
++	}
++	// Normalize SCP-like SSH URLs (user@host:path) without retaining user info.
++	if at := strings.LastIndex(raw, "@"); at >= 0 {
++		raw = raw[at+1:]
++	}
++	if cut := strings.IndexAny(raw, "?#"); cut >= 0 {
++		raw = raw[:cut]
++	}
++	return raw
++}
++
++// registryTarget is the validated identity of a registry target on disk.
++type registryTarget struct {
++	Path        string
++	Kind        RegistryKind
++	GitIdentity string
++	MarkerID    string
++	MarkerDir   string
++}
++
++// inspectRegistryTarget validates path and derives its registry identity.
++//
++// Linked Git worktrees are normalized to the main repository root, matching
++// `tws init --register`, so the same repository is never enrolled twice under
++// different paths.
++//
++// When ensureMarker is true the caller is performing an explicit enrollment
++// and a persistent marker identity is created for workspace kinds after the
++// target has been validated. Read-only checks pass false. Repair also starts
++// read-only and creates a replacement marker only after explicit identity-
++// change consent.
++func inspectRegistryTarget(path string, ensureMarker bool) (registryTarget, error) {
++	absPath, err := filepath.Abs(path)
++	if err != nil {
++		return registryTarget{}, err
++	}
++	if resolved, resolveErr := filepath.EvalSymlinks(absPath); resolveErr == nil {
++		absPath = resolved
++	}
++	absPath = filepath.Clean(absPath)
++
++	if info, statErr := os.Stat(filepath.Join(absPath, workspaceMarker)); statErr == nil && info.IsDir() {
++		markerDir := ExternalMarkerDir(absPath)
++		markerID, markerErr := resolveMarkerID(markerDir, ensureMarker)
++		if markerErr != nil {
++			return registryTarget{}, markerErr
++		}
++		return registryTarget{Path: absPath, Kind: RegistryKindExternalWorkspace, MarkerID: markerID, MarkerDir: markerDir}, nil
++	}
++
++	// Validate that this is a real (non-bare) working tree before normalizing.
++	if _, repoErr := GitRepoRootIn(absPath); repoErr == nil {
++		repoRoot, mainErr := MainRepoRootIn(absPath)
++		if mainErr != nil {
++			return registryTarget{}, fmt.Errorf("resolving main repository root for %s: %w", absPath, mainErr)
++		}
++		if resolved, resolveErr := filepath.EvalSymlinks(repoRoot); resolveErr == nil {
++			repoRoot = resolved
++		}
++		repoRoot = filepath.Clean(repoRoot)
++
++		cfg := LoadConfigFile(filepath.Join(repoRoot, ".tws", "config.yaml"))
++		mode, ok := parseMode(cfg.WorkspaceMode)
++		if cfg.WorkspaceMode != "" && !ok {
++			return registryTarget{}, fmt.Errorf("invalid workspace_mode %q", cfg.WorkspaceMode)
++		}
++
++		markerDir, markerErr := GitMarkerDir(repoRoot)
++		if markerErr != nil {
++			return registryTarget{}, markerErr
++		}
++		target := registryTarget{
++			Path:        repoRoot,
++			Kind:        RegistryKindRepo,
++			GitIdentity: ComputeGitIdentity(repoRoot),
++			MarkerDir:   markerDir,
++		}
++		if mode == ModeCheckout && cfg.WorkspaceMode != "" {
++			target.Kind = RegistryKindCheckoutWorkspace
++		}
++		markerID, markerErr := resolveMarkerID(target.MarkerDir, ensureMarker)
++		if markerErr != nil {
++			return registryTarget{}, markerErr
++		}
++		target.MarkerID = markerID
++		return target, nil
++	}
++	return registryTarget{}, fmt.Errorf("%s is not a Git repository or tws external workspace", absPath)
++}
++
++// resolveMarkerID reads (or, for explicit enrollment, creates) the persistent
++// marker identity of a tool-owned metadata directory.
++func resolveMarkerID(markerDir string, ensure bool) (string, error) {
++	if ensure {
++		return EnsureWorkspaceMarkerID(markerDir)
++	}
++	return ReadWorkspaceMarkerID(markerDir)
++}
++
++// checkAliasCollision rejects an alias that would make selector resolution
++// ambiguous: aliases must not duplicate another entry's alias, and must never
++// shadow any entry ID or registered canonical path.
++func checkAliasCollision(reg *RegistryFile, alias string, ownerID string) error {
++	for i := range reg.Entries {
++		e := &reg.Entries[i]
++		if e.ID == alias {
++			return fmt.Errorf("alias %q collides with the ID of registry entry %s", alias, e.ID)
++		}
++		if e.Path == alias {
++			return fmt.Errorf("alias %q collides with the registered path of entry %s", alias, e.ID)
++		}
++		if e.ID != ownerID && containsAlias(e.Aliases, alias) {
++			return fmt.Errorf("alias %q already in use by entry %s", alias, e.ID)
++		}
++	}
++	return nil
++}
++
++// RegistryAdd adds or updates a workspace in the registry. If the workspace
++// is already present (by path), it is idempotent: returns the existing entry
++// with created=false. A proven identity mismatch at an already-registered
++// path is rejected instead of silently overwriting the recorded identity.
++// If an alias is provided and it already belongs to a different entry, or it
++// would shadow an entry ID or registered path, an error is returned.
++//
++// Returns the entry pointer, whether it was newly created, and any error.
++func RegistryAdd(path string, alias string) (*RegistryEntry, bool, error) {
++	if alias != "" {
++		if err := ValidateAlias(alias); err != nil {
++			return nil, false, err
++		}
++	}
++
++	target, err := inspectRegistryTarget(path, false)
++	if err != nil {
++		return nil, false, err
++	}
++
++	lock, err := AcquireRegistryLock()
++	if err != nil {
++		return nil, false, err
++	}
++	reg, err := readRegistry()
++	if err != nil {
++		releaseErr := lock.Release()
++		return nil, false, errors.Join(err, releaseErr)
++	}
++	target, err = inspectRegistryTarget(path, false)
++	if err != nil {
++		return nil, false, errors.Join(err, lock.Release())
++	}
++
++	if reg == nil {
++		reg = &RegistryFile{Version: registryVersion}
++	}
++
++	// Check for existing entry by path (idempotent add / duplicate alias).
++	for i := range reg.Entries {
++		if reg.Entries[i].Path != target.Path {
++			continue
++		}
++		existing := &reg.Entries[i]
++		if mismatch := identityMismatch(existing, target); mismatch != "" {
++			releaseErr := lock.Release()
++			return nil, false, errors.Join(
++				fmt.Errorf("%s is already registered as %s with a different identity (%s); "+
++					"rerun with 'tws registry repair %s %s --allow-identity-change' if this replacement is intentional",
++					target.Path, existing.ID, mismatch, existing.ID, target.Path),
++				releaseErr,
++			)
++		}
++
++		if alias != "" && !containsAlias(existing.Aliases, alias) {
++			if err := checkAliasCollision(reg, alias, existing.ID); err != nil {
++				releaseErr := lock.Release()
++				return nil, false, errors.Join(err, releaseErr)
++			}
++		}
++		if existing.MarkerID == "" {
++			target, err = inspectRegistryTarget(path, true)
++			if err != nil {
++				return nil, false, errors.Join(err, lock.Release())
++			}
++		}
++		changed := refreshIdentityHints(existing, target)
++		if alias != "" && !containsAlias(existing.Aliases, alias) {
++			existing.Aliases = append(existing.Aliases, alias)
++			changed = true
++		}
++		if changed {
++			existing.UpdatedAt = time.Now().UTC()
++			if err := saveRegistry(reg); err != nil {
++				releaseErr := lock.Release()
++				return nil, false, errors.Join(err, releaseErr)
++			}
++		}
++		releaseErr := lock.Release()
++		return existing, false, releaseErr
++	}
++
++	if target.MarkerID != "" {
++		for i := range reg.Entries {
++			if reg.Entries[i].MarkerID == target.MarkerID {
++				return nil, false, errors.Join(
++					fmt.Errorf("%s is already registered as %s at %s; run 'tws registry repair %s %s' if it moved",
++						target.Path, reg.Entries[i].ID, reg.Entries[i].Path, reg.Entries[i].ID, target.Path),
++					lock.Release(),
++				)
++			}
++		}
++	}
++
++	// Check alias availability for the new entry.
++	if alias != "" {
++		if err := checkAliasCollision(reg, alias, ""); err != nil {
++			releaseErr := lock.Release()
++			return nil, false, errors.Join(err, releaseErr)
++		}
++	}
++
++	target, err = inspectRegistryTarget(path, true)
++	if err != nil {
++		return nil, false, errors.Join(err, lock.Release())
++	}
++	for i := range reg.Entries {
++		if target.MarkerID != "" && reg.Entries[i].MarkerID == target.MarkerID {
++			return nil, false, errors.Join(
++				fmt.Errorf("%s is already registered as %s at %s; run 'tws registry repair %s %s' if it moved",
++					target.Path, reg.Entries[i].ID, reg.Entries[i].Path, reg.Entries[i].ID, target.Path),
++				lock.Release(),
++			)
++		}
++	}
++
++	now := time.Now().UTC()
++	id, err := generateID()
++	if err != nil {
++		return nil, false, errors.Join(err, lock.Release())
++	}
++	entry := RegistryEntry{
++		ID:          id,
++		Path:        target.Path,
++		Kind:        target.Kind,
++		GitIdentity: target.GitIdentity,
++		MarkerID:    target.MarkerID,
++		AddedAt:     now,
++		UpdatedAt:   now,
++	}
++
++	if alias != "" {
++		entry.Aliases = []string{alias}
++	}
++
++	reg.Entries = append(reg.Entries, entry)
++	if err := saveRegistry(reg); err != nil {
++		releaseErr := lock.Release()
++		return nil, false, errors.Join(err, releaseErr)
++	}
++
++	releaseErr := lock.Release()
++	return &entry, true, releaseErr
++}
++
++// identityMismatch reports a human-readable reason when the observed target
++// provably contradicts the identity recorded for an entry. Persistent marker
++// identity is authoritative; kind and Git fingerprint are refreshable metadata.
++// The Git fingerprint is an identity fallback only for legacy entries without
++// a marker.
++func identityMismatch(entry *RegistryEntry, target registryTarget) string {
++	if entry.MarkerID != "" {
++		if target.MarkerID == "" {
++			return "workspace marker file is missing"
++		}
++		if entry.MarkerID != target.MarkerID {
++			return "workspace marker identity changed"
++		}
++		return ""
++	}
++	if entry.GitIdentity != "" && target.GitIdentity != "" && entry.GitIdentity != target.GitIdentity {
++		return "git identity changed"
++	}
++	return ""
++}
++
++// refreshIdentityHints updates non-authoritative observed metadata and fills
++// a previously unknown persistent marker. It never overwrites a marker.
++func refreshIdentityHints(entry *RegistryEntry, target registryTarget) bool {
++	changed := false
++	if target.Kind != "" && entry.Kind != target.Kind {
++		entry.Kind = target.Kind
++		changed = true
++	}
++	if target.GitIdentity != "" && entry.GitIdentity != target.GitIdentity {
++		entry.GitIdentity = target.GitIdentity
++		changed = true
++	}
++	if entry.MarkerID == "" && target.MarkerID != "" {
++		entry.MarkerID = target.MarkerID
++		changed = true
++	}
++	return changed
++}
++
++// RegistryRemove removes a workspace from the registry by path, ID, or alias.
++// It never deletes the target workspace directory or its marker files.
++func RegistryRemove(selector string) error {
++	lock, err := AcquireRegistryLock()
++	if err != nil {
++		return err
++	}
++
++	reg, err := readRegistry()
++	if err != nil {
++		return errors.Join(err, lock.Release())
++	}
++	if reg == nil {
++		return errors.Join(fmt.Errorf("no entry matching %q", selector), lock.Release())
++	}
++
++	idx, err := resolveRegistryIndex(reg, selector)
++	if err != nil {
++		return errors.Join(err, lock.Release())
++	}
++
++	reg.Entries = append(reg.Entries[:idx], reg.Entries[idx+1:]...)
++	saveErr := saveRegistry(reg)
++	return errors.Join(saveErr, lock.Release())
++}
++
++// RegistryList returns all entries. Returns nil (not error) if registry absent.
++func RegistryList() ([]RegistryEntry, error) {
++	reg, err := readRegistry()
++	if err != nil {
++		return nil, err
++	}
++	if reg == nil {
++		return nil, nil
++	}
++	return reg.Entries, nil
++}
++
++func resolveRegistryIndex(reg *RegistryFile, selector string) (int, error) {
++	pathSelector := ""
++	if abs, err := filepath.Abs(selector); err == nil {
++		if resolved, resolveErr := filepath.EvalSymlinks(abs); resolveErr == nil {
++			abs = resolved
++		}
++		pathSelector = filepath.Clean(abs)
++	}
++	var matches []int
++	for i, entry := range reg.Entries {
++		if entry.ID == selector || entry.Path == selector || (pathSelector != "" && entry.Path == pathSelector) || containsAlias(entry.Aliases, selector) {
++			matches = append(matches, i)
++		}
++	}
++	switch len(matches) {
++	case 0:
++		return -1, fmt.Errorf("no entry matching %q", selector)
++	case 1:
++		return matches[0], nil
++	default:
++		return -1, fmt.Errorf("ambiguous selector %q matches %d entries", selector, len(matches))
++	}
++}
++
++// RegistryResolve finds an entry by selector (path, ID, or alias).
++// Returns nil if not found. Returns error on ambiguity.
++func RegistryResolve(selector string) (*RegistryEntry, error) {
++	reg, err := readRegistry()
++	if err != nil {
++		return nil, err
++	}
++	if reg == nil {
++		return nil, nil
++	}
++
++	index, err := resolveRegistryIndex(reg, selector)
++	if err != nil {
++		if strings.HasPrefix(err.Error(), "no entry matching") {
++			return nil, nil
++		}
++		return nil, err
++	}
++	return &reg.Entries[index], nil
++}
++
++// RegistryCheck validates the health of a specific entry.
++// It is strictly read-only: it never creates, repairs, or removes anything
++// on disk, including workspace marker files.
++func RegistryCheck(e *RegistryEntry) CheckResult {
++	info, err := os.Stat(e.Path)
++	if os.IsNotExist(err) {
++		return CheckResult{Entry: e, Status: StatusMissing, Detail: "path does not exist"}
++	}
++	if err != nil || !info.IsDir() {
++		return CheckResult{Entry: e, Status: StatusInvalid, Detail: "path is unreadable or not a directory"}
++	}
++	target, inspectErr := inspectRegistryTarget(e.Path, false)
++	if inspectErr != nil {
++		return CheckResult{Entry: e, Status: StatusInvalid, Detail: inspectErr.Error()}
++	}
++	if target.Path != e.Path {
++		return CheckResult{Entry: e, Status: StatusMismatched, Detail: "canonical path identity changed"}
++	}
++	if e.MarkerID != "" {
++		if target.MarkerID == "" {
++			return CheckResult{Entry: e, Status: StatusMismatched, Detail: "workspace marker file is missing"}
++		}
++		if target.MarkerID != e.MarkerID {
++			return CheckResult{Entry: e, Status: StatusMismatched, Detail: "workspace marker identity changed (target was replaced)"}
++		}
++	} else {
++		if e.GitIdentity != "" && target.GitIdentity != e.GitIdentity {
++			return CheckResult{Entry: e, Status: StatusMismatched, Detail: "git identity changed"}
++		}
++		if e.Kind != "" && target.Kind != e.Kind {
++			return CheckResult{Entry: e, Status: StatusMismatched, Detail: fmt.Sprintf("kind changed from %s to %s", e.Kind, target.Kind)}
++		}
++	}
++	return CheckResult{Entry: e, Status: StatusOK}
++}
++
++// RegistryRepair moves an entry to a validated new path while preserving its
++// ID and aliases. A moved workspace that still carries its persistent marker
++// identity and Git identity repairs without --allow-identity-change; a
++// replaced target requires the explicit flag.
++func RegistryRepair(selector, newPath string, allowIdentityChange bool) error {
++	target, err := inspectRegistryTarget(newPath, false)
++	if err != nil {
++		return err
++	}
++	lock, err := AcquireRegistryLock()
++	if err != nil {
++		return err
++	}
++	reg, err := readRegistry()
++	if err != nil {
++		return errors.Join(err, lock.Release())
++	}
++	target, err = inspectRegistryTarget(newPath, false)
++	if err != nil {
++		return errors.Join(err, lock.Release())
++	}
++	if reg == nil {
++		return errors.Join(fmt.Errorf("no entry matching %q", selector), lock.Release())
++	}
++	index, err := resolveRegistryIndex(reg, selector)
++	if err != nil {
++		return errors.Join(err, lock.Release())
++	}
++	for i, existing := range reg.Entries {
++		if i != index && existing.Path == target.Path {
++			return errors.Join(fmt.Errorf("path %s is already registered as %s", target.Path, existing.ID), lock.Release())
++		}
++		if i != index && target.MarkerID != "" && existing.MarkerID == target.MarkerID {
++			return errors.Join(fmt.Errorf("target is already registered as %s at %s", existing.ID, existing.Path), lock.Release())
++		}
++	}
++	entry := &reg.Entries[index]
++	identityChanged := identityMismatch(entry, target) != ""
++	if identityChanged && !allowIdentityChange {
++		return errors.Join(fmt.Errorf("target identity differs; rerun with --allow-identity-change to repair intentionally"), lock.Release())
++	}
++	if identityChanged && allowIdentityChange && target.MarkerID == "" {
++		target, err = inspectRegistryTarget(newPath, true)
++		if err != nil {
++			return errors.Join(err, lock.Release())
++		}
++	}
++	entry.Path = target.Path
++	entry.Kind = target.Kind
++	entry.GitIdentity = target.GitIdentity
++	entry.MarkerID = target.MarkerID
++	entry.UpdatedAt = time.Now().UTC()
++	return errors.Join(saveRegistry(reg), lock.Release())
++}
++
++// RegistryPrune removes entries whose paths no longer exist.
++// It only removes registry metadata; targets and marker files are untouched.
++// In non-TTY environments, requires force=true (enforced at CLI layer).
++func RegistryPrune() ([]RegistryEntry, error) {
++	lock, err := AcquireRegistryLock()
++	if err != nil {
++		return nil, err
++	}
++
++	reg, err := readRegistry()
++	if err != nil {
++		return nil, errors.Join(err, lock.Release())
++	}
++	if reg == nil {
++		releaseErr := lock.Release()
++		return nil, releaseErr
++	}
++
++	var removed []RegistryEntry
++	var kept []RegistryEntry
++	for _, e := range reg.Entries {
++		if _, err := os.Stat(e.Path); os.IsNotExist(err) {
++			removed = append(removed, e)
++		} else {
++			kept = append(kept, e)
++		}
++	}
++
++	if len(removed) == 0 {
++		return nil, lock.Release()
++	}
++
++	reg.Entries = kept
++	saveErr := saveRegistry(reg)
++	releaseErr := lock.Release()
++	if err := errors.Join(saveErr, releaseErr); err != nil {
++		return nil, err
++	}
++	return removed, nil
++}
++
++// RegistryAlias adds or removes an alias on an entry.
++func RegistryAlias(selector string, alias string, remove bool) error {
++	if err := ValidateAlias(alias); err != nil {
++		return err
++	}
++
++	lock, err := AcquireRegistryLock()
++	if err != nil {
++		return err
++	}
++
++	reg, err := readRegistry()
++	if err != nil {
++		return errors.Join(err, lock.Release())
++	}
++	if reg == nil {
++		return errors.Join(fmt.Errorf("no entry matching %q", selector), lock.Release())
++	}
++
++	idx, err := resolveRegistryIndex(reg, selector)
++	if err != nil {
++		return errors.Join(err, lock.Release())
++	}
++
++	if remove {
++		reg.Entries[idx].Aliases = removeAlias(reg.Entries[idx].Aliases, alias)
++	} else {
++		if err := checkAliasCollision(reg, alias, reg.Entries[idx].ID); err != nil {
++			return errors.Join(err, lock.Release())
++		}
++		if !containsAlias(reg.Entries[idx].Aliases, alias) {
++			reg.Entries[idx].Aliases = append(reg.Entries[idx].Aliases, alias)
++		}
++	}
++	reg.Entries[idx].UpdatedAt = time.Now().UTC()
++
++	saveErr := saveRegistry(reg)
++	return errors.Join(saveErr, lock.Release())
++}
++
++// ValidateAlias checks that an alias is well-formed.
++var aliasRegexp = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
++
++func ValidateAlias(alias string) error {
++	if alias == "" {
++		return fmt.Errorf("alias cannot be empty")
++	}
++	if len(alias) > 64 {
++		return fmt.Errorf("alias too long (max 64 chars)")
++	}
++	if !aliasRegexp.MatchString(alias) {
++		return fmt.Errorf("alias %q contains invalid characters (allowed: a-z A-Z 0-9 . _ -)", alias)
++	}
++	return nil
++}
++
++// helpers
++
++func containsAlias(aliases []string, alias string) bool {
++	for _, a := range aliases {
++		if a == alias {
++			return true
++		}
++	}
++	return false
++}
++
++func removeAlias(aliases []string, alias string) []string {
++	result := make([]string, 0, len(aliases))
++	for _, a := range aliases {
++		if a != alias {
++			result = append(result, a)
++		}
++	}
++	return result
++}
+diff --git a/internal/registry_lock_unix.go b/internal/registry_lock_unix.go
+new file mode 100644
+index 0000000..ce9b30a
+--- /dev/null
++++ b/internal/registry_lock_unix.go
+@@ -0,0 +1,26 @@
++//go:build !windows
++
++package internal
++
++import (
++	"fmt"
++	"os"
++	"syscall"
++)
++
++// flockExclusive acquires an exclusive POSIX advisory lock on f.
++// This is supported on macOS and Linux only.
++func flockExclusive(f *os.File) error {
++	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
++		return fmt.Errorf("flock LOCK_EX: %w", err)
++	}
++	return nil
++}
++
++// flockUnlock releases a POSIX advisory lock on f.
++func flockUnlock(f *os.File) error {
++	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_UN); err != nil {
++		return fmt.Errorf("flock LOCK_UN: %w", err)
++	}
++	return nil
++}
+diff --git a/internal/registry_test.go b/internal/registry_test.go
+new file mode 100644
+index 0000000..79965e5
+--- /dev/null
++++ b/internal/registry_test.go
+@@ -0,0 +1,1403 @@
++package internal
++
++import (
++	"fmt"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"strings"
++	"sync"
++	"testing"
++	"time"
++)
++
++// testRegistryEnv sets up an isolated HOME and XDG_DATA_HOME for registry tests.
++func testRegistryEnv(t *testing.T) (home string, cleanup func()) {
++	t.Helper()
++	tmpDir := t.TempDir()
++	home = filepath.Join(tmpDir, "home")
++	if err := os.MkdirAll(home, 0755); err != nil {
++		t.Fatalf("creating test home: %v", err)
++	}
++
++	xdgData := filepath.Join(tmpDir, "data")
++	if err := os.MkdirAll(xdgData, 0755); err != nil {
++		t.Fatalf("creating test XDG_DATA_HOME: %v", err)
++	}
++
++	t.Setenv("HOME", home)
++	t.Setenv("XDG_DATA_HOME", xdgData)
++
++	cleanup = func() {} // t.Setenv auto-restores; t.TempDir auto-cleans
++	return home, cleanup
++}
++
++// createTestGitRepo creates a temporary git repo for registry testing.
++func createTestGitRepo(t *testing.T) string {
++	t.Helper()
++	dir := t.TempDir()
++
++	commands := [][]string{
++		{"git", "init"},
++		{"git", "config", "user.email", "test@test.com"},
++		{"git", "config", "user.name", "Test"},
++	}
++	for _, args := range commands {
++		cmd := exec.Command(args[0], args[1:]...)
++		cmd.Dir = dir
++		if out, err := cmd.CombinedOutput(); err != nil {
++			t.Fatalf("git setup %v: %v\n%s", args, err, out)
++		}
++	}
++
++	// Create initial commit for identity
++	testFile := filepath.Join(dir, "README")
++	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
++		t.Fatalf("writing test file: %v", err)
++	}
++	cmd := exec.Command("git", "add", ".")
++	cmd.Dir = dir
++	if out, err := cmd.CombinedOutput(); err != nil {
++		t.Fatalf("git add: %v\n%s", err, out)
++	}
++	cmd = exec.Command("git", "commit", "-m", "init")
++	cmd.Dir = dir
++	if out, err := cmd.CombinedOutput(); err != nil {
++		t.Fatalf("git commit: %v\n%s", err, out)
++	}
++
++	return dir
++}
++
++func canonicalTestPath(t *testing.T, path string) string {
++	t.Helper()
++	resolved, err := filepath.EvalSymlinks(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	return filepath.Clean(resolved)
++}
++
++// createTestCheckoutWorkspace creates a Git repo with explicit checkout mode.
++func createTestCheckoutWorkspace(t *testing.T) string {
++	t.Helper()
++	dir := createTestGitRepo(t)
++	if err := SaveConfigFile(filepath.Join(dir, ".tws", "config.yaml"), Config{WorkspaceMode: string(ModeCheckout)}); err != nil {
++		t.Fatal(err)
++	}
++	return dir
++}
++
++func TestRegistryAdd_NewEntry(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	repo := createTestGitRepo(t)
++	entry, created, err := RegistryAdd(repo, "myalias")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !created {
++		t.Fatal("expected entry to be newly created")
++	}
++	if entry.Path != canonicalTestPath(t, repo) {
++		t.Fatalf("expected path %s, got %s", canonicalTestPath(t, repo), entry.Path)
++	}
++	if entry.Kind != RegistryKindRepo {
++		t.Fatalf("expected repo kind, got %s", entry.Kind)
++	}
++	if !containsAlias(entry.Aliases, "myalias") {
++		t.Fatal("expected alias myalias")
++	}
++	if entry.GitIdentity == "" {
++		t.Fatal("expected git identity to be computed")
++	}
++}
++
++func TestRegistryAdd_Idempotent(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	repo := createTestGitRepo(t)
++	entry1, created1, err := RegistryAdd(repo, "first")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !created1 {
++		t.Fatal("expected first add to create")
++	}
++
++	entry2, created2, err := RegistryAdd(repo, "")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if created2 {
++		t.Fatal("expected second add to be idempotent")
++	}
++	if entry1.ID != entry2.ID {
++		t.Fatal("expected same ID for idempotent add")
++	}
++}
++
++func TestRegistryAdd_DuplicateAlias(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	repo1 := createTestGitRepo(t)
++	repo2 := createTestGitRepo(t)
++
++	_, _, err := RegistryAdd(repo1, "shared")
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	_, _, err = RegistryAdd(repo2, "shared")
++	if err == nil {
++		t.Fatal("expected error for duplicate alias")
++	}
++}
++
++func TestRegistryAdd_AliasOnExisting(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	repo := createTestGitRepo(t)
++	_, _, err := RegistryAdd(repo, "a1")
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	entry, created, err := RegistryAdd(repo, "a2")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if created {
++		t.Fatal("expected idempotent (not created)")
++	}
++	if !containsAlias(entry.Aliases, "a1") || !containsAlias(entry.Aliases, "a2") {
++		t.Fatal("expected both aliases")
++	}
++}
++
++func TestRegistryAdd_CheckoutWorkspace(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	ws := createTestCheckoutWorkspace(t)
++	entry, created, err := RegistryAdd(ws, "checkout")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !created {
++		t.Fatal("expected new entry")
++	}
++	if entry.Kind != RegistryKindCheckoutWorkspace || entry.MarkerID == "" {
++		t.Fatalf("expected checkout workspace identity, got %+v", entry)
++	}
++}
++
++func TestRegistryRemove(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	repo := createTestGitRepo(t)
++	_, _, err := RegistryAdd(repo, "removeme")
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	if err := RegistryRemove("removeme"); err != nil {
++		t.Fatal(err)
++	}
++
++	entries, err := RegistryList()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(entries) != 0 {
++		t.Fatal("expected empty registry after remove")
++	}
++}
++
++func TestRegistryRemove_NeverDeletesTarget(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	repo := createTestGitRepo(t)
++	_, _, err := RegistryAdd(repo, "nodelete")
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	if err := RegistryRemove("nodelete"); err != nil {
++		t.Fatal(err)
++	}
++
++	// Verify the directory still exists
++	if _, err := os.Stat(repo); err != nil {
++		t.Fatalf("workspace directory should still exist: %v", err)
++	}
++}
++
++func TestRegistryResolve(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	repo := createTestGitRepo(t)
++	entry, _, err := RegistryAdd(repo, "findme")
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	// Resolve by alias
++	found, err := RegistryResolve("findme")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if found == nil || found.ID != entry.ID {
++		t.Fatal("expected to find entry by alias")
++	}
++
++	// Resolve by path
++	found, err = RegistryResolve(repo)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if found == nil || found.ID != entry.ID {
++		t.Fatal("expected to find entry by path")
++	}
++
++	// Resolve by ID
++	found, err = RegistryResolve(entry.ID)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if found == nil || found.ID != entry.ID {
++		t.Fatal("expected to find entry by ID")
++	}
++}
++
++func TestRegistryResolve_Ambiguous(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	repo1 := createTestGitRepo(t)
++	repo2 := createTestGitRepo(t)
++
++	// Create two entries. Set same alias on one, use ID collision scenario
++	_, _, err := RegistryAdd(repo1, "unique1")
++	if err != nil {
++		t.Fatal(err)
++	}
++	_, _, err = RegistryAdd(repo2, "unique2")
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	// Resolve a non-existent selector
++	found, err := RegistryResolve("nonexistent")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if found != nil {
++		t.Fatal("expected nil for missing selector")
++	}
++}
++
++func TestRegistryCheck(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	repo := createTestGitRepo(t)
++	entry, _, err := RegistryAdd(repo, "checkme")
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	result := RegistryCheck(entry)
++	if result.Status != StatusOK {
++		t.Fatalf("expected OK, got %s: %s", result.Status, result.Detail)
++	}
++}
++
++func TestRegistryCheck_Missing(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	entry := &RegistryEntry{
++		ID:   "fake",
++		Path: "/nonexistent/path/12345",
++	}
++	result := RegistryCheck(entry)
++	if result.Status != StatusMissing {
++		t.Fatalf("expected Missing, got %s", result.Status)
++	}
++}
++
++func TestRegistryRepair_MovedSameIdentity(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	repo := createTestGitRepo(t)
++	entry, _, err := RegistryAdd(repo, "repairme")
++	if err != nil {
++		t.Fatal(err)
++	}
++	moved := repo + "-moved"
++	if err := os.Rename(repo, moved); err != nil {
++		t.Fatal(err)
++	}
++	if err := RegistryRepair("repairme", moved, false); err != nil {
++		t.Fatalf("repair moved repo: %v", err)
++	}
++	repaired, err := RegistryResolve("repairme")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if repaired.ID != entry.ID || repaired.Path != canonicalTestPath(t, moved) {
++		t.Fatalf("repair did not preserve identity: %+v", repaired)
++	}
++}
++
++func TestRegistryRepair_IdentityChangeRequiresFlag(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++	repo1 := createTestGitRepo(t)
++	repo2 := createTestGitRepo(t)
++	if err := os.WriteFile(filepath.Join(repo2, "different.txt"), []byte("different"), 0644); err != nil {
++		t.Fatal(err)
++	}
++	cmd := exec.Command("git", "add", ".")
++	cmd.Dir = repo2
++	if out, err := cmd.CombinedOutput(); err != nil {
++		t.Fatalf("git add: %v\n%s", err, out)
++	}
++	cmd = exec.Command("git", "commit", "-m", "different")
++	cmd.Dir = repo2
++	if out, err := cmd.CombinedOutput(); err != nil {
++		t.Fatalf("git commit: %v\n%s", err, out)
++	}
++	cmd = exec.Command("git", "remote", "add", "origin", "https://example.test/different.git")
++	cmd.Dir = repo2
++	if out, err := cmd.CombinedOutput(); err != nil {
++		t.Fatalf("git remote add: %v\n%s", err, out)
++	}
++	if _, _, err := RegistryAdd(repo1, "repairme"); err != nil {
++		t.Fatal(err)
++	}
++	if err := RegistryRepair("repairme", repo2, false); err == nil {
++		t.Fatal("expected identity mismatch error")
++	}
++	if err := RegistryRepair("repairme", repo2, true); err != nil {
++		t.Fatalf("allow identity change: %v", err)
++	}
++}
++
++func TestRegistryPrune(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	repo1 := createTestGitRepo(t)
++	repo2 := createTestGitRepo(t)
++	if _, _, err := RegistryAdd(repo1, "keep"); err != nil {
++		t.Fatalf("adding repo1: %v", err)
++	}
++	if _, _, err := RegistryAdd(repo2, "prune-me"); err != nil {
++		t.Fatalf("adding repo2: %v", err)
++	}
++	expectedRemoved := canonicalTestPath(t, repo2)
++
++	if err := os.RemoveAll(repo2); err != nil {
++		t.Fatalf("removing repo2: %v", err)
++	}
++
++	removed, err := RegistryPrune()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(removed) != 1 {
++		t.Fatalf("expected 1 removed, got %d", len(removed))
++	}
++	if removed[0].Path != expectedRemoved {
++		t.Fatalf("expected pruned path %s, got %s", expectedRemoved, removed[0].Path)
++	}
++
++	entries, err := RegistryList()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(entries) != 1 {
++		t.Fatal("expected 1 remaining entry")
++	}
++}
++
++func TestRegistryAlias(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	repo := createTestGitRepo(t)
++	_, _, err := RegistryAdd(repo, "orig")
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	if err := RegistryAlias(repo, "newalias", false); err != nil {
++		t.Fatal(err)
++	}
++
++	entry, err := RegistryResolve("newalias")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if entry == nil {
++		t.Fatal("expected entry via new alias")
++	}
++
++	if err := RegistryAlias(repo, "newalias", true); err != nil {
++		t.Fatal(err)
++	}
++
++	entry, err = RegistryResolve("newalias")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if entry != nil {
++		t.Fatal("expected alias to be removed")
++	}
++}
++
++func TestRegistryConcurrency(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	const n = 10
++	var wg sync.WaitGroup
++	errs := make([]error, n)
++
++	for i := 0; i < n; i++ {
++		wg.Add(1)
++		go func(idx int) {
++			defer wg.Done()
++			repo := createTestGitRepo(t)
++			alias := fmt.Sprintf("concurrent-%d", idx)
++			_, _, errs[idx] = RegistryAdd(repo, alias)
++		}(i)
++	}
++
++	wg.Wait()
++
++	for i, err := range errs {
++		if err != nil {
++			t.Errorf("goroutine %d: %v", i, err)
++		}
++	}
++
++	entries, err := RegistryList()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(entries) != n {
++		t.Fatalf("expected %d entries, got %d (concurrent no-lost-update)", n, len(entries))
++	}
++}
++
++func TestRegistryPermissions(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	repo := createTestGitRepo(t)
++	_, _, err := RegistryAdd(repo, "perms")
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	// Check registry directory permissions
++	dir := registryDir()
++	info, err := os.Stat(dir)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if perm := info.Mode().Perm(); perm != 0700 {
++		t.Fatalf("expected dir perm 0700, got %o", perm)
++	}
++
++	// Check registry file permissions
++	info, err = os.Stat(registryPath())
++	if err != nil {
++		t.Fatal(err)
++	}
++	if perm := info.Mode().Perm(); perm != 0600 {
++		t.Fatalf("expected file perm 0600, got %o", perm)
++	}
++}
++
++func TestReadAbsenceCreatesNoFiles(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	// Reading from a nonexistent registry should not create any files.
++	entries, err := RegistryList()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if entries != nil {
++		t.Fatal("expected nil entries for absent registry")
++	}
++
++	// Verify no files were created
++	dir := registryDir()
++	if _, err := os.Stat(dir); !os.IsNotExist(err) {
++		t.Fatalf("registry dir should not exist after read, got: %v", err)
++	}
++}
++
++func TestValidateAlias(t *testing.T) {
++	tests := []struct {
++		alias string
++		valid bool
++	}{
++		{"myalias", true},
++		{"my-alias", true},
++		{"my.alias", true},
++		{"my_alias", true},
++		{"UPPER", true},
++		{"123", true},
++		{"a", true},
++		{"", false},
++		{"has spaces", false},
++		{"has/slash", false},
++		{string(make([]byte, 65)), false},
++	}
++	for _, tc := range tests {
++		err := ValidateAlias(tc.alias)
++		if tc.valid && err != nil {
++			t.Errorf("expected %q valid, got error: %v", tc.alias, err)
++		}
++		if !tc.valid && err == nil {
++			t.Errorf("expected %q invalid, got nil error", tc.alias)
++		}
++	}
++}
++
++func TestComputeGitIdentity_Stable(t *testing.T) {
++	repo := createTestGitRepo(t)
++	id1 := ComputeGitIdentity(repo)
++	time.Sleep(10 * time.Millisecond)
++	id2 := ComputeGitIdentity(repo)
++	if id1 != id2 {
++		t.Fatalf("identity not stable: %s != %s", id1, id2)
++	}
++	if id1 == "" {
++		t.Fatal("expected non-empty identity")
++	}
++}
++
++func TestRegistryList_Empty(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	entries, err := RegistryList()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if entries != nil {
++		t.Fatal("expected nil entries for absent registry")
++	}
++}
++
++// createTestExternalWorkspace creates a temporary external workspace root
++// carrying the standard `.tws-workspace` marker directory.
++func createTestExternalWorkspace(t *testing.T) string {
++	t.Helper()
++	dir := filepath.Join(t.TempDir(), "workspace")
++	if err := os.MkdirAll(filepath.Join(dir, workspaceMarker), 0755); err != nil {
++		t.Fatal(err)
++	}
++	return dir
++}
++
++func writeRawRegistry(t *testing.T, content string) string {
++	t.Helper()
++	if err := os.MkdirAll(registryDir(), 0700); err != nil {
++		t.Fatal(err)
++	}
++	path := registryPath()
++	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
++		t.Fatal(err)
++	}
++	return path
++}
++
++// ---------- Alias validation and collision ----------
++
++func TestRegistryAdd_RejectsInvalidAlias(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	repo := createTestGitRepo(t)
++	for _, alias := range []string{"has space", "has/slash", string(make([]byte, 65))} {
++		if _, _, err := RegistryAdd(repo, alias); err == nil {
++			t.Fatalf("expected invalid alias %q to be rejected", alias)
++		}
++	}
++
++	entries, err := RegistryList()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(entries) != 0 {
++		t.Fatalf("invalid alias must not enroll anything, got %d entries", len(entries))
++	}
++}
++
++func TestRegistryAdd_RejectsAliasShadowingEntryID(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	repo1 := createTestGitRepo(t)
++	repo2 := createTestGitRepo(t)
++
++	first, _, err := RegistryAdd(repo1, "first")
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	if _, _, err := RegistryAdd(repo2, first.ID); err == nil {
++		t.Fatal("expected alias shadowing an entry ID to be rejected")
++	}
++
++	// Resolution must remain unambiguous.
++	resolved, err := RegistryResolve(first.ID)
++	if err != nil {
++		t.Fatalf("ID selector became ambiguous: %v", err)
++	}
++	if resolved == nil || resolved.ID != first.ID {
++		t.Fatal("expected ID selector to resolve to its own entry")
++	}
++}
++
++func TestRegistryAdd_RejectsAliasShadowingRegisteredPath(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	repo1 := createTestGitRepo(t)
++	repo2 := createTestGitRepo(t)
++	first, _, err := RegistryAdd(repo1, "one")
++	if err != nil {
++		t.Fatal(err)
++	}
++	// Paths contain '/' so they are rejected by alias syntax first; assert the
++	// collision guard still refuses them explicitly.
++	reg := &RegistryFile{Version: registryVersion, Entries: []RegistryEntry{*first}}
++	if err := checkAliasCollision(reg, first.Path, ""); err == nil {
++		t.Fatal("expected alias colliding with a registered path to be rejected")
++	}
++	if _, _, err := RegistryAdd(repo2, first.Path); err == nil {
++		t.Fatal("expected path-shaped alias to be rejected")
++	}
++}
++
++func TestRegistryAlias_RejectsShadowingIDAndDuplicates(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	repo1 := createTestGitRepo(t)
++	repo2 := createTestGitRepo(t)
++	first, _, err := RegistryAdd(repo1, "one")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if _, _, err := RegistryAdd(repo2, "two"); err != nil {
++		t.Fatal(err)
++	}
++
++	if err := RegistryAlias("two", first.ID, false); err == nil {
++		t.Fatal("expected alias shadowing an entry ID to be rejected")
++	}
++	if err := RegistryAlias("two", "one", false); err == nil {
++		t.Fatal("expected duplicate alias to be rejected")
++	}
++	if err := RegistryAlias("two", "bad alias", false); err == nil {
++		t.Fatal("expected invalid alias to be rejected")
++	}
++}
++
++// ---------- Same-path replacement ----------
++
++func TestRegistryAdd_SamePathReplacedTargetIsRejected(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	ws := createTestExternalWorkspace(t)
++	first, _, err := RegistryAdd(ws, "ext")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if first.MarkerID == "" {
++		t.Fatal("expected external workspace to receive a persistent marker")
++	}
++
++	// Replace the workspace in place with a brand-new one.
++	if err := os.RemoveAll(ws); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.MkdirAll(filepath.Join(ws, workspaceMarker), 0755); err != nil {
++		t.Fatal(err)
++	}
++
++	_, _, err = RegistryAdd(ws, "")
++	if err == nil {
++		t.Fatal("expected replaced target at a registered path to be rejected")
++	}
++	if !strings.Contains(err.Error(), "--allow-identity-change") {
++		t.Fatalf("expected repair guidance in error, got: %v", err)
++	}
++
++	stored, err := RegistryResolve("ext")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if stored.MarkerID != first.MarkerID {
++		t.Fatal("rejected add must not overwrite the recorded identity")
++	}
++}
++
++func TestRegistryAdd_SamePathPopulatesEmptyHints(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	repo := createTestGitRepo(t)
++	entry, _, err := RegistryAdd(repo, "hints")
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	// Simulate a legacy entry lacking identity hints.
++	lock, err := AcquireRegistryLock()
++	if err != nil {
++		t.Fatal(err)
++	}
++	reg, err := readRegistry()
++	if err != nil {
++		t.Fatal(err)
++	}
++	reg.Entries[0].GitIdentity = ""
++	if err := saveRegistry(reg); err != nil {
++		t.Fatal(err)
++	}
++	if err := lock.Release(); err != nil {
++		t.Fatal(err)
++	}
++
++	updated, created, err := RegistryAdd(repo, "")
++	if err != nil {
++		t.Fatalf("re-adding a same-path entry with empty hints must succeed: %v", err)
++	}
++	if created {
++		t.Fatal("expected idempotent add")
++	}
++	if updated.GitIdentity != entry.GitIdentity {
++		t.Fatal("expected previously-empty git identity hint to be populated")
++	}
++}
++
++// ---------- Schema validation on read ----------
++
++func TestReadRegistry_RejectsFutureVersionWithoutMutation(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	raw := "version: 2\nentries: []\nfuture_field: something\n"
++	path := writeRawRegistry(t, raw)
++
++	if _, err := RegistryList(); err == nil {
++		t.Fatal("expected future schema version to be rejected")
++	} else if !strings.Contains(err.Error(), "version 2") {
++		t.Fatalf("expected version error, got: %v", err)
++	}
++
++	repo := createTestGitRepo(t)
++	if _, _, err := RegistryAdd(repo, "nope"); err == nil {
++		t.Fatal("expected add to refuse a future-version registry")
++	}
++	if err := RegistryRemove("nope"); err == nil {
++		t.Fatal("expected remove to refuse a future-version registry")
++	}
++	if _, err := RegistryPrune(); err == nil {
++		t.Fatal("expected prune to refuse a future-version registry")
++	}
++
++	after, err := os.ReadFile(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if string(after) != raw {
++		t.Fatalf("future-version registry was mutated:\n%s", after)
++	}
++}
++
++func TestReadRegistry_RejectsMalformedAndZeroVersion(t *testing.T) {
++	cases := map[string]string{
++		"empty file":      "",
++		"zero version":    "version: 0\nentries: []\n",
++		"missing version": "entries: []\n",
++		"broken yaml":     "version: 1\nentries: [\n",
++		"unknown field":   "version: 1\nentries: []\nsurprise: 1\n",
++	}
++	for name, content := range cases {
++		t.Run(name, func(t *testing.T) {
++			_, cleanup := testRegistryEnv(t)
++			defer cleanup()
++			writeRawRegistry(t, content)
++			if _, err := RegistryList(); err == nil {
++				t.Fatalf("expected %s to be rejected", name)
++			}
++		})
++	}
++}
++
++func TestReadRegistry_RejectsBrokenInvariants(t *testing.T) {
++	cases := map[string]string{
++		"empty id": "version: 1\nentries:\n  - id: \"\"\n    path: /tmp/a\n    kind: repo\n",
++		"duplicate id": "version: 1\nentries:\n" +
++			"  - id: aaaa\n    path: /tmp/a\n    kind: repo\n" +
++			"  - id: aaaa\n    path: /tmp/b\n    kind: repo\n",
++		"duplicate path": "version: 1\nentries:\n" +
++			"  - id: aaaa\n    path: /tmp/a\n    kind: repo\n" +
++			"  - id: bbbb\n    path: /tmp/a\n    kind: repo\n",
++		"relative path":      "version: 1\nentries:\n  - id: aaaa\n    path: relative/path\n    kind: repo\n",
++		"non-canonical path": "version: 1\nentries:\n  - id: aaaa\n    path: /tmp/a/../a\n    kind: repo\n",
++		"unknown kind":       "version: 1\nentries:\n  - id: aaaa\n    path: /tmp/a\n    kind: bogus\n",
++		"invalid alias":      "version: 1\nentries:\n  - id: aaaa\n    path: /tmp/a\n    kind: repo\n    aliases: [\"bad alias\"]\n",
++		"duplicate alias": "version: 1\nentries:\n" +
++			"  - id: aaaa\n    path: /tmp/a\n    kind: repo\n    aliases: [dup]\n" +
++			"  - id: bbbb\n    path: /tmp/b\n    kind: repo\n    aliases: [dup]\n",
++		"alias shadows id": "version: 1\nentries:\n" +
++			"  - id: aaaa\n    path: /tmp/a\n    kind: repo\n" +
++			"  - id: bbbb\n    path: /tmp/b\n    kind: repo\n    aliases: [aaaa]\n",
++	}
++	for name, content := range cases {
++		t.Run(name, func(t *testing.T) {
++			_, cleanup := testRegistryEnv(t)
++			defer cleanup()
++			writeRawRegistry(t, content)
++			if _, err := RegistryList(); err == nil {
++				t.Fatalf("expected %s to be rejected", name)
++			}
++		})
++	}
++}
++
++func TestValidateRegistry_AcceptsHealthyRegistry(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	writeRawRegistry(t, "version: 1\nentries:\n"+
++		"  - id: aaaa\n    path: /tmp/a\n    kind: repo\n    aliases: [alpha]\n"+
++		"  - id: bbbb\n    path: /tmp/b\n    kind: external-workspace\n    aliases: [beta]\n")
++
++	entries, err := RegistryList()
++	if err != nil {
++		t.Fatalf("healthy registry must load: %v", err)
++	}
++	if len(entries) != 2 {
++		t.Fatalf("expected 2 entries, got %d", len(entries))
++	}
++}
++
++// ---------- Persistent marker identity ----------
++
++func TestRegistryAdd_CreatesPersistentCheckoutMarker(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	ws := createTestCheckoutWorkspace(t)
++	entry, _, err := RegistryAdd(ws, "co")
++	if err != nil {
++		t.Fatal(err)
++	}
++	stored, err := ReadWorkspaceMarkerID(CheckoutMarkerDir(canonicalTestPath(t, ws)))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if stored == "" || stored != entry.MarkerID {
++		t.Fatalf("expected persisted marker %q to match entry marker %q", stored, entry.MarkerID)
++	}
++
++	info, err := os.Stat(filepath.Join(CheckoutMarkerDir(canonicalTestPath(t, ws)), workspaceMarkerIDFile))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if perm := info.Mode().Perm(); perm != 0600 {
++		t.Fatalf("expected marker perm 0600, got %o", perm)
++	}
++}
++
++func TestRegistryCheck_IsReadOnlyAndDoesNotCreateMarkers(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	repo := createTestCheckoutWorkspace(t)
++	entry := &RegistryEntry{
++		ID:          "manual0000000000",
++		Path:        canonicalTestPath(t, repo),
++		Kind:        RegistryKindCheckoutWorkspace,
++		GitIdentity: ComputeGitIdentity(repo),
++	}
++
++	if result := RegistryCheck(entry); result.Status != StatusOK {
++		t.Fatalf("expected ok, got %s (%s)", result.Status, result.Detail)
++	}
++	if _, err := os.Stat(filepath.Join(CheckoutMarkerDir(canonicalTestPath(t, repo)), workspaceMarkerIDFile)); !os.IsNotExist(err) {
++		t.Fatal("registry check must never create marker files")
++	}
++}
++
++func TestRegistryCheck_MissingMarkerAfterEnrollmentIsMismatched(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	ws := createTestCheckoutWorkspace(t)
++	entry, _, err := RegistryAdd(ws, "co")
++	if err != nil {
++		t.Fatal(err)
++	}
++	markerFile := filepath.Join(CheckoutMarkerDir(entry.Path), workspaceMarkerIDFile)
++	if err := os.Remove(markerFile); err != nil {
++		t.Fatal(err)
++	}
++
++	result := RegistryCheck(entry)
++	if result.Status != StatusMismatched {
++		t.Fatalf("expected mismatched, got %s (%s)", result.Status, result.Detail)
++	}
++	if !strings.Contains(result.Detail, "marker") {
++		t.Fatalf("expected marker detail, got %q", result.Detail)
++	}
++}
++
++func TestRegistryRepair_MovedCheckoutKeepsIdentityWithoutFlag(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	ws := createTestCheckoutWorkspace(t)
++	entry, _, err := RegistryAdd(ws, "moved-checkout")
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	moved := ws + "-moved"
++	if err := os.Rename(ws, moved); err != nil {
++		t.Fatal(err)
++	}
++	if got := RegistryCheck(entry); got.Status != StatusMissing {
++		t.Fatalf("expected missing before repair, got %s", got.Status)
++	}
++
++	if err := RegistryRepair("moved-checkout", moved, false); err != nil {
++		t.Fatalf("moved checkout with the same marker must repair without --allow-identity-change: %v", err)
++	}
++
++	repaired, err := RegistryResolve("moved-checkout")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if repaired.ID != entry.ID || repaired.MarkerID != entry.MarkerID {
++		t.Fatalf("repair must preserve stable identity: %+v", repaired)
++	}
++	if repaired.Path != canonicalTestPath(t, moved) {
++		t.Fatalf("expected path %s, got %s", canonicalTestPath(t, moved), repaired.Path)
++	}
++	if got := RegistryCheck(repaired); got.Status != StatusOK {
++		t.Fatalf("expected ok after repair, got %s (%s)", got.Status, got.Detail)
++	}
++}
++
++func TestRegistryRepair_MovedExternalWorkspaceKeepsIdentityWithoutFlag(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	ws := createTestExternalWorkspace(t)
++	entry, _, err := RegistryAdd(ws, "moved-external")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if entry.Kind != RegistryKindExternalWorkspace || entry.MarkerID == "" {
++		t.Fatalf("expected external workspace with marker, got %+v", entry)
++	}
++
++	moved := ws + "-moved"
++	if err := os.Rename(ws, moved); err != nil {
++		t.Fatal(err)
++	}
++	if err := RegistryRepair("moved-external", moved, false); err != nil {
++		t.Fatalf("moved external workspace must repair without --allow-identity-change: %v", err)
++	}
++
++	repaired, err := RegistryResolve("moved-external")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if repaired.MarkerID != entry.MarkerID {
++		t.Fatal("marker identity must survive a move")
++	}
++}
++
++func TestRegistryRepair_ReplacedExternalWorkspaceRequiresFlag(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	ws := createTestExternalWorkspace(t)
++	entry, _, err := RegistryAdd(ws, "replaced")
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	replacement := filepath.Join(t.TempDir(), "replacement")
++	if err := os.MkdirAll(filepath.Join(replacement, workspaceMarker), 0755); err != nil {
++		t.Fatal(err)
++	}
++	if marker, err := ReadWorkspaceMarkerID(ExternalMarkerDir(replacement)); err != nil || marker != "" {
++		t.Fatalf("replacement should start without an identity marker, got %q, %v", marker, err)
++	}
++
++	if err := RegistryRepair("replaced", replacement, false); err == nil {
++		t.Fatal("expected a replaced workspace to require --allow-identity-change")
++	}
++	if err := RegistryRepair("replaced", replacement, true); err != nil {
++		t.Fatalf("explicit identity change must be allowed: %v", err)
++	}
++	updated, err := RegistryResolve("replaced")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if updated.MarkerID == entry.MarkerID {
++		t.Fatal("expected the replacement marker to be recorded")
++	}
++	if updated.MarkerID == "" {
++		t.Fatal("expected explicit replacement repair to establish a new marker identity")
++	}
++	if got := RegistryCheck(updated); got.Status != StatusOK {
++		t.Fatalf("expected repaired replacement to check ok, got %s (%s)", got.Status, got.Detail)
++	}
++}
++
++func TestRegistryRemoveAndPrune_NeverDeleteMarkerFiles(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	kept := createTestExternalWorkspace(t)
++	gone := createTestExternalWorkspace(t)
++	keptEntry, _, err := RegistryAdd(kept, "kept")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if _, _, err := RegistryAdd(gone, "gone"); err != nil {
++		t.Fatal(err)
++	}
++	markerFile := filepath.Join(ExternalMarkerDir(keptEntry.Path), workspaceMarkerIDFile)
++
++	if err := RegistryRemove("kept"); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := os.Stat(markerFile); err != nil {
++		t.Fatalf("registry remove must never delete marker files: %v", err)
++	}
++
++	if _, _, err := RegistryAdd(kept, "kept"); err != nil {
++		t.Fatalf("re-adding a removed workspace must reuse its marker: %v", err)
++	}
++	readded, err := RegistryResolve("kept")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if readded.MarkerID != keptEntry.MarkerID {
++		t.Fatal("expected the persisted marker identity to be reused after remove/re-add")
++	}
++
++	if err := os.RemoveAll(gone); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := RegistryPrune(); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := os.Stat(markerFile); err != nil {
++		t.Fatalf("registry prune must never delete marker files: %v", err)
++	}
++}
++
++func TestRegistryRemove_AbsentRegistryReturnsNotFound(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	err := RegistryRemove("anything")
++	if err == nil {
++		t.Fatal("expected removing from an absent registry to fail")
++	}
++	if !strings.Contains(err.Error(), "no entry matching") {
++		t.Fatalf("expected selector-not-found error, got: %v", err)
++	}
++}
++
++// ---------- Linked worktree normalization ----------
++
++func TestRegistryAdd_NormalizesLinkedWorktreeToMainRepoRoot(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	repo := createTestGitRepo(t)
++	worktree := filepath.Join(t.TempDir(), "linked-wt")
++	cmd := exec.Command("git", "worktree", "add", "-b", "linked", worktree)
++	cmd.Dir = repo
++	if out, err := cmd.CombinedOutput(); err != nil {
++		t.Fatalf("git worktree add: %v\n%s", err, out)
++	}
++
++	entry, created, err := RegistryAdd(worktree, "linked-ws")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !created {
++		t.Fatal("expected a new entry")
++	}
++	if entry.Path != canonicalTestPath(t, repo) {
++		t.Fatalf("linked worktree must normalize to main repo root %s, got %s", canonicalTestPath(t, repo), entry.Path)
++	}
++
++	// Enrolling the main root afterwards must be idempotent, not a second entry.
++	if _, createdAgain, err := RegistryAdd(repo, ""); err != nil {
++		t.Fatal(err)
++	} else if createdAgain {
++		t.Fatal("expected the main repo root to resolve to the existing entry")
++	}
++	entries, err := RegistryList()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(entries) != 1 {
++		t.Fatalf("expected exactly 1 entry, got %d", len(entries))
++	}
++}
++
++// ---------- Marker helpers ----------
++
++func TestEnsureWorkspaceMarkerID_IsStableAndIdempotent(t *testing.T) {
++	dir := filepath.Join(t.TempDir(), ".tws")
++	first, err := EnsureWorkspaceMarkerID(dir)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !markerIDRegexp.MatchString(first) {
++		t.Fatalf("expected opaque hex marker, got %q", first)
++	}
++	second, err := EnsureWorkspaceMarkerID(dir)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if first != second {
++		t.Fatalf("marker identity is not stable: %s != %s", first, second)
++	}
++
++	entries, err := os.ReadDir(dir)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(entries) != 1 || entries[0].Name() != workspaceMarkerIDFile {
++		t.Fatalf("expected only the marker file to remain, got %v", entries)
++	}
++}
++
++func TestReadWorkspaceMarkerID_MalformedIsRejected(t *testing.T) {
++	dir := filepath.Join(t.TempDir(), ".tws")
++	if err := os.MkdirAll(dir, 0755); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(filepath.Join(dir, workspaceMarkerIDFile), []byte("not-a-marker"), 0600); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := ReadWorkspaceMarkerID(dir); err == nil {
++		t.Fatal("expected malformed marker to be rejected")
++	}
++}
++
++func TestRegistryAdd_PlainRepoUsesPersistentMarkerAcrossGitHintChanges(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	repo := createTestGitRepo(t)
++	entry, created, err := RegistryAdd(repo, "plain")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !created || entry.MarkerID == "" {
++		t.Fatalf("expected a new plain-repo entry with a persistent marker, got %+v", entry)
++	}
++
++	markerDir, err := GitMarkerDir(repo)
++	if err != nil {
++		t.Fatal(err)
++	}
++	stored, err := ReadWorkspaceMarkerID(markerDir)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if stored != entry.MarkerID {
++		t.Fatalf("expected stored marker %q, got %q", entry.MarkerID, stored)
++	}
++
++	for _, args := range [][]string{
++		{"git", "remote", "add", "origin", "https://example.test/one.git"},
++		{"git", "remote", "set-url", "origin", "https://example.test/two.git"},
++	} {
++		cmd := exec.Command(args[0], args[1:]...)
++		cmd.Dir = repo
++		if out, err := cmd.CombinedOutput(); err != nil {
++			t.Fatalf("%v: %v\n%s", args, err, out)
++		}
++		if got := RegistryCheck(entry); got.Status != StatusOK {
++			t.Fatalf("mutable Git hints must not override matching marker identity: %s (%s)", got.Status, got.Detail)
++		}
++	}
++
++	readded, created, err := RegistryAdd(repo, "")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if created || readded.ID != entry.ID {
++		t.Fatal("re-adding after a Git hint change must remain idempotent")
++	}
++}
++
++func TestRegistryAdd_FailedReaddDoesNotMintMissingMarker(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	repo := createTestCheckoutWorkspace(t)
++	entry, _, err := RegistryAdd(repo, "checkout")
++	if err != nil {
++		t.Fatal(err)
++	}
++	markerPath := filepath.Join(CheckoutMarkerDir(entry.Path), workspaceMarkerIDFile)
++	if err := os.Remove(markerPath); err != nil {
++		t.Fatal(err)
++	}
++
++	if _, _, err := RegistryAdd(repo, ""); err == nil {
++		t.Fatal("expected re-add with a missing recorded marker to fail")
++	}
++	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
++		t.Fatalf("failed re-add must not mint a replacement marker, got: %v", err)
++	}
++}
++
++func TestRegistryAdd_MovedWorkspaceRequiresRepairInsteadOfDuplicate(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	ws := createTestExternalWorkspace(t)
++	entry, _, err := RegistryAdd(ws, "original")
++	if err != nil {
++		t.Fatal(err)
++	}
++	moved := ws + "-moved"
++	if err := os.Rename(ws, moved); err != nil {
++		t.Fatal(err)
++	}
++
++	_, _, err = RegistryAdd(moved, "duplicate")
++	if err == nil || !strings.Contains(err.Error(), "registry repair") {
++		t.Fatalf("expected moved-target repair guidance, got: %v", err)
++	}
++	entries, err := RegistryList()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(entries) != 1 || entries[0].ID != entry.ID {
++		t.Fatalf("moved workspace must not be enrolled twice: %+v", entries)
++	}
++}
++
++func TestRegistryAdd_ConcurrentSameTargetIsIdempotent(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	repo := createTestGitRepo(t)
++	const n = 10
++	var wg sync.WaitGroup
++	errs := make([]error, n)
++	created := make([]bool, n)
++	ids := make([]string, n)
++
++	for i := 0; i < n; i++ {
++		wg.Add(1)
++		go func(idx int) {
++			defer wg.Done()
++			entry, wasCreated, err := RegistryAdd(repo, "")
++			errs[idx] = err
++			created[idx] = wasCreated
++			if entry != nil {
++				ids[idx] = entry.ID
++			}
++		}(i)
++	}
++	wg.Wait()
++
++	createdCount := 0
++	for i := range errs {
++		if errs[i] != nil {
++			t.Fatalf("concurrent add %d failed: %v", i, errs[i])
++		}
++		if created[i] {
++			createdCount++
++		}
++		if ids[i] == "" || ids[i] != ids[0] {
++			t.Fatalf("concurrent adds returned different IDs: %v", ids)
++		}
++	}
++	if createdCount != 1 {
++		t.Fatalf("expected exactly one creator, got %d", createdCount)
++	}
++}
++
++func TestRegistryAdd_WorkspaceModeSwitchRefreshesKind(t *testing.T) {
++	_, cleanup := testRegistryEnv(t)
++	defer cleanup()
++
++	repo := createTestGitRepo(t)
++	entry, _, err := RegistryAdd(repo, "mode-switch")
++	if err != nil {
++		t.Fatal(err)
++	}
++	originalMarker := entry.MarkerID
++
++	if err := EnableCheckoutMode(repo); err != nil {
++		t.Fatal(err)
++	}
++	if got := RegistryCheck(entry); got.Status != StatusOK {
++		t.Fatalf("mode switch with the same marker must remain healthy: %s (%s)", got.Status, got.Detail)
++	}
++	checkoutEntry, created, err := RegistryAdd(repo, "")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if created || checkoutEntry.ID != entry.ID || checkoutEntry.Kind != RegistryKindCheckoutWorkspace {
++		t.Fatalf("checkout mode switch must refresh the existing entry: %+v", checkoutEntry)
++	}
++	if checkoutEntry.MarkerID != originalMarker {
++		t.Fatal("workspace mode switch must preserve marker identity")
++	}
++
++	if err := EnableExternalMode(repo); err != nil {
++		t.Fatal(err)
++	}
++	repoEntry, created, err := RegistryAdd(repo, "")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if created || repoEntry.ID != entry.ID || repoEntry.Kind != RegistryKindRepo {
++		t.Fatalf("external mode switch must refresh the existing entry: %+v", repoEntry)
++	}
++	if repoEntry.MarkerID != originalMarker {
++		t.Fatal("reverse workspace mode switch must preserve marker identity")
++	}
++}
+diff --git a/internal/workspace.go b/internal/workspace.go
+index 7bee69f..9855317 100644
+--- a/internal/workspace.go
++++ b/internal/workspace.go
+@@ -1,10 +1,16 @@
+ package internal
+ 
+ import (
++	"crypto/rand"
+ 	"crypto/sha256"
++	"encoding/hex"
++	"errors"
+ 	"fmt"
++	"io/fs"
+ 	"os"
++	"os/exec"
+ 	"path/filepath"
++	"regexp"
+ 	"sort"
+ 	"strings"
+ )
+@@ -61,13 +67,139 @@ func capsFor(mode WorkspaceMode) Capabilities {
+ 
+ // stableID computes a deterministic hex ID from a canonical path.
+ // It uses the absolute, cleaned path (with symlinks resolved when
+-// possible). Relocating the repository changes the ID; a future
+-// global registry will provide persistent identifiers.
++// possible). Relocating the repository changes the ID; use the
++// persisted workspace marker identity for move-stable identity.
+ func stableID(canonicalPath string) string {
+ 	h := sha256.Sum256([]byte(canonicalPath))
+ 	return fmt.Sprintf("%x", h[:8])
+ }
+ 
++// workspaceMarkerIDFile is the tool-owned file holding a workspace's
++// persistent opaque identity. It lives inside the tool-owned metadata
++// directory: <repo>/.tws for checkout workspaces and
++// <workspace>/.tws-workspace for external workspaces.
++const workspaceMarkerIDFile = "workspace-id"
++
++var markerIDRegexp = regexp.MustCompile(`^[0-9a-f]{32}$`)
++
++// CheckoutMarkerDir returns the shared Git metadata directory that holds the
++// persistent marker identity of a checkout workspace.
++func CheckoutMarkerDir(repoRoot string) string {
++	if dir, err := GitMarkerDir(repoRoot); err == nil {
++		return dir
++	}
++	return filepath.Join(repoRoot, ".git", "tws")
++}
++
++// ExternalMarkerDir returns the tool-owned metadata directory that holds
++// the persistent marker identity of an external workspace.
++func ExternalMarkerDir(workspaceRoot string) string {
++	return filepath.Join(workspaceRoot, workspaceMarker)
++}
++
++// GitMarkerDir returns the shared Git metadata directory for a repository.
++// Linked worktrees resolve to the same common directory as the main checkout.
++func GitMarkerDir(repoRoot string) (string, error) {
++	out, err := exec.Command("git", "-C", repoRoot, "rev-parse", "--git-common-dir").Output()
++	if err != nil {
++		return "", fmt.Errorf("resolving Git marker directory: %w", err)
++	}
++	dir := strings.TrimSpace(string(out))
++	if !filepath.IsAbs(dir) {
++		dir = filepath.Join(repoRoot, dir)
++	}
++	return filepath.Join(canonicalize(dir), "tws"), nil
++}
++
++// ReadWorkspaceMarkerID reads the persistent marker identity stored in a
++// tool-owned metadata directory. It returns an empty string when no marker
++// file exists, and an error when the marker file is unreadable or malformed.
++// It never creates or mutates anything on disk.
++func ReadWorkspaceMarkerID(markerDir string) (string, error) {
++	path := filepath.Join(markerDir, workspaceMarkerIDFile)
++	data, err := os.ReadFile(path)
++	if errors.Is(err, fs.ErrNotExist) {
++		return "", nil
++	}
++	if err != nil {
++		return "", fmt.Errorf("reading workspace marker %s: %w", path, err)
++	}
++	id := strings.TrimSpace(string(data))
++	if !markerIDRegexp.MatchString(id) {
++		return "", fmt.Errorf("workspace marker %s is malformed", path)
++	}
++	return id, nil
++}
++
++// EnsureWorkspaceMarkerID returns the persistent marker identity for a
++// tool-owned metadata directory, creating it when absent. Creation is
++// atomic: the identity is written to a temporary file and linked into
++// place, so a concurrent creator never loses its identity and a partial
++// write is never observed as a valid marker.
++func EnsureWorkspaceMarkerID(markerDir string) (string, error) {
++	if id, err := ReadWorkspaceMarkerID(markerDir); err != nil || id != "" {
++		return id, err
++	}
++	if err := os.MkdirAll(markerDir, 0755); err != nil {
++		return "", fmt.Errorf("creating workspace marker dir %s: %w", markerDir, err)
++	}
++
++	buf := make([]byte, 16)
++	if _, err := rand.Read(buf); err != nil {
++		return "", fmt.Errorf("generating workspace marker: %w", err)
++	}
++	id := hex.EncodeToString(buf)
++
++	tmp, err := os.CreateTemp(markerDir, ".workspace-id-*.tmp")
++	if err != nil {
++		return "", fmt.Errorf("creating workspace marker: %w", err)
++	}
++	tmpName := tmp.Name()
++	cleanup := func(primary error) error {
++		return errors.Join(primary, os.Remove(tmpName))
++	}
++	if _, err := tmp.WriteString(id + "\n"); err != nil {
++		return "", cleanup(errors.Join(fmt.Errorf("writing workspace marker: %w", err), tmp.Close()))
++	}
++	if err := tmp.Sync(); err != nil {
++		return "", cleanup(errors.Join(fmt.Errorf("syncing workspace marker: %w", err), tmp.Close()))
++	}
++	if err := tmp.Close(); err != nil {
++		return "", cleanup(fmt.Errorf("closing workspace marker: %w", err))
++	}
++	if err := os.Chmod(tmpName, 0600); err != nil {
++		return "", cleanup(fmt.Errorf("setting workspace marker permissions: %w", err))
++	}
++
++	target := filepath.Join(markerDir, workspaceMarkerIDFile)
++	if err := os.Link(tmpName, target); err != nil {
++		if errors.Is(err, fs.ErrExist) {
++			// Another writer won the race; adopt its identity.
++			existing, readErr := ReadWorkspaceMarkerID(markerDir)
++			return existing, cleanup(readErr)
++		}
++		return "", cleanup(fmt.Errorf("installing workspace marker atomically: %w", err))
++	}
++	if err := os.Remove(tmpName); err != nil {
++		return "", fmt.Errorf("cleaning up workspace marker temp file: %w", err)
++	}
++	return id, nil
++}
++
++// EnsureExternalWorkspaceMarker creates the standard `.tws-workspace`
++// marker directory for an external workspace root. The persistent identity
++// file is created separately on explicit registry enrollment.
++func EnsureExternalWorkspaceMarker(workspaceRoot string) error {
++	if workspaceRoot == "" {
++		return fmt.Errorf("empty workspace root")
++	}
++	markerDir := ExternalMarkerDir(workspaceRoot)
++	if err := os.MkdirAll(markerDir, 0755); err != nil {
++		return fmt.Errorf("creating workspace marker: %w", err)
++	}
++	return nil
++}
++
+ // canonicalize returns an absolute, cleaned path. It resolves symlinks
+ // when possible; on error it falls back to filepath.Abs + filepath.Clean.
+ func canonicalize(p string) string {

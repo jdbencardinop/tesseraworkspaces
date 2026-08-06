@@ -60,8 +60,8 @@ func addExternal(feature string, templates []string, newBranch, base string, for
 	root := internal.FeaturePath(feature)
 	wsRoot := internal.TwsRoot()
 
-	if err := os.MkdirAll(filepath.Join(wsRoot, ".tws-workspace"), 0755); err != nil {
-		return fmt.Errorf("creating workspace marker: %w", err)
+	if err := internal.EnsureExternalWorkspaceMarker(wsRoot); err != nil {
+		return err
 	}
 	if err := os.MkdirAll(filepath.Join(root, "worktrees"), 0755); err != nil {
 		return fmt.Errorf("creating worktrees directory: %w", err)

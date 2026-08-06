@@ -15,6 +15,7 @@ func initCmd() *cobra.Command {
 	var force bool
 	var mode string
 	var register bool
+	var registerAlias string
 
 	cmd := &cobra.Command{
 		Use:   "init",
@@ -28,15 +29,8 @@ Use --agent to override detection. Use --mode to set workspace_mode.`,
 			if err != nil {
 				return err
 			}
-
-			// --register with checkout mode should fail early.
-			if register && mode == "checkout" {
-				return fmt.Errorf("--register is not supported with --mode checkout: workspace registry is not yet implemented")
-			}
-
-			// Even without checkout, --register is not implemented.
-			if register {
-				return fmt.Errorf("--register is not yet implemented; workspace registry is planned for a future release")
+			if registerAlias != "" && !register {
+				return fmt.Errorf("--register-alias requires --register")
 			}
 
 			// Set workspace_mode if --mode is specified.
@@ -65,6 +59,24 @@ Use --agent to override detection. Use --mode to set workspace_mode.`,
 			default:
 				installFile(filepath.Join(cwd, ".claude", "skills", "tesseraworkspaces", "SKILL.md"), skills.ClaudeSkill, force)
 			}
+
+			// Register the repository root after successful init.
+			if register {
+				repoRoot, rootErr := internal.MainRepoRootIn(cwd)
+				if rootErr != nil {
+					return fmt.Errorf("--register requires a Git repository: %s is not inside one; run 'git init' first, or drop --register", cwd)
+				}
+				_, created, err := internal.RegistryAdd(repoRoot, registerAlias)
+				if err != nil {
+					return fmt.Errorf("registry: %w", err)
+				}
+				if created {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  registered in global registry\n")
+				} else {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  already registered in global registry\n")
+				}
+			}
+
 			return nil
 		},
 	}
@@ -72,7 +84,8 @@ Use --agent to override detection. Use --mode to set workspace_mode.`,
 	cmd.Flags().StringVar(&agent, "agent", "", "Agent type: claude, copilot (default: auto-detect)")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Overwrite existing skill file")
 	cmd.Flags().StringVar(&mode, "mode", "", "Set workspace mode: external, checkout")
-	cmd.Flags().BoolVar(&register, "register", false, "Register this workspace in the global registry (not yet implemented)")
+	cmd.Flags().BoolVar(&register, "register", false, "Register workspace in global registry after init")
+	cmd.Flags().StringVar(&registerAlias, "register-alias", "", "Alias for registry registration (requires --register)")
 
 	return cmd
 }

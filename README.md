@@ -114,6 +114,7 @@ tws import --from-repo auth         # recreate on another machine
 ```sh
 tws init                            # install Claude + Copilot skills
 tws init --agent claude             # Claude only
+tws init --register --register-alias myapp   # also enroll in the global registry
 ```
 
 ## All Commands
@@ -141,7 +142,41 @@ tws init --agent claude             # Claude only
 | `tws import <file> [--from-repo]` | Import workspace |
 | `tws template sync [--all] [--template dir]` | Backfill templates |
 | `tws close <feature> <branch>` | Kill tmux session |
-| `tws init [--agent] [--force]` | Install agent skills |
+| `tws registry add <path> [--alias name]` | Register a repo/workspace for discovery |
+| `tws registry list/show/check [--json]` | Inspect registered workspaces |
+| `tws registry alias <selector> <alias> [--remove]` | Manage aliases |
+| `tws registry repair <selector> <new-path> [--allow-identity-change]` | Re-point a moved entry |
+| `tws registry remove <selector>` | Drop registry metadata (never deletes files) |
+| `tws registry prune --missing [--force]` | Drop entries whose targets are gone |
+| `tws init [--agent] [--force] [--register] [--register-alias name]` | Install agent skills |
+
+### Global Workspace Registry
+
+Opt-in discovery index at `${XDG_DATA_HOME:-~/.local/share}/tws/registry.yaml`
+(directory `0700`, file `0600`). Nothing is created until you enroll explicitly.
+
+```sh
+tws registry add . --alias myapp          # enroll the current repo/workspace
+tws init --register --register-alias myapp  # enroll after a successful init
+tws registry list --json                  # deterministic output; empty is []
+tws registry check                        # ok / missing / mismatched / invalid
+tws registry repair myapp /new/path       # re-point after a move
+tws registry prune --missing --force      # --force required in non-TTY use
+```
+
+Selectors are exact: entry ID, alias, or canonical path. Aliases may not shadow
+an entry ID or a registered path.
+
+**Identity and markers.** Git-backed targets carry a small opaque marker at
+`.git/tws/workspace-id`; checkout mode and linked worktrees share the main
+repository's Git common directory. External workspaces use
+`.tws-workspace/workspace-id`. Markers are created only on explicit enrollment,
+survive moves and workspace-mode switches, and detect replacement.
+
+- Moved target: `tws registry repair <selector> <new-path>` — no extra flag needed.
+- Replaced target (marker or Git identity changed): add `--allow-identity-change`.
+- `tws registry remove`/`prune` only drop registry metadata; targets and marker
+  files are never deleted.
 
 ## Requirements
 

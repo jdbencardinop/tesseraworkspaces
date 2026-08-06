@@ -28,6 +28,7 @@ You are working in a project that uses `tws` for feature-scoped workspaces with 
 - `tws decisions ack [feature]` — Mark all decisions as read
 - `tws inject <feature> [branch] [--into <path>]` — Sync inject/ files into worktrees
 - `tws hooks install/remove [feature]` — Manage agent hooks
+- `tws registry add/list/show/check/...` — Manage opt-in global workspace discovery
 - `tws doctor [feature]` — Run health checks
 - `tws rename feature/branch` — Rename feature or branch
 - `tws config show/set/get` — Manage configuration
@@ -76,6 +77,24 @@ Checkout mode stores local metadata under `.tws/features/`, adds `.tws/` to the 
 `tws sync <feature>` is transactional in checkout mode: it requires a clean attached checkout, switches/rebases logical branches sequentially, persists recovery state under `.tws/state/`, and restores the original branch. Use `--continue` after resolving conflicts and `--abort` to recover.
 
 `tws open <feature> <branch>` runs the configured agent in the repository root and restores the original branch after the agent/follow-up shell exits. `--tmux` keeps the branch owned by a recorded tmux session until `tws close`. Only one checkout session may own the repository; `--all` and automatic hooks remain unsupported.
+
+## Global Workspace Registry
+
+Opt-in discovery index under the XDG data directory. It never owns, moves, or deletes repositories/workspaces.
+
+```sh
+tws registry add /path/to/repo --alias rp
+tws init --register --register-alias rp    # enroll after a successful init
+tws registry list --json                   # array output; empty is []
+tws registry check                         # ok / missing / mismatched / invalid
+tws registry repair rp /new/path           # moved target: no extra flag needed
+tws registry remove rp                     # metadata only; files are untouched
+tws registry prune --missing --force       # --force required in non-TTY use
+```
+
+Selectors are exact ID, alias, or canonical path — never guess fuzzy names. An alias may not shadow an entry ID or a registered path.
+
+Enrollment writes a small opaque marker file in tool-owned metadata. Git-backed targets use `.git/tws/workspace-id`; checkout mode and linked worktrees share the main repository's Git common directory. External workspaces use `.tws-workspace/workspace-id`. Identity survives moves and workspace-mode switches and detects replacement. `tws registry check` is read-only. Use `--allow-identity-change` on repair only when the target was intentionally replaced.
 
 ## Workflow
 

@@ -1,10 +1,16 @@
 package internal
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -61,11 +67,137 @@ func capsFor(mode WorkspaceMode) Capabilities {
 
 // stableID computes a deterministic hex ID from a canonical path.
 // It uses the absolute, cleaned path (with symlinks resolved when
-// possible). Relocating the repository changes the ID; a future
-// global registry will provide persistent identifiers.
+// possible). Relocating the repository changes the ID; use the
+// persisted workspace marker identity for move-stable identity.
 func stableID(canonicalPath string) string {
 	h := sha256.Sum256([]byte(canonicalPath))
 	return fmt.Sprintf("%x", h[:8])
+}
+
+// workspaceMarkerIDFile is the tool-owned file holding a workspace's
+// persistent opaque identity. It lives inside the tool-owned metadata
+// directory: <repo>/.tws for checkout workspaces and
+// <workspace>/.tws-workspace for external workspaces.
+const workspaceMarkerIDFile = "workspace-id"
+
+var markerIDRegexp = regexp.MustCompile(`^[0-9a-f]{32}$`)
+
+// CheckoutMarkerDir returns the shared Git metadata directory that holds the
+// persistent marker identity of a checkout workspace.
+func CheckoutMarkerDir(repoRoot string) string {
+	if dir, err := GitMarkerDir(repoRoot); err == nil {
+		return dir
+	}
+	return filepath.Join(repoRoot, ".git", "tws")
+}
+
+// ExternalMarkerDir returns the tool-owned metadata directory that holds
+// the persistent marker identity of an external workspace.
+func ExternalMarkerDir(workspaceRoot string) string {
+	return filepath.Join(workspaceRoot, workspaceMarker)
+}
+
+// GitMarkerDir returns the shared Git metadata directory for a repository.
+// Linked worktrees resolve to the same common directory as the main checkout.
+func GitMarkerDir(repoRoot string) (string, error) {
+	out, err := exec.Command("git", "-C", repoRoot, "rev-parse", "--git-common-dir").Output()
+	if err != nil {
+		return "", fmt.Errorf("resolving Git marker directory: %w", err)
+	}
+	dir := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(repoRoot, dir)
+	}
+	return filepath.Join(canonicalize(dir), "tws"), nil
+}
+
+// ReadWorkspaceMarkerID reads the persistent marker identity stored in a
+// tool-owned metadata directory. It returns an empty string when no marker
+// file exists, and an error when the marker file is unreadable or malformed.
+// It never creates or mutates anything on disk.
+func ReadWorkspaceMarkerID(markerDir string) (string, error) {
+	path := filepath.Join(markerDir, workspaceMarkerIDFile)
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("reading workspace marker %s: %w", path, err)
+	}
+	id := strings.TrimSpace(string(data))
+	if !markerIDRegexp.MatchString(id) {
+		return "", fmt.Errorf("workspace marker %s is malformed", path)
+	}
+	return id, nil
+}
+
+// EnsureWorkspaceMarkerID returns the persistent marker identity for a
+// tool-owned metadata directory, creating it when absent. Creation is
+// atomic: the identity is written to a temporary file and linked into
+// place, so a concurrent creator never loses its identity and a partial
+// write is never observed as a valid marker.
+func EnsureWorkspaceMarkerID(markerDir string) (string, error) {
+	if id, err := ReadWorkspaceMarkerID(markerDir); err != nil || id != "" {
+		return id, err
+	}
+	if err := os.MkdirAll(markerDir, 0755); err != nil {
+		return "", fmt.Errorf("creating workspace marker dir %s: %w", markerDir, err)
+	}
+
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("generating workspace marker: %w", err)
+	}
+	id := hex.EncodeToString(buf)
+
+	tmp, err := os.CreateTemp(markerDir, ".workspace-id-*.tmp")
+	if err != nil {
+		return "", fmt.Errorf("creating workspace marker: %w", err)
+	}
+	tmpName := tmp.Name()
+	cleanup := func(primary error) error {
+		return errors.Join(primary, os.Remove(tmpName))
+	}
+	if _, err := tmp.WriteString(id + "\n"); err != nil {
+		return "", cleanup(errors.Join(fmt.Errorf("writing workspace marker: %w", err), tmp.Close()))
+	}
+	if err := tmp.Sync(); err != nil {
+		return "", cleanup(errors.Join(fmt.Errorf("syncing workspace marker: %w", err), tmp.Close()))
+	}
+	if err := tmp.Close(); err != nil {
+		return "", cleanup(fmt.Errorf("closing workspace marker: %w", err))
+	}
+	if err := os.Chmod(tmpName, 0600); err != nil {
+		return "", cleanup(fmt.Errorf("setting workspace marker permissions: %w", err))
+	}
+
+	target := filepath.Join(markerDir, workspaceMarkerIDFile)
+	if err := os.Link(tmpName, target); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			// Another writer won the race; adopt its identity.
+			existing, readErr := ReadWorkspaceMarkerID(markerDir)
+			return existing, cleanup(readErr)
+		}
+		return "", cleanup(fmt.Errorf("installing workspace marker atomically: %w", err))
+	}
+	if err := os.Remove(tmpName); err != nil {
+		return "", fmt.Errorf("cleaning up workspace marker temp file: %w", err)
+	}
+	return id, nil
+}
+
+// EnsureExternalWorkspaceMarker creates the standard `.tws-workspace`
+// marker directory for an external workspace root. The persistent identity
+// file is created separately on explicit registry enrollment.
+func EnsureExternalWorkspaceMarker(workspaceRoot string) error {
+	if workspaceRoot == "" {
+		return fmt.Errorf("empty workspace root")
+	}
+	markerDir := ExternalMarkerDir(workspaceRoot)
+	if err := os.MkdirAll(markerDir, 0755); err != nil {
+		return fmt.Errorf("creating workspace marker: %w", err)
+	}
+	return nil
 }
 
 // canonicalize returns an absolute, cleaned path. It resolves symlinks

@@ -1,0 +1,11 @@
+ README.md                                       |  37 ++++++-
+ assets/skills/claude/tesseraworkspaces/SKILL.md |  27 +++++
+ assets/skills/copilot/tws.prompt.md             |  19 ++++
+ internal/cli/add.go                             |   4 +-
+ internal/cli/checkout_lifecycle_test.go         |   4 +-
+ internal/cli/importcmd.go                       |   4 +-
+ internal/cli/init.go                            |  33 ++++--
+ internal/cli/new.go                             |   3 +
+ internal/cli/root.go                            |   1 +
+ internal/workspace.go                           | 136 +++++++++++++++++++++++-
+ 10 files changed, 249 insertions(+), 19 deletions(-)

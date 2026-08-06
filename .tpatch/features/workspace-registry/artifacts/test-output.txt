@@ -1,0 +1,8 @@
+# Test run — 2026-08-06T04:43:59Z
+# Command: GIT_CONFIG_COUNT=0 go test ./... -count=1
+# Directory: /Users/jbencardino/Documents/Proyectos/tesseraspaces
+
+?   	github.com/jdbencardinop/tesseraworkspaces/assets/skills	[no test files]
+ok  	github.com/jdbencardinop/tesseraworkspaces/cmd/tws	0.524s
+ok  	github.com/jdbencardinop/tesseraworkspaces/internal	34.840s
+ok  	github.com/jdbencardinop/tesseraworkspaces/internal/cli	51.370s

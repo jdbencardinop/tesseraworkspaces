@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "feature": "workspace-registry",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_c22bcc341a76",
+      "kind": "record",
+      "patch_sha256": "4553c2269452810fd29b1ff07e6d95e027dbdec8faaf6ba9282a5f6bfd78465d",
+      "git_patch_id": "321ce837aee14cc83a71a97c3f7088ef059edb1b",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "19b5eab266351fd688ea5a9a5e71a184b27538ff1b88e45414a7f6b79fbb382f",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "patches/002-record.patch",
+      "base_commit": "246c930936a64fc2d7d2f9ddaf129c698f2f413b",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [
+          "README.md",
+          "assets/skills/claude/tesseraworkspaces/SKILL.md",
+          "assets/skills/copilot/tws.prompt.md",
+          "internal/cli/add.go",
+          "internal/cli/checkout_lifecycle_test.go",
+          "internal/cli/importcmd.go",
+          "internal/cli/init.go",
+          "internal/cli/new.go",
+          "internal/cli/registry.go",
+          "internal/cli/registry_test.go",
+          "internal/cli/root.go",
+          "internal/registry.go",
+          "internal/registry_lock_unix.go",
+          "internal/registry_test.go",
+          "internal/workspace.go"
+        ],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "README.md",
+        "assets/skills/claude/tesseraworkspaces/SKILL.md",
+        "assets/skills/copilot/tws.prompt.md",
+        "internal/cli/add.go",
+        "internal/cli/checkout_lifecycle_test.go",
+        "internal/cli/importcmd.go",
+        "internal/cli/init.go",
+        "internal/cli/new.go",
+        "internal/cli/registry.go",
+        "internal/cli/registry_test.go",
+        "internal/cli/root.go",
+        "internal/registry.go",
+        "internal/registry_lock_unix.go",
+        "internal/registry_test.go",
+        "internal/workspace.go"
+      ],
+      "dependencies": [
+        {
+          "slug": "workspace-mode-foundation",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "1b04ea52238cc6b6f8a3cd984abb24f8712dc934c0e6cae9c44f42a3a8c18533",
+          "parent_recipe_sha256": "7b7fe355e1389f6b4bcf1f83406d0de1cf6745d1cebfddf11158ca3f6ccde887"
+        }
+      ],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "slug": "workspace-registry",
+  "completed_at": "2026-08-06T04:43:59Z",
+  "base_commit": "9b6c10e546a052bed8cd769e6678d04aa9b07baa",
+  "has_patch": true,
+  "validation_status": "passed",
+  "validation_notes": "tpatch test — command: GIT_CONFIG_COUNT=0 go test ./... -count=1"
+}

@@ -638,9 +638,7 @@ func TestExport_RuntimeStateExcluded(t *testing.T) {
 
 // ---------- Finding 7: Init ----------
 
-func TestInit_CheckoutRegisterFails(t *testing.T) {
-	// The init command should fail early if --register with --mode checkout
-	// We test the enableWorkspaceMode + register logic
+func TestInit_EnableWorkspaceModeValidation(t *testing.T) {
 	dir := t.TempDir()
 
 	// Create a git repo

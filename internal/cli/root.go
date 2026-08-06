@@ -45,6 +45,7 @@ func Execute() int {
 		enableCmd(),
 		modeCmd(),
 		migrateLayoutCmd(),
+		registryCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
