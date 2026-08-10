@@ -5,8 +5,8 @@
   "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-08-10T19:08:30Z",
-  "updated_at": "2026-08-10T19:15:40Z",
-  "last_command": "record",
+  "updated_at": "2026-08-10T19:16:09Z",
+  "last_command": "verify",
   "notes": "landed at 2026-08-10T19:15:40Z",
   "apply": {
     "completed_at": "2026-08-10T19:09:43Z",
@@ -22,6 +22,21 @@
     {
       "slug": "workspace-registry",
       "kind": "hard"
+    },
+    {
+      "slug": "persist-agent-workflow-guidance",
+      "kind": "hard"
     }
-  ]
+  ],
+  "verify": {
+    "verified_at": "2026-08-10T19:16:09Z",
+    "passed": true,
+    "recipe_hash_at_verify": "71ba151f6a3b01b56028a7f07ce594e608d6e3683ac569d7ea1b0c8247d13001",
+    "patch_hash_at_verify": "70e0f5dd36ab3d42a28daedf154cab2418b6fc5a227136e655f68960932d74ff",
+    "parent_snapshot": {
+      "checkout-doctor-observability": "applied",
+      "persist-agent-workflow-guidance": "applied",
+      "workspace-registry": "applied"
+    }
+  }
 }
