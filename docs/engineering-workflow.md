@@ -15,9 +15,15 @@ Current shipped checkout slices:
 2. lifecycle and logical branches;
 3. transactional stack sync;
 4. namespaced feature layout with legacy migration;
-5. single-owner direct/tmux agent sessions.
+5. single-owner direct/tmux agent sessions;
+6. checkout doctor and list observability.
 
-Next roadmap feature: **checkout doctor observability**. See [`roadmap.md`](roadmap.md).
+The opt-in global workspace registry is also shipped for stable cross-repository
+discovery, health checks, and moved-target repair.
+
+Next roadmap feature: **workspace sibling links** for discovering tool-owned
+learning, ticket, patching, research, and documentation spaces without making
+`tws` authoritative for their content. See [`roadmap.md`](roadmap.md).
 
 ## Tpatch workflow
 

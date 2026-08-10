@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "feature": "refresh-roadmap-after-registry",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_2c71a2fd6f3e",
+      "kind": "record",
+      "patch_sha256": "70e0f5dd36ab3d42a28daedf154cab2418b6fc5a227136e655f68960932d74ff",
+      "git_patch_id": "801abf785da52f36248ce5fd806fd2bffbf5fcd4",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "71ba151f6a3b01b56028a7f07ce594e608d6e3683ac569d7ea1b0c8247d13001",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "",
+      "base_commit": "b8c2feaef37c05b10c38ede2208dbb78be0e418d",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "docs/engineering-workflow.md",
+        "docs/roadmap.md"
+      ],
+      "dependencies": [
+        {
+          "slug": "checkout-doctor-observability",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "3080da47c2d6aad24ebe54f6f6b7e24bc7c1208f65ca9360ca4ea2a54d5003df",
+          "parent_recipe_sha256": "b74492c495f378ea86955504528a9f9314be13e19889c8e78c2515e6d1b24199"
+        },
+        {
+          "slug": "workspace-registry",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "4553c2269452810fd29b1ff07e6d95e027dbdec8faaf6ba9282a5f6bfd78465d",
+          "parent_recipe_sha256": "19b5eab266351fd688ea5a9a5e71a184b27538ff1b88e45414a7f6b79fbb382f"
+        }
+      ],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 
 This roadmap is organized by correctness and user value rather than release date. `tws` remains a Git worktree orchestrator: it may integrate with specialized tools, but it should not duplicate their source of truth.
 
-## Now — checkout workspace program
+## Now — workspace sibling links
 
 Shipped foundations:
 
@@ -10,9 +10,16 @@ Shipped foundations:
 - checkout lifecycle and logical branch metadata;
 - transactional checkout stack sync;
 - `.tws/features/` layout with legacy migration;
-- single-owner checkout direct/tmux agent sessions.
+- single-owner checkout direct/tmux agent sessions;
+- checkout doctor and list observability;
+- an opt-in global registry with stable workspace identity, health checks, and
+  moved-target repair.
 
-Next: **checkout doctor observability** — mode/identity, current logical branch, stale sync/session locks, ancestry, context links, and recovery guidance.
+Current target: **workspace sibling links** — maintain
+`<workspace-root>/spaces.yaml` as a discovery registry for tool-owned learning,
+ticket, patching, research, and documentation spaces. `tws` provides location
+and discovery while each linked tool remains authoritative for its schema and
+lifecycle.
 
 ## Completed P0 correctness
 
@@ -28,7 +35,7 @@ After resolving a rebase conflict, `tws sync --continue` must resume deferred de
 
 For decoupled names, `StackEntry.Name` identifies the tws worktree while `StackEntry.GitBranch()` identifies the Git branch. Sync must use the latter for Git validation and ref operations.
 
-## Next — P1 stack safety and observability
+## P1 stack safety and observability backlog
 
 - **Stack ancestry doctor**: report current, stale, divergent, and missing parent refs for every edge.
 - **Sync modes**: support local-only propagation, no-fetch operation, surgical branch/descendant sync, and explicit root targets.
@@ -43,7 +50,7 @@ For decoupled names, `StackEntry.Name` identifies the tws worktree while `StackE
 - **Copilot and Codex hooks**: install supported decision-reading integrations or warn clearly when the configured agent has no hook adapter.
 - **Explicit decision acknowledgement**: allow feature-root orchestration with `tws decisions ack --branch <name>`.
 - **Inter-feature messaging**: allow one feature orchestrator to target another feature with a durable message while preserving separate stacks and lifecycle state. Do not merge feature workspaces for the first version.
-- **Workspace sibling links**: maintain `<workspace-root>/spaces.yaml` as the dynamic registry for tool-owned learning, tickets, patching, research, and documentation spaces. Agents discover links through `tws space list/show`; skills teach discovery but do not embed mutable paths. Entries may be workspace-wide or feature-scoped, while each linked tool remains authoritative for its content and lifecycle.
+- **Current target — workspace sibling links**: maintain `<workspace-root>/spaces.yaml` as the dynamic registry for tool-owned learning, tickets, patching, research, and documentation spaces. Agents discover links through `tws space list/show`; skills teach discovery but do not embed mutable paths. Entries may be workspace-wide or feature-scoped, while each linked tool remains authoritative for its content and lifecycle.
 - **Agent work status**: surface materialized sessions, idle agents, blocked approvals, and attention needs without pretending to replace the agent harness.
 - **Context summaries**: maintain feature-level and worktree-session recaps while preserving authored source documents.
 

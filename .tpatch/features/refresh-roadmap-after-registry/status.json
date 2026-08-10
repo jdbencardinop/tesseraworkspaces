@@ -1,0 +1,27 @@
+{
+  "id": "refresh-roadmap-after-registry",
+  "slug": "refresh-roadmap-after-registry",
+  "title": "Refresh the durable roadmap and engineering workflow after checkout doctor v1.2.9 and workspace registry landed: mark both capabilities shipped and set workspace-sibling-links as the current target without changing product behavior.",
+  "state": "applied",
+  "compatibility": "unknown",
+  "requested_at": "2026-08-10T19:08:30Z",
+  "updated_at": "2026-08-10T19:15:40Z",
+  "last_command": "record",
+  "notes": "landed at 2026-08-10T19:15:40Z",
+  "apply": {
+    "completed_at": "2026-08-10T19:09:43Z",
+    "base_commit": "b8c2feaef37c05b10c38ede2208dbb78be0e418d",
+    "has_patch": true
+  },
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "checkout-doctor-observability",
+      "kind": "hard"
+    },
+    {
+      "slug": "workspace-registry",
+      "kind": "hard"
+    }
+  ]
+}
