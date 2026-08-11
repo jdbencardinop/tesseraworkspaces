@@ -1,0 +1,22 @@
+{
+  "id": "stack-status",
+  "slug": "stack-status",
+  "title": "Add tws stack status \u003cfeature\u003e [--json] while preserving the existing tws stack \u003cfeature\u003e dependency tree. Use the shared stack ancestry evaluator to show each logical and Git branch, local head, configured parent/base and parent head, LastBaseSHA, ancestry state, materialization, dirty/rebase state, upstream, and ahead/behind counts. Keep it deterministic, read-only, local-only by default with no implicit fetch, mode-aware for external worktrees and checkout logical branches, and explicit about literal refs and cross-repo entries.",
+  "state": "requested",
+  "compatibility": "unknown",
+  "requested_at": "2026-08-11T17:39:15Z",
+  "updated_at": "2026-08-11T17:39:15Z",
+  "last_command": "add",
+  "apply": {},
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "stack-ancestry-doctor",
+      "kind": "hard"
+    },
+    {
+      "slug": "agent-work-status-dashboard",
+      "kind": "soft"
+    }
+  ]
+}
