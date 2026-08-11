@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -25,7 +26,7 @@ func renameFeatureCmd() *cobra.Command {
 		Use:   "feature <old-name> <new-name>",
 		Short: "Rename a feature",
 		Args:  cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			oldName := args[0]
 			newName := args[1]
 
@@ -33,6 +34,7 @@ func renameFeatureCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			root := ws.MetadataRoot
 
 			var oldPath, newPath string
 			oldPath, err = ws.ResolveFeaturePath(oldName)
@@ -45,12 +47,32 @@ func renameFeatureCmd() *cobra.Command {
 				return fmt.Errorf("feature not found: %s", oldName)
 			}
 
+			// One locked read validates both names and stages the registry
+			// rewrite. It runs before the destination-collision check so a
+			// registered space directory reports the space conflict rather
+			// than "feature already exists". With no spaces.yaml this is a
+			// true no-op: no lock file, no registry file, nothing created.
+			tx, err := internal.BeginSpacesFeatureRename(root, oldName, newName, oldPath, newPath)
+			if err != nil {
+				return err
+			}
+			defer func() { retErr = errors.Join(retErr, tx.Release()) }()
+
 			if _, err := os.Stat(newPath); err == nil {
 				return fmt.Errorf("feature already exists: %s", newName)
 			}
 
 			if err := os.Rename(oldPath, newPath); err != nil {
 				return fmt.Errorf("error renaming: %w", err)
+			}
+
+			if commitErr := tx.Commit(); commitErr != nil {
+				if rollbackErr := os.Rename(newPath, oldPath); rollbackErr != nil {
+					return errors.Join(commitErr, fmt.Errorf(
+						"rollback failed: feature directory is now %s on disk while %s still refers to %q; repair with 'tws space remove' and 'tws space add': %w",
+						newPath, internal.SpacesFilePath(root), oldName, rollbackErr))
+				}
+				return commitErr
 			}
 
 			fmt.Printf("Renamed feature: %s → %s\n", oldName, newName)
@@ -99,6 +121,10 @@ func renameBranchCmd() *cobra.Command {
 // Short Name is the metadata identity; git branch may have a prefix.
 // Metadata is updated only after git succeeds; rolled back if SaveStack fails.
 func renameBranchCheckout(ws internal.Workspace, feature, oldName, newName string) error {
+	if err := internal.GuardFeatureName(ws.MetadataRoot, feature); err != nil {
+		return err
+	}
+
 	featurePath, err := ws.ResolveFeaturePath(feature)
 	if err != nil {
 		return err
@@ -167,6 +193,10 @@ func renameBranchCheckout(ws internal.Workspace, feature, oldName, newName strin
 // renameBranchExternal renames a branch in external mode.
 // Uses entry.GitBranch() for git operations.
 func renameBranchExternal(feature, oldName, newName string) error {
+	if err := internal.GuardFeatureName(internal.TwsRoot(), feature); err != nil {
+		return err
+	}
+
 	featurePath := internal.FeaturePath(feature)
 
 	stack, err := internal.LoadStack(featurePath)

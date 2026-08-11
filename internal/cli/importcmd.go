@@ -189,6 +189,10 @@ func recreateWorkspaceE(export internal.WorkspaceExport, injectSrc string, ws in
 // creates/registers branches without linked worktrees, never imports runtime state.
 func recreateCheckout(export internal.WorkspaceExport, injectSrc string, ws internal.Workspace) error {
 	feature := export.Feature
+	if err := internal.GuardFeatureName(ws.MetadataRoot, feature); err != nil {
+		return err
+	}
+
 	featurePath := ws.FeaturePath(feature)
 
 	if err := os.MkdirAll(featurePath, 0755); err != nil {
@@ -249,9 +253,13 @@ func recreateCheckout(export internal.WorkspaceExport, injectSrc string, ws inte
 // recreateExternal imports into external mode (original behavior).
 func recreateExternal(export internal.WorkspaceExport, injectSrc string) error {
 	feature := export.Feature
+	wsRoot := internal.TwsRoot()
+	if err := internal.GuardFeatureName(wsRoot, feature); err != nil {
+		return err
+	}
+
 	featurePath := internal.FeaturePath(feature)
 
-	wsRoot := internal.TwsRoot()
 	if err := internal.EnsureExternalWorkspaceMarker(wsRoot); err != nil {
 		return err
 	}

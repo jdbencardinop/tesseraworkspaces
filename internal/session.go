@@ -339,6 +339,9 @@ func checkoutClaudeSessionExists(repo string) bool {
 	return err == nil
 }
 
+// PlanCheckoutSessionLinks is deliberately guard-free: it is reached only from
+// the checkout open/session flow, which is guarded at runCheckoutOpen with a
+// feature name a guarded creating surface produced.
 func PlanCheckoutSessionLinks(ws Workspace, feature, into string) ([]SessionContextLink, error) {
 	featurePath, err := ws.ResolveFeaturePath(feature)
 	if err != nil {

@@ -20,7 +20,15 @@ tws stack <feature>               # see dependency tree
 tws decisions show                # see all decisions (auto-detects feature)
 tws decisions show --all          # include already-read decisions
 tws doctor <feature>              # check health of all worktrees
+tws space list --json --feature <feature>  # resolve sibling spaces before delegating
+tws space list --json --all                # complete registry; a bare list is cwd-scoped
 ```
+
+Resolve learning, ticket, patching, research, and documentation locations with
+`tws space list --json --feature <feature>` before delegating work. Use the
+`resolved_path` field; never hard-code a sibling path. An empty result is normal.
+A bare `tws space list` is scoped to the current directory; pass `--all` when
+you need the complete registry regardless of where the command runs.
 
 ### Communicate with worktree agents
 ```sh

@@ -33,6 +33,13 @@ func (e *ErrAmbiguousFeature) Error() string {
 //
 // If both exist, returns ErrAmbiguousFeature.
 // For external mode, returns the standard MetadataRoot/<feature> path.
+//
+// This resolver is deliberately guard-free: it never consults spaces.yaml.
+// Burying the registered-space guard here would make a pure path join depend
+// on registry state for every caller (including tight listing loops), and it
+// would let the continue-on-resolve-error branches in checkout_health.go
+// silently swallow an unreadable-spaces.yaml failure. The guard lives at named
+// call sites instead (see GuardFeatureName).
 func (w Workspace) ResolveFeaturePath(feature string) (string, error) {
 	if err := validateFeatureName(feature); err != nil {
 		return "", err
@@ -64,6 +71,8 @@ func (w Workspace) ResolveFeaturePath(feature string) (string, error) {
 
 // ResolveFeaturePathOrLegacy is like ResolveFeaturePath but for read-only
 // operations that need to find existing features. Returns ("", nil) if not found.
+//
+// Deliberately guard-free for the same reason as ResolveFeaturePath.
 func (w Workspace) ResolveFeaturePathOrLegacy(feature string) (string, error) {
 	if err := validateFeatureName(feature); err != nil {
 		return "", err
@@ -96,16 +105,27 @@ func (w Workspace) ResolveFeaturePathOrLegacy(feature string) (string, error) {
 }
 
 // LegacyFeatureNames returns sorted legacy checkout feature names.
+//
+// It has no error channel and exactly one caller, a ValidArgsFunction, so it
+// stays best-effort: untrusted spaces metadata yields no completion candidates.
 func (w Workspace) LegacyFeatureNames() []string {
 	if w.Mode != ModeCheckout {
+		return nil
+	}
+	owners, err := SpaceDirOwners(w.MetadataRoot)
+	if err != nil {
 		return nil
 	}
 	var names []string
 	if entries, err := os.ReadDir(w.MetadataRoot); err == nil {
 		for _, entry := range entries {
-			if entry.IsDir() && !isReservedDir(entry.Name()) {
-				names = append(names, entry.Name())
+			if !entry.IsDir() || isReservedDir(entry.Name()) {
+				continue
 			}
+			if _, owned := owners.TopLevelOwner(entry.Name()); owned {
+				continue
+			}
+			names = append(names, entry.Name())
 		}
 	}
 	sort.Strings(names)
@@ -113,8 +133,16 @@ func (w Workspace) LegacyFeatureNames() []string {
 }
 
 // ListFeaturesResolved returns sorted feature names for the workspace,
-// excluding reserved internal directories.
+// excluding reserved internal directories and directories owned by a
+// registered sibling space. Untrusted spaces metadata is a hard failure:
+// no partial listing is ever returned.
 func (w Workspace) ListFeaturesResolved() ([]string, error) {
+	// One read per listing call; never once per feature.
+	owners, err := SpaceDirOwners(w.MetadataRoot)
+	if err != nil {
+		return nil, err
+	}
+
 	seen := make(map[string]bool)
 
 	if w.Mode == ModeCheckout {
@@ -122,25 +150,37 @@ func (w Workspace) ListFeaturesResolved() ([]string, error) {
 		featuresDir := filepath.Join(w.MetadataRoot, "features")
 		if entries, err := os.ReadDir(featuresDir); err == nil {
 			for _, e := range entries {
-				if e.IsDir() && !isReservedDir(e.Name()) {
-					seen[e.Name()] = true
+				if !e.IsDir() || isReservedDir(e.Name()) {
+					continue
 				}
+				if _, owned := owners.FeatureOwner(e.Name()); owned {
+					continue
+				}
+				seen[e.Name()] = true
 			}
 		}
 		// Legacy layout: .tws/<feature> (non-reserved dirs in MetadataRoot)
 		if entries, err := os.ReadDir(w.MetadataRoot); err == nil {
 			for _, e := range entries {
-				if e.IsDir() && !isReservedDir(e.Name()) && !seen[e.Name()] {
-					seen[e.Name()] = true
+				if !e.IsDir() || isReservedDir(e.Name()) || seen[e.Name()] {
+					continue
 				}
+				if _, owned := owners.TopLevelOwner(e.Name()); owned {
+					continue
+				}
+				seen[e.Name()] = true
 			}
 		}
 	} else {
 		if entries, err := os.ReadDir(w.MetadataRoot); err == nil {
 			for _, e := range entries {
-				if e.IsDir() && !isReservedDir(e.Name()) {
-					seen[e.Name()] = true
+				if !e.IsDir() || isReservedDir(e.Name()) {
+					continue
 				}
+				if _, owned := owners.TopLevelOwner(e.Name()); owned {
+					continue
+				}
+				seen[e.Name()] = true
 			}
 		}
 	}
@@ -161,6 +201,7 @@ var reservedDirs = map[string]bool{
 	"templates":   true,
 	"hooks":       true,
 	"skills":      true,
+	"spaces.yaml": true,
 }
 
 func isReservedDir(name string) bool {
@@ -203,6 +244,10 @@ func dirExists(path string) bool {
 // DetectFeatureFromCwdE is a mode-aware version of DetectFeatureFromCwd.
 // It handles new layout (.tws/features/<f>), legacy layout (.tws/<f>),
 // and repo root detection.
+//
+// Deliberately exclusion-free: it has no non-test callers, so adding a
+// spaces.yaml read here would be dead weight. `tws space list` uses its own
+// anchor-rooted scope detection instead.
 func (w Workspace) DetectFeatureFromCwdE(cwd string) (feature, branch string) {
 	if w.Mode == ModeCheckout {
 		// New layout: cwd under .tws/features/<feature>/...
@@ -242,11 +287,16 @@ func (w Workspace) CheckoutStateDir() string {
 }
 
 // RequireFeaturePath is the package-level error-returning feature path resolver.
-// It calls RequireWorkspace and then ResolveFeaturePath. Callers must propagate
-// errors (ambiguity, invalid workspace_mode) instead of silently falling back.
+// It calls RequireWorkspace, guards the logical feature name against registered
+// sibling spaces, and then resolves the path. Callers must propagate errors
+// (ambiguity, invalid workspace_mode, space-name conflict) instead of silently
+// falling back.
 func RequireFeaturePath(feature string) (string, error) {
 	ws, err := RequireWorkspace()
 	if err != nil {
+		return "", err
+	}
+	if err := GuardFeatureName(ws.MetadataRoot, feature); err != nil {
 		return "", err
 	}
 	return ws.ResolveFeaturePath(feature)

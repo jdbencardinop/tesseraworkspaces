@@ -2,7 +2,7 @@
 
 This roadmap is organized by correctness and user value rather than release date. `tws` remains a Git worktree orchestrator: it may integrate with specialized tools, but it should not duplicate their source of truth.
 
-## Now — workspace sibling links
+## Now — agent work status
 
 Shipped foundations:
 
@@ -13,13 +13,15 @@ Shipped foundations:
 - single-owner checkout direct/tmux agent sessions;
 - checkout doctor and list observability;
 - an opt-in global registry with stable workspace identity, health checks, and
-  moved-target repair.
+  moved-target repair;
+- workspace sibling links: `<spaces-root>/spaces.yaml` plus
+  `tws space add/list/show/remove` for discovering tool-owned learning, ticket,
+  patching, research, and documentation spaces, with feature-name protection and
+  strict failure on untrusted metadata.
 
-Current target: **workspace sibling links** — maintain
-`<workspace-root>/spaces.yaml` as a discovery registry for tool-owned learning,
-ticket, patching, research, and documentation spaces. `tws` provides location
-and discovery while each linked tool remains authoritative for its schema and
-lifecycle.
+Current target: **agent work status** — surface materialized sessions, idle
+agents, blocked approvals, and attention needs without pretending to replace the
+agent harness.
 
 ## Completed P0 correctness
 
@@ -50,8 +52,8 @@ For decoupled names, `StackEntry.Name` identifies the tws worktree while `StackE
 - **Copilot and Codex hooks**: install supported decision-reading integrations or warn clearly when the configured agent has no hook adapter.
 - **Explicit decision acknowledgement**: allow feature-root orchestration with `tws decisions ack --branch <name>`.
 - **Inter-feature messaging**: allow one feature orchestrator to target another feature with a durable message while preserving separate stacks and lifecycle state. Do not merge feature workspaces for the first version.
-- **Current target — workspace sibling links**: maintain `<workspace-root>/spaces.yaml` as the dynamic registry for tool-owned learning, tickets, patching, research, and documentation spaces. Agents discover links through `tws space list/show`; skills teach discovery but do not embed mutable paths. Entries may be workspace-wide or feature-scoped, while each linked tool remains authoritative for its content and lifecycle.
-- **Agent work status**: surface materialized sessions, idle agents, blocked approvals, and attention needs without pretending to replace the agent harness.
+- **Workspace sibling links (shipped)**: `<spaces-root>/spaces.yaml` is the dynamic registry for tool-owned learning, tickets, patching, research, and documentation spaces. Agents discover links through `tws space list/show`; skills teach discovery but do not embed mutable paths. Entries may be workspace-wide or feature-scoped, while each linked tool remains authoritative for its content and lifecycle.
+- **Current target — agent work status**: surface materialized sessions, idle agents, blocked approvals, and attention needs without pretending to replace the agent harness.
 - **Context summaries**: maintain feature-level and worktree-session recaps while preserving authored source documents.
 
 ## Tool collaboration contracts

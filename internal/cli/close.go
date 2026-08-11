@@ -36,6 +36,11 @@ func closeCmd() *cobra.Command {
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			}
 		},
+		// Deliberately guard-free: the external branch only builds a tmux
+		// session name and kills that session — it joins no root and creates,
+		// reads, or removes nothing under TwsRoot(). The checkout branch reads
+		// the recorded session rather than a caller-supplied name. A registered
+		// space therefore cannot be reached through this command.
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ws, err := internal.RequireWorkspace()
 			if err != nil {

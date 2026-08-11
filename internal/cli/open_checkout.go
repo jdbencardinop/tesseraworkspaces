@@ -8,6 +8,13 @@ import (
 )
 
 func runCheckoutOpen(ws internal.Workspace, args []string, useTmux, noTmux, noAgent bool, cmdFlag interface{ Changed(string) bool }) error {
+	// Guarded at the top: resolveCheckoutOpenArgs already resolves feature
+	// paths and loads stacks for a named feature.
+	if len(args) >= 1 {
+		if err := internal.GuardFeatureName(ws.MetadataRoot, args[0]); err != nil {
+			return err
+		}
+	}
 	feature, name, err := resolveCheckoutOpenArgs(ws, args)
 	if err != nil {
 		return err

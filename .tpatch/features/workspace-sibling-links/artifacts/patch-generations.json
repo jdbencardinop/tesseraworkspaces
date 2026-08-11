@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "feature": "workspace-sibling-links",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_9c5405b55305",
+      "kind": "record",
+      "patch_sha256": "c080af2926e6087f761aa42412729194fab57218f236afd89029d502e045e843",
+      "git_patch_id": "bc45be1e0ec6db4683c560f9bf3b332a3114b2e9",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "c5b9e83b6617ffb52f36109216a11dbd179776adf6b7425e28ea5f6c2890424c",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "",
+      "base_commit": "ddc5aa03a36a8349d07833656cccedea9c986927",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "CHANGELOG.md",
+        "README.md",
+        "assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md",
+        "assets/skills/claude/tesseraworkspaces/SKILL.md",
+        "assets/skills/copilot/tws.prompt.md",
+        "docs/engineering-workflow.md",
+        "docs/roadmap.md",
+        "internal/checkout_health.go",
+        "internal/checkout_health_test.go",
+        "internal/cli/add.go",
+        "internal/cli/archive.go",
+        "internal/cli/close.go",
+        "internal/cli/delete.go",
+        "internal/cli/doctor.go",
+        "internal/cli/export.go",
+        "internal/cli/hooks.go",
+        "internal/cli/importcmd.go",
+        "internal/cli/list.go",
+        "internal/cli/new.go",
+        "internal/cli/open.go",
+        "internal/cli/open_checkout.go",
+        "internal/cli/rename.go",
+        "internal/cli/root.go",
+        "internal/cli/space.go",
+        "internal/cli/space_guard_test.go",
+        "internal/cli/space_identity_test.go",
+        "internal/cli/space_lifecycle_test.go",
+        "internal/cli/space_matrix_test.go",
+        "internal/cli/space_migrate_test.go",
+        "internal/cli/space_test.go",
+        "internal/cli/sync.go",
+        "internal/cli/template.go",
+        "internal/migrate.go",
+        "internal/migrate_test.go",
+        "internal/paths.go",
+        "internal/resolve.go",
+        "internal/resolve_test.go",
+        "internal/session.go",
+        "internal/spaces.go",
+        "internal/spaces_test.go"
+      ],
+      "dependencies": [
+        {
+          "slug": "fix-external-feature-dir-resolution",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "a74eee8fdca17dd26dd16030e4fe54afc72e36b1a3fa4aeb403cc04bacb134fc",
+          "parent_recipe_sha256": "d9a5f37a93ee74c18b6784aad1ca81eae3a0a7d6bcf399f3b8abfe9767f534cf"
+        },
+        {
+          "slug": "workspace-hub-research",
+          "kind": "soft",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "workspace-mode-foundation",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "1b04ea52238cc6b6f8a3cd984abb24f8712dc934c0e6cae9c44f42a3a8c18533",
+          "parent_recipe_sha256": "7b7fe355e1389f6b4bcf1f83406d0de1cf6745d1cebfddf11158ca3f6ccde887"
+        },
+        {
+          "slug": "workspace-registry",
+          "kind": "soft",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "4553c2269452810fd29b1ff07e6d95e027dbdec8faaf6ba9282a5f6bfd78465d",
+          "parent_recipe_sha256": "19b5eab266351fd688ea5a9a5e71a184b27538ff1b88e45414a7f6b79fbb382f"
+        }
+      ],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}

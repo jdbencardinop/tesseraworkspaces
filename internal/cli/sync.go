@@ -36,6 +36,12 @@ func syncCmd() *cobra.Command {
 			}
 
 			feature := args[0]
+			// One guard covers the plain, --abort, and --continue paths.
+			// syncFeature carries none: it has no error channel and would
+			// degrade the message to "sync incomplete".
+			if err := internal.GuardFeatureName(internal.TwsRoot(), feature); err != nil {
+				return err
+			}
 			featurePath, fpErr := ws.ResolveFeaturePath(feature)
 			if fpErr != nil {
 				return fpErr

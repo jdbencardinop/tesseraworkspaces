@@ -29,6 +29,7 @@ You are working in a project that uses `tws` for feature-scoped workspaces with 
 - `tws inject <feature> [branch] [--into <path>]` — Sync inject/ files into worktrees
 - `tws hooks install/remove [feature]` — Manage agent hooks
 - `tws registry add/list/show/check/...` — Manage opt-in global workspace discovery
+- `tws space add/list/show/remove` — Link and discover tool-owned sibling spaces
 - `tws doctor [feature]` — Run health checks
 - `tws rename feature/branch` — Rename feature or branch
 - `tws config show/set/get` — Manage configuration
@@ -95,6 +96,21 @@ tws registry prune --missing --force       # --force required in non-TTY use
 Selectors are exact ID, alias, or canonical path — never guess fuzzy names. An alias may not shadow an entry ID or a registered path.
 
 Enrollment writes a small opaque marker file in tool-owned metadata. Git-backed targets use `.git/tws/workspace-id`; checkout mode and linked worktrees share the main repository's Git common directory. External workspaces use `.tws-workspace/workspace-id`. Identity survives moves and workspace-mode switches and detects replacement. `tws registry check` is read-only. Use `--allow-identity-change` on repair only when the target was intentionally replaced.
+
+## Workspace Sibling Links
+
+Learning notes, ticket stores, patch metadata, research, and authored docs live in sibling directories that `tws` locates but never owns. Discover them by command; never hard-code a path.
+
+```sh
+tws space list --json --all                # the complete registry; [] when empty
+tws space list --json                       # cwd-scoped: workspace-wide + detected feature
+tws space list --json --feature <feature>  # workspace-wide links plus that feature's
+tws space show <name> --json               # add --workspace or --feature <f> if ambiguous
+tws space add learning ./learning --kind learning --description "notes"
+tws space remove learning --workspace      # drops the link; never deletes the target
+```
+
+Use the `resolved_path` field of the JSON output. `status: missing` and `scope_status: feature-missing` are reports, not repairs. An empty result is normal on a fresh clone — ask or register a link instead of guessing. A bare `tws space list` is scoped to the current directory (workspace-wide links plus the detected feature); use `--all` for the complete view. A registered directory is never a feature: feature commands and `tws migrate-layout` refuse that name by filesystem identity — including a different letter case or absolute spelling — and it is excluded from `tws list`. When a name exists in two scopes, disambiguate `show`/`remove` with `--workspace` or `--feature <feature>`. A malformed or future-schema `spaces.yaml` makes feature and space commands fail loudly; fix the file rather than working around it.
 
 ## Workflow
 

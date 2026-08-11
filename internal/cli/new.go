@@ -57,6 +57,10 @@ func newCmd() *cobra.Command {
 // rolled back (only if this operation created it). Archived entries are
 // reactivated. Mismatched existing entries are rejected.
 func createCheckoutBranch(ws internal.Workspace, feature, name, requestedBase string, force bool) error {
+	if err := internal.GuardFeatureName(ws.MetadataRoot, feature); err != nil {
+		return err
+	}
+
 	featurePath, err := ws.ResolveFeaturePath(feature)
 	if err != nil {
 		return err
@@ -157,10 +161,15 @@ func openCheckoutTmux(ws internal.Workspace, feature, branch string) {
 // Used by both tws new and tws add -n. Explicit base refs are literal;
 // an omitted base resolves from the selected repository's origin/HEAD.
 func createWorktree(feature, name, requestedBase, repoPath string, force bool) error {
+	wsRoot := internal.TwsRoot()
+	if err := internal.GuardFeatureName(wsRoot, feature); err != nil {
+		return err
+	}
+
 	featurePath := internal.FeaturePath(feature)
 	path := internal.WorktreePath(feature, name)
 
-	if err := internal.EnsureExternalWorkspaceMarker(internal.TwsRoot()); err != nil {
+	if err := internal.EnsureExternalWorkspaceMarker(wsRoot); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(featurePath, 0755); err != nil {

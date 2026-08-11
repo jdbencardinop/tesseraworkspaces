@@ -148,6 +148,10 @@ tws init --register --register-alias myapp   # also enroll in the global registr
 | `tws registry repair <selector> <new-path> [--allow-identity-change]` | Re-point a moved entry |
 | `tws registry remove <selector>` | Drop registry metadata (never deletes files) |
 | `tws registry prune --missing [--force]` | Drop entries whose targets are gone |
+| `tws space add <name> <path> --kind <kind> [--description text] [--feature f]` | Link a tool-owned sibling space |
+| `tws space list [--feature f] [--all] [--kind k] [--json]` | Discover linked sibling spaces (bare list is cwd-scoped) |
+| `tws space show <name> [--feature f \| --workspace] [--json]` | Show one linked space |
+| `tws space remove <name> [--feature f \| --workspace]` | Drop the link (never deletes the target) |
 | `tws init [--agent] [--force] [--register] [--register-alias name]` | Install agent skills |
 
 ### Global Workspace Registry
@@ -177,6 +181,75 @@ survive moves and workspace-mode switches, and detect replacement.
 - Replaced target (marker or Git identity changed): add `--allow-identity-change`.
 - `tws registry remove`/`prune` only drop registry metadata; targets and marker
   files are never deleted.
+
+### Workspace sibling links
+
+A tws workspace is surrounded by tool-owned sibling spaces: learning notes,
+ticket stores, patch metadata, research, and authored documentation. `tws space`
+records **where** they live in `<workspace-root>/spaces.yaml` so agents and
+humans discover them by command instead of by hard-coded path.
+
+```sh
+tws space add learning ./learning --kind learning --description "notes"
+tws space add patching ./acme/patching --kind patching --feature acme
+tws space list                        # cwd-scoped: workspace-wide + detected feature
+tws space list --all                  # the complete registry, from anywhere
+tws space list --json                 # deterministic output; empty is []
+tws space list --feature acme         # workspace-wide entries plus acme's
+tws space show learning --workspace   # scope selectors disambiguate a shared name
+tws space remove learning --workspace # drops the link; never deletes the target
+```
+
+- **Location metadata only.** `tws` never reads, writes, validates, or deletes
+  the content of a linked space, and it never learns the linked tool's schema or
+  lifecycle. `tws space add` is the only command that creates anything for this
+  feature, and it never creates the target directory.
+- **Where the file lives.** External mode uses the resolved external root
+  (`$TWS_ROOT` when set); checkout mode uses `<repo>/.tws` and ignores
+  `TWS_ROOT`, as every other checkout command does. `tws space list` always
+  prints `Workspace: <root> (mode: <mode>, scope: <scope>)` before its results,
+  including the empty state, so the active file and scope are unambiguous.
+- **Default scope is your location.** A bare `tws space list` shows every
+  workspace-wide entry plus the entries of the feature you are inside when one
+  is detected; outside a feature it is already complete. Use `--all` for the
+  complete registry from anywhere, and `--kind` to filter. `--json` is a bare
+  array with no header. A filter that hides everything says so and reports how
+  many entries are registered, which is never confused with an empty registry.
+- **Scope selectors.** When the same name exists workspace-wide and inside a
+  feature, `tws space show` / `tws space remove` report the ambiguity and
+  accept `--workspace` or `--feature <name>` (mutually exclusive) to select
+  exactly one.
+- **Two path forms.** Targets inside the workspace root are stored
+  workspace-relative and stay portable; targets outside are stored absolute. A
+  target must exist and be a directory, but it does **not** need to be a Git
+  repository.
+- **Local state.** `spaces.yaml` and `.spaces.lock` are mode `0600`, are not
+  shared, and are not included in `tws export` / `tws import`. The advisory lock
+  is POSIX-only (macOS and Linux).
+- **Feature-name protection.** A registered target directory can never
+  masquerade as a feature. Ownership is decided by filesystem identity, so a
+  hand-edited absolute path inside the workspace root, a symlinked spelling, or
+  a different letter case on a case-insensitive volume is recognised as the
+  same directory. `tws add`, `new`, `delete`, `rename`, `archive`,
+  `sync`, `export`, `import`, `open`, `stack`, `inject`, `push`, `decide`,
+  `doctor`, `template sync`, `hooks install`, and `tws migrate-layout` all
+  refuse a feature name owned by a registered space, and feature listings
+  exclude it. `tws delete` and `tws migrate-layout` refuse when a registered
+  target lives inside the feature — `migrate-layout` never rewrites a registered
+  path, it names the blockers and the exact scope-qualified
+  `tws space remove` command for each, and `--all` is all-or-nothing — and
+  `tws rename feature` rewrites relative entries while refusing pinned absolute
+  ones.
+- **Strict on untrusted metadata.** If `spaces.yaml` exists but is unreadable,
+  symlinked, malformed, carries an unknown field, or declares a future schema
+  version, every command that consults workspace features or spaces exits
+  nonzero having changed nothing. Only shell completion degrades, silently
+  offering no candidates. When the file is absent — the normal state — nothing
+  is created and every pre-existing command behaves exactly as before.
+- **Inside a sibling space the enclosing `.tws-workspace` marker wins**, so
+  `tws space list` keeps targeting the parent workspace even when the space is
+  its own Git repository. No `spaces.yaml` or `.tws` directory is ever created
+  for the sibling repo.
 
 ## Requirements
 

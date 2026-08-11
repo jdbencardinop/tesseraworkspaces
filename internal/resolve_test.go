@@ -291,3 +291,49 @@ func TestCheckoutStateDir(t *testing.T) {
 		t.Errorf("expected %s/state, got %s", dir, got)
 	}
 }
+
+func TestListFeaturesResolved_SortedExcludesSpaceOwnedName(t *testing.T) {
+	dir := t.TempDir()
+	ws := Workspace{MetadataRoot: dir, Mode: ModeCheckout}
+
+	for _, path := range []string{
+		filepath.Join(dir, "features", "beta"),
+		filepath.Join(dir, "features", "alpha"),
+		filepath.Join(dir, "legacy-feat"),
+		filepath.Join(dir, "learning"),
+	} {
+		if err := os.MkdirAll(path, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeSpacesFixture(t, dir, `version: 1
+spaces:
+  - name: notes
+    kind: learning
+    path: learning
+    added_at: 2026-01-01T00:00:00Z
+`)
+
+	features, err := ws.ListFeaturesResolved()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"alpha", "beta", "legacy-feat"}
+	if len(features) != len(want) {
+		t.Fatalf("expected %v, got %v", want, features)
+	}
+	for i := range want {
+		if features[i] != want[i] {
+			t.Fatalf("expected %v, got %v", want, features)
+		}
+	}
+}
+
+func TestListFeaturesResolved_ReservedIncludesSpacesFile(t *testing.T) {
+	if !isReservedDir("spaces.yaml") {
+		t.Fatal("spaces.yaml must be a reserved name")
+	}
+	if err := validateFeatureName("spaces.yaml"); err == nil {
+		t.Fatal("a feature may not be named spaces.yaml")
+	}
+}

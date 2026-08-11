@@ -50,28 +50,29 @@ automatically checks for new decisions on session start and resume.
 Use --all to install hooks across all features.
 Set auto_hooks: true in config to auto-install on every tws new.`,
 		Args: cobra.MaximumNArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			ws, wsErr := internal.RequireWorkspace()
 			if wsErr != nil {
-				fmt.Printf("Error: %v\n", wsErr)
-				return
+				return wsErr
 			}
 			if ws.Mode == internal.ModeCheckout {
-				fmt.Println("Error: hooks install requires linked worktrees; not supported in checkout mode")
-				return
+				return fmt.Errorf("hooks install requires linked worktrees; not supported in checkout mode")
 			}
 
 			if all {
-				features := internal.ListFeatures()
+				features, listErr := internal.ListFeaturesE()
+				if listErr != nil {
+					return listErr
+				}
 				if len(features) == 0 {
 					fmt.Println("No features found.")
-					return
+					return nil
 				}
 				for _, f := range features {
 					fmt.Printf("%s:\n", f)
 					installHooksForFeature(f)
 				}
-				return
+				return nil
 			}
 
 			var feature string
@@ -80,12 +81,18 @@ Set auto_hooks: true in config to auto-install on every tws new.`,
 			} else {
 				feature, _ = internal.DetectFeatureFromCwd()
 				if feature == "" {
-					fmt.Println("Could not detect feature. Run from inside a worktree or specify: tws hooks install <feature>")
-					os.Exit(1)
+					return fmt.Errorf("could not detect feature. Run from inside a worktree or specify: tws hooks install <feature>")
 				}
 			}
 
+			// installHooksForFeature has no error channel and prints to
+			// stdout, so the guard must be evaluated here to exit nonzero.
+			if err := internal.GuardFeatureName(ws.MetadataRoot, feature); err != nil {
+				return err
+			}
+
 			installHooksForFeature(feature)
+			return nil
 		},
 	}
 

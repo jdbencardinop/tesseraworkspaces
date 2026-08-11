@@ -92,6 +92,10 @@ func WorktreePath(feature, branch string) string {
 // DetectFeatureFromCwd detects the current feature name from the working directory.
 // Works when cwd is inside a worktree: <workspace>/<feature>/worktrees/<branch>/
 // Returns feature name and feature path, or empty strings if not detected.
+//
+// Deliberately exclusion-free: it already requires a worktrees/ or stack.yaml
+// signal on disk, so a plain sibling space directory can never be detected as
+// a feature by it.
 func DetectFeatureFromCwd() (string, string) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -133,28 +137,42 @@ func DetectFeatureFromCwd() (string, string) {
 	return "", ""
 }
 
-// ListFeatures returns the sorted feature names for the resolved workspace.
+// ListFeaturesE returns the sorted feature names for the resolved workspace,
+// propagating any failure. Runtime commands MUST use this.
 // External mode preserves the legacy sibling-workspace behavior; checkout mode
-// merges new and legacy layouts while excluding internal metadata directories.
-func ListFeatures() []string {
+// merges new and legacy layouts while excluding internal metadata directories
+// and directories owned by a registered sibling space.
+func ListFeaturesE() ([]string, error) {
 	if ws, err := RequireWorkspace(); err == nil {
-		features, listErr := ws.ListFeaturesResolved()
-		if listErr == nil {
-			return features
-		}
-		return nil
+		return ws.ListFeaturesResolved()
 	}
-	entries, err := os.ReadDir(TwsRoot())
+	root := TwsRoot()
+	owners, err := SpaceDirOwners(root)
 	if err != nil {
-		return nil
+		return nil, err
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, nil
 	}
 	var features []string
 	for _, entry := range entries {
-		if entry.IsDir() && entry.Name() != ".tws-workspace" {
-			features = append(features, entry.Name())
+		if !entry.IsDir() || entry.Name() == ".tws-workspace" {
+			continue
 		}
+		if _, owned := owners.TopLevelOwner(entry.Name()); owned {
+			continue
+		}
+		features = append(features, entry.Name())
 	}
-	return features
+	return features, nil
+}
+
+// ListFeatures is the completion-only wrapper. It discards errors and returns
+// no candidates on failure. Do not use it from a RunE path.
+func ListFeatures() []string {
+	names, _ := ListFeaturesE()
+	return names
 }
 
 // ListBranches returns the branch names for a feature from stack.yaml,

@@ -42,7 +42,10 @@ Corrupt or unreadable persisted state returns a non-zero exit status.`,
 			}
 
 			// Check all features
-			features := internal.ListFeatures()
+			features, listErr := internal.ListFeaturesE()
+			if listErr != nil {
+				return listErr
+			}
 			if len(features) == 0 {
 				fmt.Println("No features found.")
 				return nil

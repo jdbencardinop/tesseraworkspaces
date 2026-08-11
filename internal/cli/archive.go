@@ -43,6 +43,10 @@ func archiveCmd() *cobra.Command {
 // archiveCheckout marks a branch as archived in metadata only.
 // The git branch is preserved; no worktree to remove.
 func archiveCheckout(ws internal.Workspace, feature, branch string) error {
+	if err := internal.GuardFeatureName(ws.MetadataRoot, feature); err != nil {
+		return err
+	}
+
 	featurePath, err := ws.ResolveFeaturePath(feature)
 	if err != nil {
 		return err
@@ -79,6 +83,10 @@ func archiveCheckout(ws internal.Workspace, feature, branch string) error {
 
 // archiveExternal removes the worktree from disk but preserves the git branch.
 func archiveExternal(feature, branch string) error {
+	if err := internal.GuardFeatureName(internal.TwsRoot(), feature); err != nil {
+		return err
+	}
+
 	featurePath := internal.FeaturePath(feature)
 	path := internal.WorktreePath(feature, branch)
 

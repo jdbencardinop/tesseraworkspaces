@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -49,11 +50,21 @@ func deleteCmd() *cobra.Command {
 // deleteCheckout deletes a feature in checkout mode.
 // --delete-branches validates all targets before deleting any.
 // Refuses to delete the currently checked-out branch.
-func deleteCheckout(ws internal.Workspace, feature string, deleteBranches, forceDelete bool) error {
+func deleteCheckout(ws internal.Workspace, feature string, deleteBranches, forceDelete bool) (retErr error) {
 	featurePath, err := ws.ResolveFeaturePath(feature)
 	if err != nil {
 		return err
 	}
+
+	// Open the spaces delete transaction before any branch validation or
+	// filesystem removal. It refuses a registered space name and any nested
+	// registered target, and holds the lock through os.RemoveAll so a
+	// concurrent `tws space add` cannot interleave.
+	tx, err := internal.BeginSpacesFeatureDelete(ws.MetadataRoot, feature, featurePath)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, tx.Release()) }()
 
 	if _, err := os.Stat(featurePath); os.IsNotExist(err) {
 		return fmt.Errorf("feature not found: %s", feature)
@@ -133,8 +144,14 @@ func restoreDeletedBranches(repoRoot string, backups []branchBackup) error {
 }
 
 // deleteExternal deletes a feature in external mode.
-func deleteExternal(feature string, deleteBranches, forceDelete bool) error {
+func deleteExternal(feature string, deleteBranches, forceDelete bool) (retErr error) {
 	featurePath := internal.FeaturePath(feature)
+
+	tx, err := internal.BeginSpacesFeatureDelete(internal.TwsRoot(), feature, featurePath)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, tx.Release()) }()
 
 	if _, err := os.Stat(featurePath); os.IsNotExist(err) {
 		return fmt.Errorf("feature not found: %s", feature)

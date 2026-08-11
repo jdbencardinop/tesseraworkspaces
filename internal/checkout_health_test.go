@@ -1169,3 +1169,57 @@ func TestCheckoutHealth_FormatContainsSections(t *testing.T) {
 		t.Error("output should contain Features: section")
 	}
 }
+
+func TestCheckoutHealth_MalformedSpacesFailsClosed(t *testing.T) {
+	dir, ws := setupHealthTestRepo(t)
+	gitInTest(t, dir, "branch", "normal-branch")
+	addFeatureToRepo(t, ws, "normal-feat", "normal-branch", "main")
+	writeSpacesFixture(t, ws.MetadataRoot, "version: 99\nspaces: []\n")
+
+	opts := &CheckoutHealthOpts{Proc: fakeProcessChecker{}, Tmux: fakeTmuxChecker{}}
+	report, err := BuildCheckoutHealthReport(ws, opts)
+	if err == nil {
+		t.Fatalf("expected strict failure, got report %+v", report)
+	}
+	if !strings.Contains(err.Error(), "cannot verify registered spaces in ") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if report != nil && len(report.Features) > 0 {
+		t.Fatal("no partial report may be returned")
+	}
+
+	entries, err := BuildCheckoutList(ws)
+	if err == nil {
+		t.Fatalf("BuildCheckoutList must return the error, got %+v", entries)
+	}
+	if entries != nil {
+		t.Fatalf("no partial or empty slice may be returned: %+v", entries)
+	}
+}
+
+func TestCheckoutHealth_RegisteredSpaceIsNotAFeature(t *testing.T) {
+	dir, ws := setupHealthTestRepo(t)
+	gitInTest(t, dir, "branch", "normal-branch")
+	addFeatureToRepo(t, ws, "normal-feat", "normal-branch", "main")
+	if err := os.MkdirAll(filepath.Join(ws.MetadataRoot, "learning"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeSpacesFixture(t, ws.MetadataRoot, `version: 1
+spaces:
+  - name: notes
+    kind: learning
+    path: learning
+    added_at: 2026-01-01T00:00:00Z
+`)
+
+	opts := &CheckoutHealthOpts{Proc: fakeProcessChecker{}, Tmux: fakeTmuxChecker{}}
+	report, err := BuildCheckoutHealthReport(ws, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range report.Features {
+		if f.Name == "learning" {
+			t.Fatal("a registered space must never surface as a feature")
+		}
+	}
+}

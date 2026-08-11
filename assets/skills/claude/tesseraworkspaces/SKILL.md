@@ -39,6 +39,7 @@ tws <command> [args]
 | `tws hooks install [feature]` | Install Claude Code auto-read hooks |
 | `tws hooks remove [feature]` | Remove auto-read hooks |
 | `tws registry add/list/show/check/...` | Manage opt-in global workspace discovery |
+| `tws space add/list/show/remove` | Link and discover tool-owned sibling spaces |
 | `tws doctor [feature]` | Run health checks |
 | `tws rename feature <old> <new>` | Rename a feature |
 | `tws rename branch <feature> <old> <new>` | Rename a branch |
@@ -198,6 +199,39 @@ tws registry prune --missing --force   # --force required in non-TTY use
 - Moved target → `tws registry repair <selector> <new-path>` succeeds with no extra flag because the marker and Git identity are unchanged.
 - Replaced or deleted marker → status `mismatched`; rerun repair with `--allow-identity-change` only when the replacement is intentional.
 - `tws registry remove` and `tws registry prune` drop registry metadata only; targets and marker files are never deleted.
+
+### Sibling Spaces
+
+A workspace is surrounded by tool-owned sibling spaces — learning notes, ticket stores, patch metadata, research, authored docs. `tws` records **where** they live; the linked tool owns the content.
+
+**Never hard-code a sibling path. Always discover it:**
+
+```sh
+tws space list --json --all               # the complete registry; [] when empty
+tws space list --json                     # cwd-scoped: workspace-wide + detected feature
+tws space list --json --feature <feature> # workspace-wide links plus that feature's
+tws space show <name> --json              # add --workspace or --feature <f> if ambiguous
+```
+
+A bare `tws space list` is scoped to your current location: it shows every
+workspace-wide link plus the links of the feature you are inside when one is
+detected. Use `--all` whenever you need the complete view regardless of cwd.
+
+`--json` emits snake_case keys including `resolved_path`, `scope`, `scope_status`, and `status`. Use `resolved_path` as the directory to work in; treat `status: missing` and `scope_status: feature-missing` as "report it, do not repair it".
+
+Registering a link is explicit and never creates the target:
+
+```sh
+tws space add learning ./learning --kind learning --description "notes"
+tws space add patching ./<feature>/patching --kind patching --feature <feature>
+tws space remove learning --workspace     # drops the link only; scope selector is explicit
+```
+
+- An empty result is normal on a fresh clone — do not invent paths, ask or register one.
+- `--kind` is a free token (`learning`, `tickets`, `patching`, `research`, `docs` are conventions, not a closed set).
+- A registered directory is never a feature: `tws add/new/delete/rename/...` and `tws migrate-layout` refuse that name, and it is excluded from `tws list`. Ownership is decided by filesystem identity, so a different letter case or an absolute spelling of the same directory is refused too.
+- When one name exists both workspace-wide and inside a feature, `show`/`remove` report the ambiguity; disambiguate with `--workspace` or `--feature <feature>`.
+- If `spaces.yaml` is malformed or from a newer schema, feature and space commands fail loudly. Fix or remove the file; never work around it.
 
 ### Health Checks
 

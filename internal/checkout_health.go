@@ -509,6 +509,9 @@ func buildFeatureEntries(ws Workspace) ([]CheckoutFeatureEntry, error) {
 	// Current branch for "current" detection
 	currentBranch, _ := healthCurrentBranch(ws.RepoRoot)
 
+	// Deliberately guard-free: features came from ListFeaturesResolved, which
+	// already excluded space-owned names and failed closed on untrusted
+	// spaces.yaml, so this continue cannot mask a spaces failure.
 	var entries []CheckoutFeatureEntry
 	for _, feature := range features {
 		fp, resolveErr := ws.ResolveFeaturePath(feature)
@@ -877,6 +880,7 @@ func BuildCheckoutList(ws Workspace) ([]CheckoutListEntry, error) {
 		sessionName = sess.Name
 	}
 
+	// Deliberately guard-free, for the same reason as buildFeatureEntries.
 	var entries []CheckoutListEntry
 	for _, feature := range features {
 		fp, resolveErr := ws.ResolveFeaturePath(feature)

@@ -45,6 +45,8 @@ func listCmd() *cobra.Command {
 
 			fmt.Printf("Workspace: %s (mode: %s)\n\n", ws.MetadataRoot, ws.Mode)
 
+			// Deliberately guard-free: ListFeaturesResolved has already removed
+			// space-owned names, and an untrusted spaces.yaml aborted above.
 			for _, feature := range features {
 				featurePath, resolveErr := ws.ResolveFeaturePath(feature)
 				if resolveErr != nil {

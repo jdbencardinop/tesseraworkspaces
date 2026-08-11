@@ -41,6 +41,10 @@ func exportCmd() *cobra.Command {
 				return err
 			}
 
+			if err := internal.GuardFeatureName(ws.MetadataRoot, feature); err != nil {
+				return err
+			}
+
 			var featurePath string
 			featurePath, err = ws.ResolveFeaturePath(feature)
 			if err != nil {

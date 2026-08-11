@@ -34,26 +34,38 @@ func templateSyncCmd() *cobra.Command {
 			}
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if all {
-				features := internal.ListFeatures()
+				features, listErr := internal.ListFeaturesE()
+				if listErr != nil {
+					return listErr
+				}
 				if len(features) == 0 {
 					fmt.Println("No features found.")
-					return
+					return nil
 				}
 				for _, feature := range features {
 					syncFeatureTemplate(feature, templates)
 				}
-				return
+				return nil
 			}
 
 			if len(args) == 0 {
-				fmt.Println("Usage: tws template sync <feature> [--template <dir>]")
-				fmt.Println("       tws template sync --all")
-				os.Exit(1)
+				return fmt.Errorf("usage: tws template sync <feature> [--template <dir>]\n       tws template sync --all")
+			}
+
+			// syncFeatureTemplate has no error channel and prints to stdout,
+			// so a registered-space conflict or untrusted spaces metadata must
+			// be reported here to exit nonzero. A failing RequireWorkspace is
+			// deliberately not promoted: it falls through to the legacy shape.
+			if ws, wsErr := internal.RequireWorkspace(); wsErr == nil {
+				if err := internal.GuardFeatureName(ws.MetadataRoot, args[0]); err != nil {
+					return err
+				}
 			}
 
 			syncFeatureTemplate(args[0], templates)
+			return nil
 		},
 	}
 

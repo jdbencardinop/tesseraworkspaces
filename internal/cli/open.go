@@ -53,6 +53,9 @@ Use --all to create a tmux session with windows for every worktree in the featur
 						return fmt.Errorf("usage: tws open <feature> --feature-dir")
 					}
 					feature := args[0]
+					if gerr := internal.GuardFeatureName(ws.MetadataRoot, feature); gerr != nil {
+						return gerr
+					}
 					fp, ferr := ws.ResolveFeaturePath(feature)
 					if ferr != nil {
 						return ferr
@@ -74,6 +77,10 @@ Use --all to create a tmux session with windows for every worktree in the featur
 				if len(args) < 1 {
 					return fmt.Errorf("usage: tws open <feature> --all")
 				}
+				// Guard before openAll, which has no error channel.
+				if gerr := internal.GuardFeatureName(internal.TwsRoot(), args[0]); gerr != nil {
+					return gerr
+				}
 				openAll(args[0])
 				return nil
 			}
@@ -84,6 +91,10 @@ Use --all to create a tmux session with windows for every worktree in the featur
 					return fmt.Errorf("usage: tws open <feature> --feature-dir")
 				}
 				feature := args[0]
+				// Guard before openDirect, which has no error channel.
+				if gerr := internal.GuardFeatureName(internal.TwsRoot(), feature); gerr != nil {
+					return gerr
+				}
 				path := internal.FeaturePath(feature)
 				if _, err := os.Stat(path); os.IsNotExist(err) {
 					return fmt.Errorf("feature not found: %s", feature)
@@ -98,6 +109,13 @@ Use --all to create a tmux session with windows for every worktree in the featur
 			}
 
 			// Normal mode: open a specific worktree
+			if len(args) >= 1 {
+				// The 0-arg picker is covered by ListFeaturesE inside
+				// resolveOpenArgs.
+				if gerr := internal.GuardFeatureName(internal.TwsRoot(), args[0]); gerr != nil {
+					return gerr
+				}
+			}
 			feature, branch, err := resolveOpenArgs(args)
 			if err != nil {
 				return err
@@ -194,7 +212,10 @@ func resolveOpenArgs(args []string) (string, string, error) {
 		}
 		return feature, branch, nil
 	case 0:
-		features := internal.ListFeatures()
+		features, listErr := internal.ListFeaturesE()
+		if listErr != nil {
+			return "", "", listErr
+		}
 		if len(features) == 0 {
 			return "", "", fmt.Errorf("no features found. Use 'tws add <feature>' to create one")
 		}

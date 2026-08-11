@@ -57,8 +57,12 @@ Note: injected files appear as untracked in git status. Add them to
 
 // addExternal preserves existing external-mode add semantics.
 func addExternal(feature string, templates []string, newBranch, base string, force, open, useTmux bool) error {
-	root := internal.FeaturePath(feature)
 	wsRoot := internal.TwsRoot()
+	if err := internal.GuardFeatureName(wsRoot, feature); err != nil {
+		return err
+	}
+
+	root := internal.FeaturePath(feature)
 
 	if err := internal.EnsureExternalWorkspaceMarker(wsRoot); err != nil {
 		return err
@@ -109,6 +113,10 @@ func addExternal(feature string, templates []string, newBranch, base string, for
 // for checkout mode. Idempotent: re-running on an existing feature updates
 // only missing assets.
 func addCheckout(ws internal.Workspace, feature string, templates []string, newBranch, base string, force, open, useTmux bool) error {
+	if err := internal.GuardFeatureName(ws.MetadataRoot, feature); err != nil {
+		return err
+	}
+
 	root := ws.FeaturePath(feature)
 
 	// Create the feature directory (no worktrees/ subdirectory in checkout mode).
