@@ -2,11 +2,12 @@
   "id": "stack-ancestry-doctor",
   "slug": "stack-ancestry-doctor",
   "title": "Extract one mode-independent, read-only stack edge evaluator and integrate it into tws doctor. For every configured parent-child edge, use StackEntry.GitBranch(), literal base refs, the current parent head, and LastBaseSHA to classify current, stale, divergent, missing, or cross-repo; report the relevant heads/merge base/last base plus actionable guidance. Support external and checkout modes without fetching or mutating Git, preserve doctor exit semantics, and expose a reusable projection for stack status and later additive tws status enrichment.",
-  "state": "requested",
+  "state": "analyzed",
   "compatibility": "unknown",
   "requested_at": "2026-08-11T17:39:15Z",
-  "updated_at": "2026-08-11T17:39:15Z",
-  "last_command": "add",
+  "updated_at": "2026-08-11T23:15:59Z",
+  "last_command": "analyze",
+  "notes": "Phase advanced manually (--manual); artifact authored at analysis.md",
   "apply": {},
   "reconcile": {},
   "depends_on": [
@@ -40,6 +41,34 @@
     },
     {
       "slug": "agent-work-status-dashboard",
+      "kind": "soft"
+    },
+    {
+      "slug": "multi-repo-workspaces",
+      "kind": "hard"
+    },
+    {
+      "slug": "workspace-sibling-links",
+      "kind": "hard"
+    },
+    {
+      "slug": "fix-default-base-branch",
+      "kind": "hard"
+    },
+    {
+      "slug": "divergent-stack-sync",
+      "kind": "soft"
+    },
+    {
+      "slug": "fix-sync-branch-identity",
+      "kind": "soft"
+    },
+    {
+      "slug": "fix-sync-continue-descendants",
+      "kind": "soft"
+    },
+    {
+      "slug": "post-rebase-validation",
       "kind": "soft"
     }
   ]

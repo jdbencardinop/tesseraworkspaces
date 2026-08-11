@@ -1,0 +1,8 @@
+# Feature Request: Research a stable, read-only tpatch patch-identity and change-equivalence contract for tws. Determine whether tpatch can identify the same logical change when commit SHAs change through rebase/amend or files are renamed/moved, using canonical patch/change IDs, generation or successor metadata, and Mercurial evolution/obsolescence markers as comparative prior art. After stack-ancestry-doctor and stack-status ship, prototype how tws could use that contract for safer rebase planning and to distinguish stale SHA identity from equivalent content. Do not implement patch theory, reconciliation, or commit-successor ownership inside tws; document available tpatch commands, gaps, versioned JSON requirements, false-positive/false-negative risks, and an integration recommendation.
+
+**Slug**: `tpatch-patch-identity-research`
+**Created**: 2026-08-11T22:38:47Z
+
+## Description
+
+Research a stable, read-only tpatch patch-identity and change-equivalence contract for tws. Determine whether tpatch can identify the same logical change when commit SHAs change through rebase/amend or files are renamed/moved, using canonical patch/change IDs, generation or successor metadata, and Mercurial evolution/obsolescence markers as comparative prior art. After stack-ancestry-doctor and stack-status ship, prototype how tws could use that contract for safer rebase planning and to distinguish stale SHA identity from equivalent content. Do not implement patch theory, reconciliation, or commit-successor ownership inside tws; document available tpatch commands, gaps, versioned JSON requirements, false-positive/false-negative risks, and an integration recommendation.
