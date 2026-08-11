@@ -5,8 +5,8 @@
   "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-08-11T14:30:06Z",
-  "updated_at": "2026-08-11T15:05:03Z",
-  "last_command": "record",
+  "updated_at": "2026-08-11T15:05:11Z",
+  "last_command": "verify",
   "notes": "landed at 2026-08-11T15:05:03Z",
   "apply": {
     "completed_at": "2026-08-11T15:04:55Z",
@@ -19,5 +19,14 @@
       "slug": "workspace-sibling-links",
       "kind": "hard"
     }
-  ]
+  ],
+  "verify": {
+    "verified_at": "2026-08-11T15:05:10Z",
+    "passed": true,
+    "recipe_hash_at_verify": "0714ffc1af03322ee5912b1a607c804c70e7243208163e7953298355c4a0abf4",
+    "patch_hash_at_verify": "d2863ea083b6f3fa16828f886c91328510035c61fd6b47ebfde0c2abb8a54913",
+    "parent_snapshot": {
+      "workspace-sibling-links": "applied"
+    }
+  }
 }
