@@ -15,6 +15,7 @@ You are an orchestrator agent running from a feature workspace directory. Your j
 
 ### View state
 ```sh
+tws status --json                 # agent work status for every branch (poll this first)
 tws list                          # see all features and branches
 tws stack <feature>               # see dependency tree
 tws decisions show                # see all decisions (auto-detects feature)
@@ -69,6 +70,16 @@ tws export <feature> --to-repo    # save to repo for sharing
 
 ## Orchestration Workflow
 
+0. **Poll status**: Run `tws status --json` first. Act on
+   `.workspace.attention.status == "needs_attention"` and then on
+   `report.issues[]`, which is the single home of every signal. **Never act on
+   `agent_state`: it is always `unknown` at this version; use
+   `needs_attention`.** **`attention.status` inherits upward: a workspace or
+   feature can be `needs_attention` with `issue_count: 0` because a child is —
+   read `report.issues[]` for the detail.** **A `present` from tws means a
+   process with that PID exists, not that that exact process exists.** The
+   command exits 0 whenever a report was produced, so a non-zero exit means the
+   workspace itself could not be read.
 1. **Start**: Run `tws list` and `tws stack <feature>` to understand current state
 2. **Check decisions**: Run `tws decisions show` for any updates from worktree agents
 3. **Plan**: Based on the stack and decisions, decide what each branch should work on
@@ -93,4 +104,8 @@ tws export <feature> --to-repo    # save to repo for sharing
 - Run `tws decisions show` regularly to stay updated
 - After communicating, worktree agents will see your decisions on their next session start (via hooks)
 - Use `tws doctor` before `tws sync` to catch branch mismatches
+- `tws status` is read-only: it never removes a session record, and tws never
+  kills a direct agent process. To free a branch held by a live record, ask the
+  agent to exit its session. `tws close` reports — but never removes — records it
+  cannot verify, and points at `tws status --json` when they are all that remains
 - The feature directory contains: FEATURE.md (goals), stack.yaml (dependencies), decisions.yaml (communication log), inject/ (shared files)

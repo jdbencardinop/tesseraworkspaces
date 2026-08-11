@@ -31,9 +31,10 @@ You are working in a project that uses `tws` for feature-scoped workspaces with 
 - `tws registry add/list/show/check/...` — Manage opt-in global workspace discovery
 - `tws space add/list/show/remove` — Link and discover tool-owned sibling spaces
 - `tws doctor [feature]` — Run health checks
+- `tws status [feature] [--json]` — Agent work status per branch (always workspace-wide unless filtered)
 - `tws rename feature/branch` — Rename feature or branch
 - `tws config show/set/get` — Manage configuration
-- `tws close <feature> <branch>` — Kill tmux session
+- `tws close <feature> <branch>` — Close a session: refuses while a direct record is live, then kills tmux
 - `tws template sync <feature> [--template <dir>]` — Backfill templates
 
 ## Stacked & Divergent Branches
@@ -112,8 +113,22 @@ tws space remove learning --workspace      # drops the link; never deletes the t
 
 Use the `resolved_path` field of the JSON output. `status: missing` and `scope_status: feature-missing` are reports, not repairs. An empty result is normal on a fresh clone — ask or register a link instead of guessing. A bare `tws space list` is scoped to the current directory (workspace-wide links plus the detected feature); use `--all` for the complete view. A registered directory is never a feature: feature commands and `tws migrate-layout` refuse that name by filesystem identity — including a different letter case or absolute spelling — and it is excluded from `tws list`. When a name exists in two scopes, disambiguate `show`/`remove` with `--workspace` or `--feature <feature>`. A malformed or future-schema `spaces.yaml` makes feature and space commands fail loudly; fix the file rather than working around it.
 
+## Agent Work Status
+
+`tws status [feature] [--json]` projects what tws knows about each logical branch. With no argument it always covers every feature in the resolved workspace, from any working directory.
+
+Two axes are never collapsed: `runtime_presence` (`present|absent|stale|unknown`) answers "is a tws-owned runtime alive?", and `agent_state` (`working|ready|blocked|done|unknown`) answers "what is the agent doing?". **`agent_state` is always `unknown` at this version; use `needs_attention`.** **`attention.status` inherits upward: a workspace or feature can be `needs_attention` with `issue_count: 0` because a child is — read `report.issues[]` for the detail.** **A `present` from tws means a process with that PID exists, not that that exact process exists.**
+
+Exit status is 0 whenever a report was produced, including when branches need attention; a non-zero exit means no report could be produced at all. `tws status` is strictly read-only and tws never kills a direct agent process. The human view prints the workspace verdict in its header and every issue in a `Branch:`/`Feature:`/`Workspace:` block, so a `[!] attn` row always shows its guidance without `--json`.
+
+```sh
+tws status
+tws status auth --json | jq '.issues[] | select(.severity=="warning")'
+```
+
 ## Workflow
 
+0. Run `tws status --json` and act on `.workspace.attention.status == "needs_attention"` plus `report.issues[]`; never act on `agent_state`
 1. Run `tws list` to see current state
 2. Run `tws decisions show <feature>` to check for unread decisions from siblings
 3. Run `tws stack <feature>` to understand dependencies

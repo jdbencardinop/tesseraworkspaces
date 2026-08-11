@@ -2,7 +2,7 @@
 
 This roadmap is organized by correctness and user value rather than release date. `tws` remains a Git worktree orchestrator: it may integrate with specialized tools, but it should not duplicate their source of truth.
 
-## Now — agent work status
+## Now — stack safety and observability
 
 Shipped foundations:
 
@@ -17,11 +17,29 @@ Shipped foundations:
 - workspace sibling links: `<spaces-root>/spaces.yaml` plus
   `tws space add/list/show/remove` for discovering tool-owned learning, ticket,
   patching, research, and documentation spaces, with feature-name protection and
-  strict failure on untrusted metadata.
+  strict failure on untrusted metadata;
+- agent work status: `tws status [feature] [--json]` projects materialization,
+  tws-launched runtimes, and attention needs over a versioned two-axis schema,
+  plus per-invocation external direct session records so a tws-launched agent is
+  observable, crash-detectable, and concurrency-safe.
 
-Current target: **agent work status** — surface materialized sessions, idle
-agents, blocked approvals, and attention needs without pretending to replace the
-agent harness.
+Current target: **stack ancestry doctor and stack status** — the P1 items below.
+
+Follow-ups explicitly owned by later features rather than by `tws status`:
+
+- **`tss-agent-state-provider`** — populate `agent_state` from a versioned
+  provider and cover runtimes tws did not launch. "blocked (needs
+  approval/input)" is deferred to that provider, not dropped: nothing in tws
+  observes agent stdin, tool-permission prompts, or turn boundaries, so the
+  semantic axis ships honest at `unknown`.
+- **Portable process birth identity** — record and verify a process start time
+  or a birth-stable handle to close the PID-reuse window. Today a `present`
+  means a process with that PID exists, not that that exact process exists.
+- **Base ancestry per branch** — stays with "Stack ancestry doctor" and "Stack
+  status" below, which own the `current | stale | divergent | missing`
+  semantics. If `tws status` ever surfaces ancestry it must consume that
+  feature's projection rather than compute its own; adding the key is additive
+  and does not bump `schema_version`.
 
 ## Completed P0 correctness
 
@@ -53,7 +71,7 @@ For decoupled names, `StackEntry.Name` identifies the tws worktree while `StackE
 - **Explicit decision acknowledgement**: allow feature-root orchestration with `tws decisions ack --branch <name>`.
 - **Inter-feature messaging**: allow one feature orchestrator to target another feature with a durable message while preserving separate stacks and lifecycle state. Do not merge feature workspaces for the first version.
 - **Workspace sibling links (shipped)**: `<spaces-root>/spaces.yaml` is the dynamic registry for tool-owned learning, tickets, patching, research, and documentation spaces. Agents discover links through `tws space list/show`; skills teach discovery but do not embed mutable paths. Entries may be workspace-wide or feature-scoped, while each linked tool remains authoritative for its content and lifecycle.
-- **Current target — agent work status**: surface materialized sessions, idle agents, blocked approvals, and attention needs without pretending to replace the agent harness.
+- **Agent work status (shipped)**: `tws status [feature] [--json]` surfaces materialized branches, tws-launched sessions, and attention needs without pretending to replace the agent harness. It ships the stable two-axis schema (`runtime_presence` / `agent_state`) that makes a later `tss` provider purely additive.
 - **Context summaries**: maintain feature-level and worktree-session recaps while preserving authored source documents.
 
 ## Tool collaboration contracts

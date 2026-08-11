@@ -673,13 +673,30 @@ func isFeatureDir(dir string) bool {
 	return false
 }
 
-// GuardFeatureName fails closed when feature would collide with a registered
-// space directory under the given root. root MUST be the root the calling
-// operation actually reads from, writes to, or destroys under.
+// GuardFeatureName fails closed when feature is not a usable logical feature
+// name, or when it would collide with a registered space directory under the
+// given root. root MUST be the root the calling operation actually reads from,
+// writes to, or destroys under.
+//
+// The name check runs first and independently of root: every guarded command
+// joins the caller-supplied name under a root, so a name carrying a separator,
+// a traversal segment, or a reserved directory must be refused before any join,
+// stat, read, or removal — including when the registry is absent and when the
+// caller passes an empty root. It reuses validateFeatureName, so the refusal
+// message is the same one the path resolvers already produce.
+//
+// An empty feature stays a no-op: callers that treat "no feature given" as an
+// unfiltered scope guard emptiness themselves, and the resolvers report it.
 //
 // Absent <root>/spaces.yaml -> nil, with no file, lock, or directory created.
 func GuardFeatureName(root, feature string) error {
-	if root == "" || feature == "" {
+	if feature == "" {
+		return nil
+	}
+	if err := validateFeatureName(feature); err != nil {
+		return err
+	}
+	if root == "" {
 		return nil
 	}
 	owners, err := SpaceDirOwners(root)

@@ -70,6 +70,13 @@ func deleteCheckout(ws internal.Workspace, feature string, deleteBranches, force
 		return fmt.Errorf("feature not found: %s", feature)
 	}
 
+	// No direct session record is inventoried, read, or guarded here.
+	// Per-invocation records are an external-mode artifact; checkout mode
+	// never writes them, so consulting them would let unrelated hand-planted
+	// state under .tws/features/<feature>/.sessions/ change checkout
+	// behaviour. Anything present is removed with the rest of the tree
+	// because the operator asked for the feature to be deleted.
+
 	stack, _ := internal.LoadStack(featurePath)
 
 	if deleteBranches || forceDelete {
@@ -155,6 +162,16 @@ func deleteExternal(feature string, deleteBranches, forceDelete bool) (retErr er
 
 	if _, err := os.Stat(featurePath); os.IsNotExist(err) {
 		return fmt.Errorf("feature not found: %s", feature)
+	}
+
+	// Deleting removes every record with the rest of the tree, so refuse
+	// while any of them is not provably dead.
+	targets, terr := directRecordTargetsForFeature(featurePath)
+	if terr != nil {
+		return terr
+	}
+	if gerr := guardDirectRecords(os.Stdout, featurePath, "delete", feature, targets); gerr != nil {
+		return gerr
 	}
 
 	stack, _ := internal.LoadStack(featurePath)

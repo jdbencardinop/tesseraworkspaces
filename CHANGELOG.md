@@ -1,5 +1,83 @@
 # Changelog
 
+## Unreleased
+
+- **Agent work status** — new `tws status [feature] [--json]` reports what tws
+  knows about every logical branch: materialization, tws-launched runtimes, and
+  whether anything needs attention. With no argument it always covers every
+  feature in the resolved workspace, from any working directory; no field in the
+  document is derived from the process working directory
+- **Versioned two-axis schema** — `--json` emits `schema_version: 1` with a
+  stable key set, absent values as `null` and lists never `null`.
+  `runtime_presence` (`present|absent|stale|unknown`) and `agent_state`
+  (`working|ready|blocked|done|unknown`) are permanently separate axes.
+  `agent_state` is **always `unknown`** at this version: tws launches agents but
+  does not observe their turns. Use `needs_attention`, which is authoritative
+- **Hierarchical attention** — `entry`, `feature`, and `workspace` each carry
+  `needs_attention > active > idle`. Attention inherits upward and never smears
+  downward, while `issue_count` and `codes` stay own-scope, so a level may read
+  `needs_attention` with `issue_count: 0` because a child does. Every issue has
+  exactly one home in `report.issues[]`
+- **Human output shows the whole verdict** — the header always carries
+  `Attention: <status>` for the workspace, and every issue is printed in a block
+  keyed by its own home (`Branch: <feature>/<name>`, `Feature: <feature>`,
+  `Workspace:`) with its code, message, and guidance. A branch that reads
+  `[!] attn` therefore never hides its remediation behind `--json`. The tail
+  counts branches only
+- **Exit 0 on attention** — unlike `tws doctor`, `tws status` exits 0 whenever a
+  report was produced, including for stale or corrupt operational state. A
+  non-zero exit means no report could be produced at all (unresolvable
+  workspace, unreadable metadata root, untrusted `spaces.yaml`, ambiguous
+  feature layout, unknown feature)
+- **External direct session records** — external `tws open` (the default,
+  non-tmux path) now writes one hidden per-invocation record under
+  `<feature>/.sessions/<branch-id>/<token>.json` (`0700` directories, `0600`
+  files, random ownership tokens). Records are created before the agent is
+  spawned, updated at each stage transition, and removed by token on exit;
+  concurrent opens on one branch are supported and individually observable.
+  `tws status` never removes a record, not even a provably dead one
+- **`tws close` (external) consults records before tmux** — a behaviour change.
+  A live direct record refuses the close, names the live pids, kills no tmux
+  session, and removes nothing. With only provably stale records, they are
+  cleaned and the command then kills tmux, or exits 0 with a cleanup message
+  where it previously reported `no tmux session found`. Records that are neither
+  live nor provably dead (corrupt, or owned by another user) are never removed
+  and never block, but are always listed before tmux is touched; when they are
+  all that remains and there is no tmux session, the error names them and points
+  at `tws status --json` instead of reporting a flat `no tmux session found`.
+  With no records at all the behaviour is byte-for-byte unchanged
+- **`tws close` (external) is now feature-name guarded** — it resolves a
+  caller-supplied name under `TwsRoot()` and mutates files beneath it, so a
+  registered space name is refused. Consequently a malformed or untrusted
+  `spaces.yaml` now makes external `tws close` fail closed, where it previously
+  succeeded
+- **Feature-name guard now rejects unusable names** — `GuardFeatureName`
+  validates the name before it reads the registry, so every guarded command
+  (`close`, `status`, `open`, `add`, `new`, `archive`, `rename`, `delete`,
+  `sync`, `export`, `import`, `template sync`, `hooks install`) refuses a path
+  separator, a traversal segment such as `../outside`, or a reserved directory
+  name before any path join, stat, record read, removal, or tmux call. The
+  message is the resolver's existing one. `tws template sync <invalid-name>` and
+  `tws hooks install <invalid-name>` therefore now exit nonzero instead of
+  printing a per-feature line and exiting 0
+- **External `rename`, `archive`, and `delete` refuse live records** — anything
+  not provably dead (live, EPERM, or corrupt) blocks the operation before any
+  Git command, rename, or worktree removal; provably stale records are cleaned
+  first. tws never kills a direct process. Checkout mode never writes or reads
+  direct records
+- **`openDirect` no longer calls `os.Exit`** — a missing agent binary, a failed
+  spawn, and a broken record store are returned as errors through `RunE` from
+  all four call sites
+- **Secrets are never emitted** — no checkout `lock_token`, no lock-owner
+  `token`, no session `links`, no transcript, prompt, argv, or environment. Only
+  an 8-character `record_id` prefix of a direct record's ownership token appears.
+  A direct record's file path is an ownership token in its basename, so every
+  operator-facing message, refusal, guidance string, and error renders it
+  redacted as `<dir>/<record-id>*.json`
+- **`gitActiveOp` now also detects an in-progress `git bisect`**, so `tws doctor`
+  and `tws status` report `active_git_op: bisect` where `doctor` previously
+  reported nothing
+
 ## v1.2.11
 
 - **Workspace sibling links** — `tws space add/list/show/remove` maintains

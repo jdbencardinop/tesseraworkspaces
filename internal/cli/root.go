@@ -36,6 +36,7 @@ func Execute() int {
 		decisionsCmd(),
 		injectCmd(),
 		doctorCmd(),
+		statusCmd(),
 		renameCmd(),
 		templateCmd(),
 		pushCmd(),

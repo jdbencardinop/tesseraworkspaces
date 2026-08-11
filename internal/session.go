@@ -121,16 +121,24 @@ func sessionLockOwnerPath(ws Workspace) string {
 	return filepath.Join(sessionLockDir(ws), "owner.json")
 }
 
-func CheckoutAgentSessionName(workspaceID, feature, name string) string {
-	identity := workspaceID + "/" + feature + "/" + name
+// hashedSessionID builds a filesystem- and tmux-safe identifier from a full
+// identity string. The sanitized prefix is truncated so that the 8 hex
+// characters of the identity hash always fit within 64 characters.
+func hashedSessionID(identity, prefix string) string {
 	sum := sha256.Sum256([]byte(identity))
 	suffix := hex.EncodeToString(sum[:4])
-	prefix := sanitizeSessionPart(workspaceID + "_" + feature + "_" + name)
-	max := 64 - len(suffix) - 1
-	if len(prefix) > max {
-		prefix = prefix[:max]
+	p := sanitizeSessionPart(prefix)
+	if max := 64 - len(suffix) - 1; len(p) > max {
+		p = p[:max]
 	}
-	return prefix + "_" + suffix
+	return p + "_" + suffix
+}
+
+func CheckoutAgentSessionName(workspaceID, feature, name string) string {
+	return hashedSessionID(
+		workspaceID+"/"+feature+"/"+name,
+		workspaceID+"_"+feature+"_"+name,
+	)
 }
 func sanitizeSessionPart(s string) string {
 	var b strings.Builder

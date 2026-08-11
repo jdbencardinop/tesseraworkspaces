@@ -102,7 +102,15 @@ func addExternal(feature string, templates []string, newBranch, base string, for
 			if useTmux {
 				openWithTmux(feature, newBranch, path)
 			} else {
-				openDirect(path)
+				if err := openDirect(directOpenOpts{
+					Path:        path,
+					Feature:     feature,
+					Name:        newBranch,
+					GitBranch:   resolveDirectGitBranch(root, newBranch),
+					FeaturePath: root,
+				}); err != nil {
+					return err
+				}
 			}
 		}
 	}

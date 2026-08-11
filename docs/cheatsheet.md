@@ -109,6 +109,21 @@ tws stack auth               # dependency tree for a feature
 tws doctor auth              # health checks (branch mismatch, dirty, etc.)
 ```
 
+## Check agent status
+
+```sh
+tws status                   # every feature, from any directory
+tws status auth              # filter to one feature
+tws status --json | jq '.issues[] | select(.severity=="warning")'
+```
+
+`needs_attention` is the authoritative field and inherits upward: a workspace or
+feature can be `needs_attention` with `issue_count: 0` because a child is — read
+`report.issues[]` for the detail. The human view prints the workspace verdict in
+its header and every issue in a `Branch:`/`Feature:`/`Workspace:` block, so a
+`[!] attn` row always shows its guidance. `agent_state` is always `unknown` at
+this version. Exit status is 0 whenever a report was produced.
+
 ## Sync (rebase in dependency order)
 
 ```sh

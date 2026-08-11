@@ -65,8 +65,9 @@ Use --all to create a tmux session with windows for every worktree in the featur
 						return nil
 					}
 					fmt.Printf("Opening feature dir: %s\n", fp)
-					openDirect(fp)
-					return nil
+					// Untracked: a feature directory is not a logical branch,
+					// so no direct session record is created.
+					return openDirect(directOpenOpts{Path: fp})
 				}
 
 				return runCheckoutOpen(ws, args, useTmux, noTmux, noAgent, cmd.Flags())
@@ -77,7 +78,7 @@ Use --all to create a tmux session with windows for every worktree in the featur
 				if len(args) < 1 {
 					return fmt.Errorf("usage: tws open <feature> --all")
 				}
-				// Guard before openAll, which has no error channel.
+				// Guarded because the feature name is joined under TwsRoot().
 				if gerr := internal.GuardFeatureName(internal.TwsRoot(), args[0]); gerr != nil {
 					return gerr
 				}
@@ -91,7 +92,7 @@ Use --all to create a tmux session with windows for every worktree in the featur
 					return fmt.Errorf("usage: tws open <feature> --feature-dir")
 				}
 				feature := args[0]
-				// Guard before openDirect, which has no error channel.
+				// Guarded because the feature name is joined under TwsRoot().
 				if gerr := internal.GuardFeatureName(internal.TwsRoot(), feature); gerr != nil {
 					return gerr
 				}
@@ -104,8 +105,8 @@ Use --all to create a tmux session with windows for every worktree in the featur
 					return nil
 				}
 				fmt.Printf("Opening feature dir: %s\n", path)
-				openDirect(path)
-				return nil
+				// Untracked: see the checkout branch above.
+				return openDirect(directOpenOpts{Path: path})
 			}
 
 			// Normal mode: open a specific worktree
@@ -178,7 +179,13 @@ Use --all to create a tmux session with windows for every worktree in the featur
 					fmt.Printf("Warning: tmux session %q exists for this worktree.\n", session)
 					fmt.Printf("  Run 'tws close %s %s' to kill it, or use --tmux to attach.\n", feature, branch)
 				}
-				openDirect(path)
+				return openDirect(directOpenOpts{
+					Path:        path,
+					Feature:     feature,
+					Name:        branch,
+					GitBranch:   resolveDirectGitBranch(featurePath, branch),
+					FeaturePath: featurePath,
+				})
 			}
 			return nil
 		},
@@ -234,48 +241,6 @@ func resolveOpenArgs(args []string) (string, string, error) {
 		return feature, branch, nil
 	}
 	return "", "", fmt.Errorf("unexpected args")
-}
-
-func openDirect(path string) {
-	cfg := internal.LoadConfig()
-	agentCmd := cfg.GetAgentCommand()
-
-	if isClaudeAgent(agentCmd) && hasClaudeSession(path) {
-		agentCmd = agentCmd + " -c"
-	}
-
-	parts := strings.Fields(agentCmd)
-	if _, err := exec.LookPath(parts[0]); err != nil {
-		fmt.Printf("Error: agent %q not found in PATH\n", parts[0])
-		os.Exit(1)
-	}
-
-	fmt.Printf("Opening: %s\nRunning: %s\n", path, agentCmd)
-
-	// Run agent as subprocess in the worktree directory
-	agent := exec.Command(parts[0], parts[1:]...)
-	agent.Dir = path
-	agent.Stdin = os.Stdin
-	agent.Stdout = os.Stdout
-	agent.Stderr = os.Stderr
-
-	if err := agent.Run(); err != nil {
-		fmt.Printf("Agent exited: %v\n", err)
-	}
-
-	// Spawn an interactive shell in the worktree dir so the user stays there
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/sh"
-	}
-
-	fmt.Printf("Dropped into shell at: %s\n", path)
-	sh := exec.Command(shell)
-	sh.Dir = path
-	sh.Stdin = os.Stdin
-	sh.Stdout = os.Stdout
-	sh.Stderr = os.Stderr
-	_ = sh.Run()
 }
 
 // openAll creates a tmux session with the feature dir as the first window
@@ -354,12 +319,15 @@ func sessionExists(name string) bool {
 }
 
 func sanitizeSessionName(s string) string {
-	r := strings.NewReplacer(".", "_", ":", "_", "/", "-")
-	return r.Replace(s)
+	return internal.SanitizeTmuxName(s)
 }
 
 func isClaudeAgent(cmd string) bool {
-	base := strings.Fields(cmd)[0]
+	fields := strings.Fields(cmd)
+	if len(fields) == 0 {
+		return false
+	}
+	base := fields[0]
 	return base == "claude" || base == "claude-dev" || base == "cc"
 }
 

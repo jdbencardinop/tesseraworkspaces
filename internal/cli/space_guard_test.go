@@ -456,6 +456,20 @@ func TestSpaceGuard_StrictFailureExternal(t *testing.T) {
 					cmd.SetErr(io.Discard)
 					return cmd.Execute()
 				},
+				"close": func() error {
+					cmd := closeCmd()
+					cmd.SetArgs([]string{"f", "wt"})
+					cmd.SetOut(io.Discard)
+					cmd.SetErr(io.Discard)
+					return cmd.Execute()
+				},
+				"status": func() error {
+					cmd := statusCmd()
+					cmd.SetArgs([]string{"f"})
+					cmd.SetOut(io.Discard)
+					cmd.SetErr(io.Discard)
+					return cmd.Execute()
+				},
 				"import": func() error { return recreateExternal(internal.WorkspaceExport{Feature: "f"}, "") },
 				"list": func() error {
 					cmd := listCmd()
@@ -706,9 +720,11 @@ func TestSpaceGuard_TemplateSyncAndHooksInstallCarveOutBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Run("unrelated-failure-preserved", func(t *testing.T) {
-		// No spaces.yaml: an unrelated RequireFeaturePath failure keeps the
-		// legacy shape — stdout line, exit 0 — because the void helper owns it.
+	t.Run("invalid-name-promoted", func(t *testing.T) {
+		// An unusable feature name is refused by the shared guard before the
+		// void helper runs, so it exits nonzero with the canonical message
+		// and prints no per-feature line. The name can never denote a real
+		// feature, and both commands join it under a root.
 		var err error
 		out := captureStdout(t, func() {
 			cmd := templateCmd()
@@ -717,16 +733,42 @@ func TestSpaceGuard_TemplateSyncAndHooksInstallCarveOutBoundary(t *testing.T) {
 			cmd.SetErr(io.Discard)
 			err = cmd.Execute()
 		})
-		if err != nil {
-			t.Fatalf("expected exit 0, got %v", err)
+		if err == nil || err.Error() != `feature name "state" conflicts with reserved directory` {
+			t.Fatalf("template sync err = %v", err)
 		}
-		if !strings.Contains(out, "state: ") {
-			t.Fatalf("expected legacy stdout line, got %q", out)
+		if strings.Contains(out, "state: ") {
+			t.Fatalf("the void helper must not run: %q", out)
 		}
 
 		out = captureStdout(t, func() {
 			cmd := hooksCmd()
-			cmd.SetArgs([]string{"install", "state"})
+			cmd.SetArgs([]string{"install", "../outside"})
+			cmd.SetOut(io.Discard)
+			cmd.SetErr(io.Discard)
+			err = cmd.Execute()
+		})
+		if err == nil || err.Error() != `feature name "../outside" contains path separator` {
+			t.Fatalf("hooks install err = %v", err)
+		}
+		if strings.Contains(out, "[x] ") {
+			t.Fatalf("the void helper must not run: %q", out)
+		}
+	})
+
+	t.Run("unrelated-failure-preserved", func(t *testing.T) {
+		// A failing RequireWorkspace in template sync is still not promoted:
+		// the void helper owns it, keeping the stdout line and exit 0.
+		outside := t.TempDir()
+		oldCWD, _ := os.Getwd()
+		t.Cleanup(func() { _ = os.Chdir(oldCWD) })
+		chdirForTest(t, outside)
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("TWS_ROOT", "")
+
+		var err error
+		out := captureStdout(t, func() {
+			cmd := templateCmd()
+			cmd.SetArgs([]string{"sync", "alpha"})
 			cmd.SetOut(io.Discard)
 			cmd.SetErr(io.Discard)
 			err = cmd.Execute()
@@ -734,7 +776,7 @@ func TestSpaceGuard_TemplateSyncAndHooksInstallCarveOutBoundary(t *testing.T) {
 		if err != nil {
 			t.Fatalf("expected exit 0, got %v", err)
 		}
-		if !strings.Contains(out, "[x] state: ") {
+		if !strings.Contains(out, "alpha: ") {
 			t.Fatalf("expected legacy stdout line, got %q", out)
 		}
 	})

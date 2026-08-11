@@ -62,6 +62,20 @@ func renameFeatureCmd() *cobra.Command {
 				return fmt.Errorf("feature already exists: %s", newName)
 			}
 
+			// External direct session records must not silently relocate: a
+			// whole-directory rename would move every record so its recorded
+			// feature and its <branch-id> hash disagree with its location.
+			// Checkout mode never writes or reads them.
+			if ws.Mode == internal.ModeExternal {
+				targets, terr := directRecordTargetsForFeature(oldPath)
+				if terr != nil {
+					return terr
+				}
+				if gerr := guardDirectRecords(cmd.OutOrStdout(), oldPath, "rename feature", oldName, targets); gerr != nil {
+					return gerr
+				}
+			}
+
 			if err := os.Rename(oldPath, newPath); err != nil {
 				return fmt.Errorf("error renaming: %w", err)
 			}
@@ -206,6 +220,13 @@ func renameBranchExternal(feature, oldName, newName string) error {
 
 	if !internal.HasBranch(stack, oldName) {
 		return fmt.Errorf("branch %q not found in stack", oldName)
+	}
+
+	// Renaming a branch changes <branch-id>, name, git_branch, and the
+	// worktree path, so no record may survive the rewrite.
+	if gerr := guardDirectRecords(os.Stdout, featurePath, "rename branch", feature+"/"+oldName,
+		directRecordTargetForBranch(feature, oldName)); gerr != nil {
+		return gerr
 	}
 
 	entry := internal.GetBranch(stack, oldName)

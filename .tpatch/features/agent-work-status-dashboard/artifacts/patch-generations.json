@@ -1,0 +1,219 @@
+{
+  "version": 1,
+  "feature": "agent-work-status-dashboard",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_27681fd8b4c7",
+      "kind": "record",
+      "patch_sha256": "f716dce956c72183a941298e02943478812f9293872e3ab85220f67f8a2fca9a",
+      "git_patch_id": "169ff8fe9ae9716e1534b80d93e731ae431147fc",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "3aec279ef97d08eaeb2b668e849039c46d2c091a44e350a67dbccab8a1708d1d",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "",
+      "base_commit": "2e5ec183ef56bc5d8475a6931abb1afbc86932bb",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "CHANGELOG.md",
+        "README.md",
+        "assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md",
+        "assets/skills/claude/tesseraworkspaces/SKILL.md",
+        "assets/skills/copilot/tws.prompt.md",
+        "docs/cheatsheet.md",
+        "docs/engineering-workflow.md",
+        "docs/roadmap.md",
+        "internal/agent_status.go",
+        "internal/agent_status_test.go",
+        "internal/checkout_health.go",
+        "internal/cli/add.go",
+        "internal/cli/archive.go",
+        "internal/cli/close.go",
+        "internal/cli/close_records_test.go",
+        "internal/cli/delete.go",
+        "internal/cli/direct_open.go",
+        "internal/cli/direct_open_test.go",
+        "internal/cli/feature_name_traversal_test.go",
+        "internal/cli/open.go",
+        "internal/cli/rename.go",
+        "internal/cli/root.go",
+        "internal/cli/space_guard_test.go",
+        "internal/cli/status.go",
+        "internal/cli/status_test.go",
+        "internal/direct_session.go",
+        "internal/direct_session_test.go",
+        "internal/session.go",
+        "internal/spaces.go",
+        "internal/spaces_test.go",
+        "internal/tmux_names.go"
+      ],
+      "dependencies": [
+        {
+          "slug": "branch-name-decoupling",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "checkout-agent-sessions",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "686482c3c468f8ec19ededb294c18a3bede2055f7adc90f7ec968a3f3046f0b6",
+          "parent_recipe_sha256": "e1c404baef9a09e9ba54b7427bd3824e83bd1eec8e02a447bf62329955318562"
+        },
+        {
+          "slug": "checkout-doctor-observability",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "3080da47c2d6aad24ebe54f6f6b7e24bc7c1208f65ca9360ca4ea2a54d5003df",
+          "parent_recipe_sha256": "b74492c495f378ea86955504528a9f9314be13e19889c8e78c2515e6d1b24199"
+        },
+        {
+          "slug": "checkout-stack-safety",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "481f98df0a47377796d58068eef358da635879a49f695a02c41b5492e2998d2f",
+          "parent_recipe_sha256": "aca1663d17d69ebe8797492561d2eb36f3d69292906983d127f53af0d08b69f3"
+        },
+        {
+          "slug": "checkout-workspace-lifecycle",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "1aefaa7a144eb038ee4f344593dc14faa4ada99c0961cf4f8d7eaa66199694c0",
+          "parent_recipe_sha256": "21e86e0411083619cc1d189207073f09306e17b9dd11146be47e81d1d55d292d"
+        },
+        {
+          "slug": "decision-read-tracking",
+          "kind": "soft",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "fix-external-feature-dir-resolution",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "a74eee8fdca17dd26dd16030e4fe54afc72e36b1a3fa4aeb403cc04bacb134fc",
+          "parent_recipe_sha256": "d9a5f37a93ee74c18b6784aad1ca81eae3a0a7d6bcf399f3b8abfe9767f534cf"
+        },
+        {
+          "slug": "fix-open-cwd-after-exit",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "list-features-branches",
+          "kind": "soft",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "open-feature-dir",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "persist-agent-workflow-guidance",
+          "kind": "soft",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "52edadbff6b65a717a2dc0c96fd8e7180392bfe1d196ca0740fa82821614b185",
+          "parent_recipe_sha256": "cb2536e1145e95725534ea1429e2021c80e22e86cd1e290f69e838e460e0c0c9"
+        },
+        {
+          "slug": "quick-start-add-and-open",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "skill-distribution",
+          "kind": "soft",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "sync-continue",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "tmux-free-mode",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "tmux-session-management",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "workspace-mode-foundation",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "1b04ea52238cc6b6f8a3cd984abb24f8712dc934c0e6cae9c44f42a3a8c18533",
+          "parent_recipe_sha256": "7b7fe355e1389f6b4bcf1f83406d0de1cf6745d1cebfddf11158ca3f6ccde887"
+        },
+        {
+          "slug": "workspace-registry",
+          "kind": "soft",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "4553c2269452810fd29b1ff07e6d95e027dbdec8faaf6ba9282a5f6bfd78465d",
+          "parent_recipe_sha256": "19b5eab266351fd688ea5a9a5e71a184b27538ff1b88e45414a7f6b79fbb382f"
+        },
+        {
+          "slug": "workspace-sibling-links",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "c080af2926e6087f761aa42412729194fab57218f236afd89029d502e045e843",
+          "parent_recipe_sha256": "c5b9e83b6617ffb52f36109216a11dbd179776adf6b7425e28ea5f6c2890424c"
+        },
+        {
+          "slug": "worktree-health-check",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        }
+      ],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}

@@ -41,6 +41,7 @@ tws <command> [args]
 | `tws registry add/list/show/check/...` | Manage opt-in global workspace discovery |
 | `tws space add/list/show/remove` | Link and discover tool-owned sibling spaces |
 | `tws doctor [feature]` | Run health checks |
+| `tws status [feature] [--json]` | Agent work status per branch |
 | `tws rename feature <old> <new>` | Rename a feature |
 | `tws rename branch <feature> <old> <new>` | Rename a branch |
 | `tws config show/set/get` | Manage configuration |
@@ -260,6 +261,58 @@ In checkout mode, `tws list` shows:
 - Archived status
 - Ancestry status (stale/missing)
 - Active session marker
+
+### Agent Work Status
+
+`tws status [feature] [--json]` is the read-only projection of what tws knows
+about each logical branch. With no argument it always covers every feature in
+the resolved workspace, from any working directory; pass a feature name to
+filter. It works in both workspace modes.
+
+Two axes are never collapsed:
+
+- `runtime_presence` — `present | absent | stale | unknown`. Is a tws-owned
+  runtime alive? Derived only from records tws itself wrote plus one tmux
+  inventory.
+- `agent_state` — `working | ready | blocked | done | unknown`. What is the
+  agent doing? **`agent_state` is always `unknown` at this version; use
+  `needs_attention`.**
+
+`attention.status` is `needs_attention | active | idle` at three levels
+(`entry`, `feature`, `workspace`) and is authoritative. **`attention.status`
+inherits upward: a workspace or feature can be `needs_attention` with
+`issue_count: 0` because a child is — read `report.issues[]` for the detail.**
+Every issue has exactly one home in that flat list.
+
+Caveats worth stating to a human:
+
+- **A `present` from tws means a process with that PID exists, not that that
+  exact process exists.**
+- tws does not observe an externally launched agent; it is `absent` on the
+  tws-owned axis, never inferred.
+
+Exit status is 0 whenever a report was produced, including when branches need
+attention or state is stale or corrupt — unlike `tws doctor`. A non-zero exit
+means no report could be produced at all.
+
+```sh
+tws status
+tws status auth --json | jq '.issues[] | select(.severity=="warning")'
+tws status --json | jq -r '.workspace.attention.status'
+```
+
+In external mode, `tws open <feature> <branch>` (the default, non-tmux path)
+records a hidden per-invocation session under `<feature>/.sessions/`. Records
+are advisory: `tws status` never removes one, `tws close` removes only provably
+dead records, and `tws rename`/`archive`/`delete` refuse while any record is not
+provably dead. A record that is neither live nor provably dead (corrupt, or
+owned by another user) is reported by `tws close` and left in place. tws never
+kills a direct process — exit the session instead.
+
+The human view prints the workspace verdict in its header and every issue in a
+block keyed by its own home (`Branch: <feature>/<name>`, `Feature: <feature>`,
+`Workspace:`), so a `[!] attn` row always shows its code, message, and guidance
+without `--json`.
 
 ## Checkout Workspace Mode
 

@@ -135,6 +135,7 @@ tws init --register --register-alias myapp   # also enroll in the global registr
 | `tws decisions ack [feature]` | Mark decisions as read |
 | `tws inject <feature> [branch] [--into path]` | Sync inject files |
 | `tws doctor [feature]` | Health checks |
+| `tws status [feature] [--json]` | Agent work status per branch |
 | `tws rename feature/branch` | Rename feature or branch |
 | `tws config show/set/get` | Manage configuration |
 | `tws hooks install/remove [--all]` | Manage agent hooks |

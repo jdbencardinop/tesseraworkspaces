@@ -1,11 +1,13 @@
 package internal
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"gopkg.in/yaml.v3"
 )
@@ -17,6 +19,34 @@ type ProcessChecker interface {
 	Alive(pid int) bool
 }
 
+// ProcessLiveness is the three-valued result of probing a PID. It exists
+// because a bare Signal(0) collapses "no such process" and "not permitted"
+// into one answer, which misreports a live process owned by another user.
+type ProcessLiveness string
+
+const (
+	// ProcessLive means a process with that PID exists. It does not prove the
+	// process is the one that was recorded: PID reuse is an accepted limit.
+	ProcessLive ProcessLiveness = "live"
+	// ProcessDead means the process provably does not exist.
+	ProcessDead ProcessLiveness = "dead"
+	// ProcessUnknown means liveness could not be determined (for example
+	// EPERM, when the PID belongs to another user).
+	ProcessUnknown ProcessLiveness = "unknown"
+)
+
+// ProcessProber abstracts three-valued PID liveness for testing.
+type ProcessProber interface {
+	Probe(pid int) ProcessLiveness
+}
+
+// proberAsChecker adapts a ProcessProber to the two-valued ProcessChecker
+// expected by the existing health helpers, so no second liveness
+// implementation is needed.
+type proberAsChecker struct{ p ProcessProber }
+
+func (a proberAsChecker) Alive(pid int) bool { return a.p.Probe(pid) == ProcessLive }
+
 // TmuxChecker abstracts tmux session liveness for testing.
 type TmuxChecker interface {
 	HasSession(name string) bool
@@ -24,7 +54,31 @@ type TmuxChecker interface {
 
 type realProcessChecker struct{}
 
-func (realProcessChecker) Alive(pid int) bool { return processAlive(pid) }
+func (realProcessChecker) Probe(pid int) ProcessLiveness {
+	if pid <= 0 {
+		return ProcessDead
+	}
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return ProcessDead
+	}
+	err = p.Signal(syscall.Signal(0))
+	switch {
+	case err == nil:
+		return ProcessLive
+	case errors.Is(err, os.ErrProcessDone), errors.Is(err, syscall.ESRCH):
+		return ProcessDead
+	default:
+		// EPERM and anything else: not provably dead.
+		return ProcessUnknown
+	}
+}
+
+func (r realProcessChecker) Alive(pid int) bool { return r.Probe(pid) == ProcessLive }
+
+// NewProcessProber returns the real three-valued PID prober. It exists so
+// internal/cli can inject a fake without exporting realProcessChecker.
+func NewProcessProber() ProcessProber { return realProcessChecker{} }
 
 type realTmuxChecker struct{}
 
@@ -55,7 +109,7 @@ type CheckoutWorkspaceHeader struct {
 	Branch      string        `json:"branch"`
 	Detached    bool          `json:"detached"`
 	Dirty       bool          `json:"dirty"`
-	ActiveGitOp string        `json:"active_git_op,omitempty"` // merge, rebase, cherry-pick, revert
+	ActiveGitOp string        `json:"active_git_op,omitempty"` // merge, rebase, cherry-pick, revert, bisect
 }
 
 // CheckoutSyncReport describes a single checkout-sync state entry found in .tws/state.
@@ -312,6 +366,7 @@ func gitActiveOp(repo string) string {
 		{"MERGE_HEAD", "merge"},
 		{"CHERRY_PICK_HEAD", "cherry-pick"},
 		{"REVERT_HEAD", "revert"},
+		{"BISECT_LOG", "bisect"},
 	}
 	for _, c := range checks {
 		if _, err := os.Stat(filepath.Join(gitDir, c.marker)); err == nil {

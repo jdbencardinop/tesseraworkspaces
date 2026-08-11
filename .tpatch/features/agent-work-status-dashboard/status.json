@@ -2,11 +2,98 @@
   "id": "agent-work-status-dashboard",
   "slug": "agent-work-status-dashboard",
   "title": "Track which worktree agents are currently working, halted, or need attention (e.g., approval for a command). tws status or tws list could show per-worktree agent status: active (agent running), idle (no agent), blocked (needs approval/input). Could integrate with tpatch feature states. Useful for orchestrators to know which branches need intervention.",
-  "state": "requested",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-07-01T04:52:47Z",
-  "updated_at": "2026-07-01T04:52:47Z",
-  "last_command": "add",
-  "apply": {},
-  "reconcile": {}
+  "updated_at": "2026-08-11T13:57:20Z",
+  "last_command": "record",
+  "notes": "landed at 2026-08-11T13:57:20Z",
+  "apply": {
+    "completed_at": "2026-08-11T13:47:42Z",
+    "base_commit": "2e5ec183ef56bc5d8475a6931abb1afbc86932bb",
+    "has_patch": true
+  },
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "checkout-agent-sessions",
+      "kind": "hard"
+    },
+    {
+      "slug": "checkout-doctor-observability",
+      "kind": "hard"
+    },
+    {
+      "slug": "workspace-mode-foundation",
+      "kind": "hard"
+    },
+    {
+      "slug": "checkout-workspace-lifecycle",
+      "kind": "hard"
+    },
+    {
+      "slug": "tmux-session-management",
+      "kind": "hard"
+    },
+    {
+      "slug": "fix-external-feature-dir-resolution",
+      "kind": "hard"
+    },
+    {
+      "slug": "workspace-sibling-links",
+      "kind": "hard"
+    },
+    {
+      "slug": "checkout-stack-safety",
+      "kind": "hard"
+    },
+    {
+      "slug": "sync-continue",
+      "kind": "hard"
+    },
+    {
+      "slug": "branch-name-decoupling",
+      "kind": "hard"
+    },
+    {
+      "slug": "worktree-health-check",
+      "kind": "hard"
+    },
+    {
+      "slug": "fix-open-cwd-after-exit",
+      "kind": "hard"
+    },
+    {
+      "slug": "tmux-free-mode",
+      "kind": "hard"
+    },
+    {
+      "slug": "open-feature-dir",
+      "kind": "hard"
+    },
+    {
+      "slug": "quick-start-add-and-open",
+      "kind": "hard"
+    },
+    {
+      "slug": "decision-read-tracking",
+      "kind": "soft"
+    },
+    {
+      "slug": "workspace-registry",
+      "kind": "soft"
+    },
+    {
+      "slug": "list-features-branches",
+      "kind": "soft"
+    },
+    {
+      "slug": "persist-agent-workflow-guidance",
+      "kind": "soft"
+    },
+    {
+      "slug": "skill-distribution",
+      "kind": "soft"
+    }
+  ]
 }

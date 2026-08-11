@@ -551,6 +551,91 @@ spaces:
 	}
 }
 
+// TestGuardFeatureNameRejectsUnsafeNames pins that the guard refuses a name no
+// caller may join under a root. Every guarded command computes
+// <root>/<feature> right after the guard, so a separator, a traversal segment,
+// or a reserved directory must be refused here rather than at the resolver,
+// which some callers (FeaturePath) never reach.
+func TestGuardFeatureNameRejectsUnsafeNames(t *testing.T) {
+	root := t.TempDir()
+	writeSpacesFixture(t, root, "version: 1\nspaces: []\n")
+
+	cases := []struct {
+		feature string
+		want    string
+	}{
+		{"../outside", `feature name "../outside" contains path separator`},
+		{"..", `feature name ".." contains path traversal`},
+		{`..\outside`, `feature name "..\\outside" contains path separator`},
+		{"a/b", `feature name "a/b" contains path separator`},
+		{"/abs", `feature name "/abs" contains path separator`},
+		{`a\b`, `feature name "a\\b" contains path separator`},
+		{"nested/../escape", `feature name "nested/../escape" contains path separator`},
+		{".", `feature name "." is reserved`},
+		{".hidden", `feature name ".hidden" conflicts with reserved directory`},
+		{"features", `feature name "features" conflicts with reserved directory`},
+		{"state", `feature name "state" conflicts with reserved directory`},
+		{"spaces.yaml", `feature name "spaces.yaml" conflicts with reserved directory`},
+	}
+	for _, tc := range cases {
+		err := GuardFeatureName(root, tc.feature)
+		if err == nil || err.Error() != tc.want {
+			t.Fatalf("GuardFeatureName(%q) = %v, want %q", tc.feature, err, tc.want)
+		}
+		// The canonical message is the resolver's, so a caller sees one
+		// refusal wording no matter which layer refused first.
+		if resolved := validateFeatureName(tc.feature); resolved == nil || resolved.Error() != err.Error() {
+			t.Fatalf("guard message diverged from validateFeatureName(%q): %v vs %v", tc.feature, err, resolved)
+		}
+	}
+
+	// A legal name is unaffected.
+	if err := GuardFeatureName(root, "my.feat"); err != nil {
+		t.Fatalf("a valid feature name must still pass: %v", err)
+	}
+}
+
+// TestGuardFeatureNameRefusesUnsafeNameBeforeAnyRead pins the ordering: the
+// name refusal precedes the registry read, so it holds for a workspace with no
+// spaces.yaml, an unreadable one, and an empty root alike.
+func TestGuardFeatureNameRefusesUnsafeNameBeforeAnyRead(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "workspace")
+
+	count := countSpacesReads(t)
+	if err := GuardFeatureName(root, "../outside"); err == nil ||
+		!strings.Contains(err.Error(), "contains path separator") {
+		t.Fatalf("guard err = %v", err)
+	}
+	if *count != 0 {
+		t.Fatalf("the name refusal must precede the registry read, got %d read(s)", *count)
+	}
+	if _, err := os.Stat(root); err == nil {
+		t.Fatal("a refused guard created the workspace root")
+	}
+
+	// Untrusted metadata cannot make an unsafe name pass.
+	writeSpacesFixture(t, root, "version: 99\nspaces: []\n")
+	if err := GuardFeatureName(root, "../outside"); err == nil ||
+		!strings.Contains(err.Error(), "contains path separator") {
+		t.Fatalf("guard err with untrusted metadata = %v", err)
+	}
+
+	// An empty root still validates the name: a caller with no root to read
+	// still joins the name somewhere.
+	if err := GuardFeatureName("", "../outside"); err == nil ||
+		!strings.Contains(err.Error(), "contains path separator") {
+		t.Fatalf("guard err with empty root = %v", err)
+	}
+	if err := GuardFeatureName("", ".."); err == nil ||
+		!strings.Contains(err.Error(), "contains path traversal") {
+		t.Fatalf("guard err with empty root = %v", err)
+	}
+	// An empty feature remains the documented no-op.
+	if err := GuardFeatureName(root, ""); err != nil {
+		t.Fatalf("an empty feature must stay a no-op: %v", err)
+	}
+}
+
 func asError(err error, target **ErrSpaceNameConflict) bool {
 	c, ok := err.(*ErrSpaceNameConflict)
 	if ok {

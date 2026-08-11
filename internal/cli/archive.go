@@ -90,6 +90,14 @@ func archiveExternal(feature, branch string) error {
 	featurePath := internal.FeaturePath(feature)
 	path := internal.WorktreePath(feature, branch)
 
+	// Archiving removes the worktree a live session's path points at, i.e.
+	// the agent's own working directory. The guard precedes the
+	// worktree-absent branch below, which also mutates stack.yaml.
+	if gerr := guardDirectRecords(os.Stdout, featurePath, "archive", feature+"/"+branch,
+		directRecordTargetForBranch(feature, branch)); gerr != nil {
+		return gerr
+	}
+
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		// Mark as archived in stack if not already.
 		stack, loadErr := internal.LoadStack(featurePath)

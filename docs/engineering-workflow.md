@@ -17,14 +17,16 @@ Current shipped checkout slices:
 4. namespaced feature layout with legacy migration;
 5. single-owner direct/tmux agent sessions;
 6. checkout doctor and list observability;
-7. workspace sibling links (`<spaces-root>/spaces.yaml`, `tws space add/list/show/remove`).
+7. workspace sibling links (`<spaces-root>/spaces.yaml`, `tws space add/list/show/remove`);
+8. agent work status (`tws status [feature] [--json]`) plus external per-invocation direct session records.
 
 The opt-in global workspace registry is also shipped for stable cross-repository
 discovery, health checks, and moved-target repair.
 
-Next roadmap feature: **agent work status** — surface materialized sessions,
-idle agents, blocked approvals, and attention needs without replacing the agent
-harness. See [`roadmap.md`](roadmap.md).
+Next roadmap feature: **stack ancestry doctor and stack status** — report
+current, stale, divergent, and missing parent refs per edge, and surface local
+head, configured parent, ancestry state, and ahead/behind counts.
+See [`roadmap.md`](roadmap.md).
 
 ## Tpatch workflow
 
