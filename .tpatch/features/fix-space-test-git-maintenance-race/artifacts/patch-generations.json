@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "feature": "fix-space-test-git-maintenance-race",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_649d553531db",
+      "kind": "record",
+      "patch_sha256": "d2863ea083b6f3fa16828f886c91328510035c61fd6b47ebfde0c2abb8a54913",
+      "git_patch_id": "df2408d7f912303e011e95fab606795f831ed5fd",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "0714ffc1af03322ee5912b1a607c804c70e7243208163e7953298355c4a0abf4",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "",
+      "base_commit": "218ddecafd0f9e0860d3f19e5b1f4fbfc708b503",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "internal/cli/space_test.go"
+      ],
+      "dependencies": [
+        {
+          "slug": "workspace-sibling-links",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "c080af2926e6087f761aa42412729194fab57218f236afd89029d502e045e843",
+          "parent_recipe_sha256": "c5b9e83b6617ffb52f36109216a11dbd179776adf6b7425e28ea5f6c2890424c"
+        }
+      ],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}

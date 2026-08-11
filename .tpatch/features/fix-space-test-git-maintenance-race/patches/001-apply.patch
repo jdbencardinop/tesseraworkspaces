@@ -1,0 +1,359 @@
+diff --git a/internal/cli/space_test.go b/internal/cli/space_test.go
+index f273c48..a66462a 100644
+--- a/internal/cli/space_test.go
++++ b/internal/cli/space_test.go
+@@ -3,11 +3,16 @@ package cli
+ import (
+ 	"bytes"
+ 	"encoding/json"
++	"errors"
++	"io/fs"
+ 	"os"
++	"path"
+ 	"path/filepath"
+ 	"regexp"
+ 	"strings"
++	"syscall"
+ 	"testing"
++	"time"
+ 
+ 	"github.com/jdbencardinop/tesseraworkspaces/internal"
+ 	"github.com/spf13/cobra"
+@@ -79,6 +84,78 @@ func snapshotTree(t *testing.T, dir string) string {
+ 	return strings.Join(paths, "\n")
+ }
+ 
++// isTransientGitLockPath reports whether a relative path is a Git lock file
++// inside a `.git` directory — a path with a `.git` segment whose base name ends
++// in `.lock`, such as `.git/objects/maintenance.lock` or `.git/index.lock`.
++// Only lock files match: `.git/tws/workspace-id`, `.git/info/exclude`,
++// `.github`, and `.gitignore` do not.
++func isTransientGitLockPath(rel string) bool {
++	slashed := filepath.ToSlash(rel)
++	if !strings.HasSuffix(path.Base(slashed), ".lock") {
++		return false
++	}
++	for _, segment := range strings.Split(slashed, "/") {
++		if segment == ".git" {
++			return true
++		}
++	}
++	return false
++}
++
++// treeWalker matches filepath.Walk. It is a seam so collectStableTreePaths can
++// be driven deterministically from tests without racing real Git maintenance.
++type treeWalker func(root string, fn filepath.WalkFunc) error
++
++// collectStableTreePaths walks dir and returns every relative path that is not
++// a transient Git lock file.
++//
++// Filtering happens *during* traversal rather than on a finished snapshot,
++// because a lock file that Git removes between the directory read and the stat
++// of its entry surfaces as a walk callback error, not as a listed path. Such an
++// error is tolerated only when it is a not-exist error for a path that
++// isTransientGitLockPath accepts; every other walk error stays fatal, so a
++// vanished non-lock path or an unreadable lock is still reported.
++func collectStableTreePaths(dir string, walk treeWalker) ([]string, error) {
++	var paths []string
++	err := walk(dir, func(p string, info os.FileInfo, walkErr error) error {
++		rel, relErr := filepath.Rel(dir, p)
++		if relErr != nil {
++			return relErr
++		}
++		if walkErr != nil {
++			if isTransientGitLockPath(rel) && (errors.Is(walkErr, fs.ErrNotExist) || os.IsNotExist(walkErr)) {
++				return nil
++			}
++			return walkErr
++		}
++		if isTransientGitLockPath(rel) {
++			return nil
++		}
++		paths = append(paths, rel)
++		return nil
++	})
++	if err != nil {
++		return nil, err
++	}
++	return paths, nil
++}
++
++// snapshotTreeIgnoringGitLocks is snapshotTree with transient Git lock files
++// dropped. Git background maintenance creates and removes locks such as
++// `.git/objects/maintenance.lock` on its own schedule, so their presence is not
++// a stable basis for a no-side-effect comparison — and a lock that vanishes
++// mid-walk must not fail the traversal either. Every other path is retained,
++// including the tws-owned `.git` entries (`.git/tws/workspace-id`,
++// `.git/info/exclude`) where a real tws side effect would appear.
++func snapshotTreeIgnoringGitLocks(t *testing.T, dir string) string {
++	t.Helper()
++	paths, err := collectStableTreePaths(dir, filepath.Walk)
++	if err != nil {
++		t.Fatal(err)
++	}
++	return strings.Join(paths, "\n")
++}
++
+ func decodeSpaceViews(t *testing.T, raw string) []map[string]any {
+ 	t.Helper()
+ 	var views []map[string]any
+@@ -282,7 +359,7 @@ func TestSpaceAbsentRegistryCreatesNothing(t *testing.T) {
+ 			}
+ 
+ 			// The spaces root itself may not exist yet in external mode.
+-			before := snapshotTree(t, parent)
++			before := snapshotTreeIgnoringGitLocks(t, parent)
+ 
+ 			out, err := runSpace(t, "list", "--json")
+ 			if err != nil {
+@@ -301,7 +378,7 @@ func TestSpaceAbsentRegistryCreatesNothing(t *testing.T) {
+ 				t.Fatalf(`remove err = %v, want exactly 'no space named "learning"'`, err)
+ 			}
+ 
+-			after := snapshotTree(t, parent)
++			after := snapshotTreeIgnoringGitLocks(t, parent)
+ 			if before != after {
+ 				t.Fatalf("read-only/absent paths created files:\nbefore:\n%s\nafter:\n%s", before, after)
+ 			}
+@@ -314,6 +391,240 @@ func TestSpaceAbsentRegistryCreatesNothing(t *testing.T) {
+ 	}
+ }
+ 
++// TestSpaceSnapshotIgnoresTransientGitLocks pins the snapshot helper used by
++// TestSpaceAbsentRegistryCreatesNothing: Git background maintenance may create
++// and remove `.git/objects/maintenance.lock` between the before and after
++// snapshots (macOS CI run 31501550220), and that must never be read as a tws
++// side effect — while every non-lock path, including the tws-owned `.git`
++// entries `.git/tws/workspace-id` and `.git/info/exclude`, must stay
++// observable.
++func TestSpaceSnapshotIgnoresTransientGitLocks(t *testing.T) {
++	dir := t.TempDir()
++	mustMkdir(t, filepath.Join(dir, ".git", "objects"))
++	mustMkdir(t, filepath.Join(dir, ".git", "info"))
++	mustMkdir(t, filepath.Join(dir, ".github", "workflows"))
++	mustMkdir(t, filepath.Join(dir, ".tws"))
++	writeFile := func(rel string, data string) string {
++		t.Helper()
++		full := filepath.Join(dir, rel)
++		if err := os.WriteFile(full, []byte(data), 0644); err != nil {
++			t.Fatal(err)
++		}
++		return full
++	}
++	writeFile(filepath.Join(".github", "workflows", "ci.yml"), "name: ci\n")
++	writeFile(".gitignore", "bin/\n")
++	writeFile(filepath.Join(".tws", "config.yaml"), "workspace_mode: checkout\n")
++
++	stable := snapshotTreeIgnoringGitLocks(t, dir)
++	for _, rel := range []string{
++		".git",
++		filepath.Join(".git", "objects"),
++		filepath.Join(".git", "info"),
++		filepath.Join(".github", "workflows", "ci.yml"),
++		".gitignore",
++		filepath.Join(".tws", "config.yaml"),
++	} {
++		if !snapshotHasPath(stable, rel) {
++			t.Fatalf("stable snapshot must retain %q:\n%s", rel, stable)
++		}
++	}
++
++	// A transient maintenance lock appears and disappears: never a side effect.
++	lock := filepath.Join(dir, ".git", "objects", "maintenance.lock")
++	if err := os.WriteFile(lock, nil, 0644); err != nil {
++		t.Fatal(err)
++	}
++	if !strings.Contains(snapshotTree(t, dir), "maintenance.lock") {
++		t.Fatal("raw snapshotTree must see the lock; otherwise this test proves nothing")
++	}
++	if got := snapshotTreeIgnoringGitLocks(t, dir); got != stable {
++		t.Fatalf("appearing maintenance.lock changed the stable snapshot:\nwant:\n%s\ngot:\n%s", stable, got)
++	}
++	if err := os.Remove(lock); err != nil {
++		t.Fatal(err)
++	}
++	if got := snapshotTreeIgnoringGitLocks(t, dir); got != stable {
++		t.Fatalf("disappearing maintenance.lock changed the stable snapshot:\nwant:\n%s\ngot:\n%s", stable, got)
++	}
++
++	// The tws-owned marker inside .git is a real side effect and must show up.
++	mustMkdir(t, filepath.Join(dir, ".git", "tws"))
++	markerRel := filepath.Join(".git", "tws", "workspace-id")
++	writeFile(markerRel, "0123456789abcdef0123456789abcdef\n")
++	got := snapshotTreeIgnoringGitLocks(t, dir)
++	if got == stable || !snapshotHasPath(got, markerRel) {
++		t.Fatalf("creating %s must change the stable snapshot and be listed:\n%s", markerRel, got)
++	}
++	stable = got
++
++	// .git/info/exclude is tws-managed too; snapshotTree is path-only, so its
++	// creation and any path change are observable, its content is not.
++	excludeRel := filepath.Join(".git", "info", "exclude")
++	excludePath := writeFile(excludeRel, ".tws/\n")
++	got = snapshotTreeIgnoringGitLocks(t, dir)
++	if got == stable || !snapshotHasPath(got, excludeRel) {
++		t.Fatalf("creating %s must change the stable snapshot and be listed:\n%s", excludeRel, got)
++	}
++	stable = got
++
++	writeFile(excludeRel, ".tws/\n.tws-workspace/\n")
++	if got := snapshotTreeIgnoringGitLocks(t, dir); got != stable {
++		t.Fatalf("snapshotTree is path-only; rewriting %s must not change the path set:\nwant:\n%s\ngot:\n%s", excludeRel, stable, got)
++	}
++
++	movedRel := filepath.Join(".git", "info", "exclude.moved")
++	if err := os.Rename(excludePath, filepath.Join(dir, movedRel)); err != nil {
++		t.Fatal(err)
++	}
++	got = snapshotTreeIgnoringGitLocks(t, dir)
++	if got == stable || snapshotHasPath(got, excludeRel) || !snapshotHasPath(got, movedRel) {
++		t.Fatalf("moving %s must be observable:\n%s", excludeRel, got)
++	}
++	stable = got
++
++	// A tws-owned artifact outside .git is still detected.
++	if err := os.WriteFile(spacesFileIn(dir), []byte("version: 1\n"), 0600); err != nil {
++		t.Fatal(err)
++	}
++	got = snapshotTreeIgnoringGitLocks(t, dir)
++	if got == stable || !snapshotHasPath(got, "spaces.yaml") {
++		t.Fatalf("a created spaces.yaml must change the stable snapshot and be listed:\n%s", got)
++	}
++}
++
++// TestCollectStableTreePathsWalkErrors drives the stable collector through a
++// scripted walk so the mid-traversal race is covered deterministically, with no
++// dependence on Git maintenance timing: a lock file may disappear between the
++// directory read and its stat, which reaches the callback as a not-exist error
++// rather than as a listed path. Only that exact case is tolerated.
++func TestCollectStableTreePathsWalkErrors(t *testing.T) {
++	type entry struct {
++		rel string
++		err error
++	}
++	// scriptedWalk replays entries with filepath.Walk semantics: the callback
++	// receives the joined path, and a non-nil callback return aborts the walk.
++	scriptedWalk := func(entries []entry) treeWalker {
++		return func(root string, fn filepath.WalkFunc) error {
++			for _, e := range entries {
++				p := root
++				if e.rel != "." {
++					p = filepath.Join(root, filepath.FromSlash(e.rel))
++				}
++				var info os.FileInfo
++				if e.err == nil {
++					info = scriptedFileInfo{name: path.Base(e.rel)}
++				}
++				if err := fn(p, info, e.err); err != nil {
++					return err
++				}
++			}
++			return nil
++		}
++	}
++	vanished := func(rel string) error {
++		return &fs.PathError{Op: "lstat", Path: rel, Err: fs.ErrNotExist}
++	}
++
++	base := []entry{
++		{rel: "."},
++		{rel: ".git"},
++		{rel: ".git/objects"},
++	}
++	tail := []entry{
++		{rel: ".git/tws/workspace-id"},
++		{rel: "README.md"},
++	}
++	wantStable := []string{".", ".git", filepath.FromSlash(".git/objects"), filepath.FromSlash(".git/tws/workspace-id"), "README.md"}
++
++	tests := []struct {
++		name    string
++		entries []entry
++		want    []string
++		wantErr error
++	}{
++		{
++			name:    "vanished git maintenance lock is ignored",
++			entries: append(append(append([]entry{}, base...), entry{rel: ".git/objects/maintenance.lock", err: vanished(".git/objects/maintenance.lock")}), tail...),
++			want:    wantStable,
++		},
++		{
++			name:    "vanished git index lock reported as ENOENT syscall error is ignored",
++			entries: append(append(append([]entry{}, base...), entry{rel: ".git/index.lock", err: &fs.PathError{Op: "lstat", Path: ".git/index.lock", Err: syscall.ENOENT}}), tail...),
++			want:    wantStable,
++		},
++		{
++			name:    "listed lock is filtered without an error",
++			entries: append(append(append([]entry{}, base...), entry{rel: ".git/objects/maintenance.lock"}), tail...),
++			want:    wantStable,
++		},
++		{
++			name:    "vanished non-lock path under .git is fatal",
++			entries: append(append([]entry{}, base...), entry{rel: ".git/tws/workspace-id", err: vanished(".git/tws/workspace-id")}),
++			wantErr: fs.ErrNotExist,
++		},
++		{
++			name:    "vanished lock outside .git is fatal",
++			entries: append(append([]entry{}, base...), entry{rel: ".spaces.lock", err: vanished(".spaces.lock")}),
++			wantErr: fs.ErrNotExist,
++		},
++		{
++			name:    "permission error on a lock is fatal",
++			entries: append(append([]entry{}, base...), entry{rel: ".git/objects/maintenance.lock", err: &fs.PathError{Op: "lstat", Path: ".git/objects/maintenance.lock", Err: fs.ErrPermission}}),
++			wantErr: fs.ErrPermission,
++		},
++	}
++
++	for _, tc := range tests {
++		t.Run(tc.name, func(t *testing.T) {
++			got, err := collectStableTreePaths(t.TempDir(), scriptedWalk(tc.entries))
++			if tc.wantErr != nil {
++				if err == nil {
++					t.Fatalf("want error %v, got paths %v", tc.wantErr, got)
++				}
++				if !errors.Is(err, tc.wantErr) {
++					t.Fatalf("error = %v, want %v", err, tc.wantErr)
++				}
++				if got != nil {
++					t.Fatalf("failed collection must return no paths, got %v", got)
++				}
++				return
++			}
++			if err != nil {
++				t.Fatalf("unexpected error: %v", err)
++			}
++			if strings.Join(got, "\n") != strings.Join(tc.want, "\n") {
++				t.Fatalf("paths = %v, want %v", got, tc.want)
++			}
++		})
++	}
++}
++
++// scriptedFileInfo is the minimal os.FileInfo the scripted walk needs;
++// collectStableTreePaths only inspects paths, never file metadata.
++type scriptedFileInfo struct {
++	name string
++}
++
++func (i scriptedFileInfo) Name() string       { return i.name }
++func (i scriptedFileInfo) Size() int64        { return 0 }
++func (i scriptedFileInfo) Mode() os.FileMode  { return 0 }
++func (i scriptedFileInfo) ModTime() time.Time { return time.Time{} }
++func (i scriptedFileInfo) IsDir() bool        { return false }
++func (i scriptedFileInfo) Sys() any           { return nil }
++
++// snapshotHasPath reports whether a snapshot lists exactly the given relative
++// path as one of its lines.
++func snapshotHasPath(snapshot, rel string) bool {
++	for _, line := range strings.Split(snapshot, "\n") {
++		if line == rel {
++			return true
++		}
++	}
++	return false
++}
++
+ func TestSpaceAddNonGitAndAbsoluteTargets(t *testing.T) {
+ 	repo := setupGitRepo(t, "master")
+ 	withWorkspaceEnv(t, repo)
