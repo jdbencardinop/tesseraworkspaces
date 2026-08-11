@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "feature": "fix-status-tmux-test-portability",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_23fb5a1b6ed9",
+      "kind": "record",
+      "patch_sha256": "ca90892310a027f03cc127daf6f536cfdfef7c855e8e3dd6ae9639928d0ab3fe",
+      "git_patch_id": "e23a2c8dc8f7da0c591d7e9312941d9a40ddb56c",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "99736e95b071235fcf301d0348e8d825e20f56b560b86b2914807b6f9537a5e2",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "",
+      "base_commit": "a8696d95116ab75822c3aa10acdff4969f2d26c1",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "internal/cli/status_test.go"
+      ],
+      "dependencies": [
+        {
+          "slug": "agent-work-status-dashboard",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "f716dce956c72183a941298e02943478812f9293872e3ab85220f67f8a2fca9a",
+          "parent_recipe_sha256": "3aec279ef97d08eaeb2b668e849039c46d2c091a44e350a67dbccab8a1708d1d"
+        }
+      ],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}

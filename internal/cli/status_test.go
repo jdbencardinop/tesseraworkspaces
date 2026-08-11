@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,6 +12,60 @@ import (
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
 	"github.com/spf13/pflag"
 )
+
+// withIdleTmuxOnPath makes the tmux inventory deterministic on every platform:
+// developer machines and the Ubuntu runners have tmux, the macOS runner does
+// not, so an unfixed status test observes a different issue set per host. The
+// stub prepends a temporary executable to PATH and reproduces the exact
+// no-server condition RealTmuxInventory recognizes, yielding Available=true,
+// ServerRunning=false, no error, and therefore no tmux issue at all.
+func withIdleTmuxOnPath(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "tmux")
+	script := "#!/bin/sh\necho 'no server running' >&2\nexit 1\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// WriteFile perms are subject to umask; the stub must be executable.
+	if err := os.Chmod(stub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if got, err := exec.LookPath("tmux"); err != nil || got != stub {
+		t.Fatalf("tmux must resolve to the stub, got %q (%v)", got, err)
+	}
+	snap := internal.RealTmuxInventory{}.Snapshot()
+	if !snap.Available || snap.ServerRunning || snap.Err != nil || len(snap.Sessions) != 0 {
+		t.Fatalf("the stub must produce an idle inventory, got %+v", snap)
+	}
+}
+
+// withoutTmuxOnPath is the opposite fixture: a PATH that still resolves git —
+// status needs real Git inventories — but provably cannot resolve tmux.
+func withoutTmuxOnPath(t *testing.T) {
+	t.Helper()
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("the test environment must provide git: %v", err)
+	}
+	dir := t.TempDir()
+	if err := os.Symlink(gitPath, filepath.Join(dir, "git")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Fatalf("git must stay reachable: %v", err)
+	}
+	if got, err := exec.LookPath("tmux"); err == nil {
+		t.Fatalf("tmux must be unreachable, resolved %q", got)
+	}
+	if snap := (internal.RealTmuxInventory{}).Snapshot(); snap.Available {
+		t.Fatalf("the inventory must report tmux unavailable, got %+v", snap)
+	}
+}
 
 func runStatus(t *testing.T, args ...string) (string, string, error) {
 	t.Helper()
@@ -62,6 +117,7 @@ func TestStatusRejectsUnknownFlag(t *testing.T) {
 func TestStatusEmptyWorkspace(t *testing.T) {
 	repo := setupGitRepo(t, "main")
 	root := withUnifiedWorkspaceEnv(t, repo)
+	withIdleTmuxOnPath(t)
 	if err := os.MkdirAll(root, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -126,6 +182,7 @@ func TestStatusFeatureFilterAndNotFound(t *testing.T) {
 func TestStatusIsCwdIndependent(t *testing.T) {
 	repo := setupGitRepo(t, "main")
 	root := withUnifiedWorkspaceEnv(t, repo)
+	withIdleTmuxOnPath(t)
 	captureStdout(t, func() {
 		if err := addExternal("auth", nil, "api", "main", false, false, false); err != nil {
 			t.Fatalf("addExternal: %v", err)
@@ -230,6 +287,7 @@ func TestStatusFailsClosedOnMalformedSpaces(t *testing.T) {
 func TestStatusReportsDirectRecordsAndExitsZero(t *testing.T) {
 	repo := setupGitRepo(t, "main")
 	withUnifiedWorkspaceEnv(t, repo)
+	withIdleTmuxOnPath(t)
 	captureStdout(t, func() {
 		if err := addExternal("auth", nil, "api", "main", false, false, false); err != nil {
 			t.Fatalf("addExternal: %v", err)
@@ -272,5 +330,41 @@ func TestStatusReportsDirectRecordsAndExitsZero(t *testing.T) {
 	}
 	if !strings.Contains(human, "auth/api") || !strings.Contains(human, "attn") {
 		t.Fatalf("human output = %q", human)
+	}
+}
+
+// TestStatusReportsTmuxMissingWhenTmuxIsAbsent pins the other half of the
+// deterministic pair: with tmux provably off PATH, status still exits 0 and
+// states the absence once, as a workspace-scoped info issue.
+func TestStatusReportsTmuxMissingWhenTmuxIsAbsent(t *testing.T) {
+	repo := setupGitRepo(t, "main")
+	root := withUnifiedWorkspaceEnv(t, repo)
+	if err := os.MkdirAll(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	withoutTmuxOnPath(t)
+
+	out, _, err := runStatus(t, "--json")
+	if err != nil {
+		t.Fatalf("a tmux-free workspace exits 0: %v", err)
+	}
+	var doc map[string]any
+	if jErr := json.Unmarshal([]byte(out), &doc); jErr != nil {
+		t.Fatalf("invalid JSON: %v\n%s", jErr, out)
+	}
+	issues := doc["issues"].([]any)
+	if len(issues) != 1 {
+		t.Fatalf("tmux absence is the only issue, got %v", issues)
+	}
+	issue := issues[0].(map[string]any)
+	if issue["code"] != "tmux-missing" || issue["severity"] != "info" || issue["scope"] != "workspace" {
+		t.Fatalf("issue = %v", issue)
+	}
+	if issue["feature"] != nil || issue["name"] != nil {
+		t.Fatalf("a workspace issue names no branch: %v", issue)
+	}
+	attention := doc["workspace"].(map[string]any)["attention"].(map[string]any)
+	if attention["status"] != "idle" {
+		t.Fatalf("an info issue must not make the workspace need attention: %v", attention)
 	}
 }
