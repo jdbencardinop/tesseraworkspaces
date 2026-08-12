@@ -13,6 +13,14 @@
     {
       "slug": "tpatch-integration",
       "kind": "soft"
+    },
+    {
+      "slug": "workspace-registry",
+      "kind": "hard"
+    },
+    {
+      "slug": "multi-repo-workspaces",
+      "kind": "soft"
     }
   ]
 }
