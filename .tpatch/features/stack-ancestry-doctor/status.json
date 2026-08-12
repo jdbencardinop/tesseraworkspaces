@@ -5,8 +5,8 @@
   "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-08-11T17:39:15Z",
-  "updated_at": "2026-08-12T12:03:39Z",
-  "last_command": "record",
+  "updated_at": "2026-08-12T12:04:17Z",
+  "last_command": "verify",
   "notes": "landed at 2026-08-12T12:03:39Z",
   "apply": {
     "completed_at": "2026-08-12T11:55:35Z",
@@ -44,10 +44,6 @@
       "kind": "hard"
     },
     {
-      "slug": "agent-work-status-dashboard",
-      "kind": "soft"
-    },
-    {
       "slug": "multi-repo-workspaces",
       "kind": "hard"
     },
@@ -78,6 +74,29 @@
     {
       "slug": "skill-distribution",
       "kind": "soft"
+    },
+    {
+      "slug": "agent-work-status-dashboard",
+      "kind": "hard"
     }
-  ]
+  ],
+  "verify": {
+    "verified_at": "2026-08-12T12:04:16Z",
+    "passed": false,
+    "recipe_hash_at_verify": "4340f7b6171aec52dc9c81ea894893e40337a17fecd5e55c424c11ecb4453782",
+    "patch_hash_at_verify": "33b755b8559ef3d3a4fc3a79ad51b802b693d54635a7a9fa2a58f0e700d50ec0",
+    "parent_snapshot": {
+      "agent-work-status-dashboard": "applied",
+      "amend-aware-rebase": "applied",
+      "branch-name-decoupling": "applied",
+      "checkout-doctor-observability": "applied",
+      "checkout-stack-safety": "applied",
+      "fix-default-base-branch": "applied",
+      "fix-external-feature-dir-resolution": "applied",
+      "keep-track-of-stacked-diffs-and-dependencies": "applied",
+      "multi-repo-workspaces": "applied",
+      "workspace-sibling-links": "applied",
+      "worktree-health-check": "applied"
+    }
+  }
 }
