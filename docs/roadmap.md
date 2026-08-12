@@ -21,9 +21,14 @@ Shipped foundations:
 - agent work status: `tws status [feature] [--json]` projects materialization,
   tws-launched runtimes, and attention needs over a versioned two-axis schema,
   plus per-invocation external direct session records so a tws-launched agent is
-  observable, crash-detectable, and concurrency-safe.
+  observable, crash-detectable, and concurrency-safe;
+- stack ancestry doctor: one mode-independent, read-only `StackEdge` evaluator
+  shared by checkout doctor, checkout list, and external `tws doctor`, reporting
+  `current | stale | divergent | missing | cross-repo-unsupported` plus an
+  explicit unevaluated state, with a reason and guidance per edge.
 
-Current target: **stack ancestry doctor and stack status** — the P1 items below.
+Current target: **stack status** — the P1 items below. It consumes the shipped
+`StackEdge` projection rather than computing ancestry of its own.
 
 Follow-ups explicitly owned by later features rather than by `tws status`:
 
@@ -35,11 +40,12 @@ Follow-ups explicitly owned by later features rather than by `tws status`:
 - **Portable process birth identity** — record and verify a process start time
   or a birth-stable handle to close the PID-reuse window. Today a `present`
   means a process with that PID exists, not that that exact process exists.
-- **Base ancestry per branch** — stays with "Stack ancestry doctor" and "Stack
-  status" below, which own the `current | stale | divergent | missing`
-  semantics. If `tws status` ever surfaces ancestry it must consume that
-  feature's projection rather than compute its own; adding the key is additive
-  and does not bump `schema_version`.
+- **Base ancestry per branch** — owned by the shipped stack ancestry doctor and
+  by "Stack status" below, which carry the
+  `current | stale | divergent | missing | cross-repo-unsupported` semantics and
+  the unevaluated state. If `tws status` ever surfaces ancestry it must consume
+  the shipped `StackEdge` projection rather than compute its own; adding the key
+  is additive and does not bump `schema_version`.
 
 ## Completed P0 correctness
 
@@ -57,10 +63,9 @@ For decoupled names, `StackEntry.Name` identifies the tws worktree while `StackE
 
 ## P1 stack safety and observability backlog
 
-- **Stack ancestry doctor**: report current, stale, divergent, and missing parent refs for every edge.
 - **Sync modes**: support local-only propagation, no-fetch operation, surgical branch/descendant sync, and explicit root targets.
 - **Rebase plan guard**: show the old base, new base, and replay count; stop surprising broad rebases before they start.
-- **Stack status**: show local head, configured parent and parent head, ancestry state, dirty/rebase state, upstream, and ahead/behind counts.
+- **Stack status**: show local head, configured parent and parent head, ancestry state, dirty/rebase state, upstream, and ahead/behind counts. Consumes the shipped `StackEdge` projection.
 - **Safe reparent/restack**: update Git and metadata atomically for a single-parent stack.
 
 ## Agent integration — P2

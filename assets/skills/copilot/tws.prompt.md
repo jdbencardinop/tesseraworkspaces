@@ -30,7 +30,7 @@ You are working in a project that uses `tws` for feature-scoped workspaces with 
 - `tws hooks install/remove [feature]` — Manage agent hooks
 - `tws registry add/list/show/check/...` — Manage opt-in global workspace discovery
 - `tws space add/list/show/remove` — Link and discover tool-owned sibling spaces
-- `tws doctor [feature]` — Run health checks
+- `tws doctor [feature]` — Run health checks, including stack ancestry per configured parent-child edge
 - `tws status [feature] [--json]` — Agent work status per branch (always workspace-wide unless filtered)
 - `tws rename feature/branch` — Rename feature or branch
 - `tws config show/set/get` — Manage configuration

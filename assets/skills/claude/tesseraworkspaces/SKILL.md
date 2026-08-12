@@ -241,15 +241,32 @@ tws doctor                # check all features
 tws doctor auth           # check one feature
 ```
 
-**External mode** detects: wrong branch, uncommitted changes, missing inject symlinks.
+**External mode** detects: wrong branch, uncommitted changes, missing inject symlinks, and per-edge stack ancestry when the source repository is resolvable. Ancestry findings appear as one issue per edge (`ancestry <status>: <reason>` plus a hint), one informational `ancestry note:` per edge whose base a sync path would resolve differently, and at most one feature-scoped `repo-unavailable` or `repo-source-mismatch` informational line. External doctor also runs from the workspace root or a feature directory, and still reports the non-Git checks when no source repository can be found.
 
 **Checkout mode** produces a comprehensive read-only report covering:
 - Workspace identity (mode, stable ID, repo, metadata root)
 - Current branch (or detached HEAD), dirty state, active Git operation (merge/rebase/cherry-pick/revert)
 - Sync transactions: discovers all `.tws/state/*-checkout-sync.*` entries, classifies live/stale/invalid, shows stage/failure/lock PID and exact `--continue`/`--abort` guidance
 - Agent session: PID or tmux liveness, state/lock mismatch detection, `tws close` guidance
-- Per-entry: logical name, Git branch, archive/ref/current status, base ancestry (current/stale/missing/cross-repo), local and parent HEAD SHAs
+- Per-entry: logical name, Git branch, archive/ref/current status, base ancestry (`current`/`stale`/`divergent`/`missing`/`cross-repo-unsupported`, or `unevaluated`), local and parent HEAD SHAs, plus an indented `reason:` detail line carrying the reason, `last-base`, and `merge-base`. Archived entries report the same ancestry data but are informational and never counted
 - Context links: inspects recorded symlink targets (healthy/missing/replaced/not-symlink)
+
+`stale` means the parent moved forward — run `tws sync`. `divergent` means the
+recorded base commit is no longer in the parent's history, so an `--onto` rebase
+is required; `tws sync` replays the edge that way too, with the flags its own
+workspace mode requires (external sync adds `--update-refs`, checkout sync adds
+`--no-fork-point`), so the printed command is an equivalent manual repair, not a
+copy of what sync runs. That guidance is a complete, runnable command naming the
+full base ref, the full recorded base commit, and the target child branch
+explicitly, so it moves that branch instead of detaching HEAD; prose in the same
+line stays abbreviated, but nothing inside a backticked command is shortened. `missing` on a child branch never suggests
+`tws new` — the stack entry already exists, so the guidance offers restoring the
+branch from its remote or a known commit, or deliberately removing and
+recreating the entry. `cross-repo-unsupported` means the entry targets another
+repository, which tws never probes. `unevaluated` means no ancestry conclusion
+was reached (no configured base, or no resolvable source repository). Both
+`stale` and `divergent` exit 0. Doctor is strictly read-only and never contacts
+a remote.
 
 Doctor never mutates Git state, locks, or files. Warnings and informational issues do not return an error exit; only corrupt metadata or unreadable state does.
 
@@ -259,7 +276,7 @@ In checkout mode, `tws list` shows:
 - Logical branch name and Git branch (when different)
 - Current branch marker
 - Archived status
-- Ancestry status (stale/missing)
+- Ancestry status (`stale`/`divergent`/`missing`/`cross-repo-unsupported`/`unevaluated`)
 - Active session marker
 
 ### Agent Work Status

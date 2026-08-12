@@ -122,7 +122,8 @@ func TestExternalDoctor_UnchangedBehavior(t *testing.T) {
 		t.Fatalf("createWorktree: %v", err)
 	}
 
-	issues, err := checkFeatureE("extfeat")
+	ws, cfg := doctorFeatureContext(t)
+	issues, err := checkFeatureE(ws, cfg, "extfeat")
 	if err != nil {
 		t.Fatalf("checkFeatureE failed: %v", err)
 	}
@@ -181,7 +182,8 @@ func TestExternalFeatureDir_DoctorRegression(t *testing.T) {
 	}()
 
 	// Doctor should still work on external features
-	issues, err := checkFeatureE("ext-feat")
+	ws, cfg := doctorFeatureContext(t)
+	issues, err := checkFeatureE(ws, cfg, "ext-feat")
 	if err != nil {
 		t.Fatalf("checkFeatureE in feature-dir: %v", err)
 	}

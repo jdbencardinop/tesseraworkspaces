@@ -15,6 +15,13 @@ func doctorCmd() *cobra.Command {
 		Short: "Run health checks on workspaces",
 		Long: `Check workspace and stack health. With no args, checks all features.
 
+Also reports stack ancestry for every configured parent-child edge: current,
+stale, divergent, missing, cross-repo-unsupported, or unevaluated, each with its
+reason and actionable guidance when available. Ancestry evaluation is strictly
+read-only and never contacts a remote; when the source repository cannot be
+determined the feature reports a single informational line and the remaining
+checks still run.
+
 Warnings such as a dirty checkout, active Git operation, stale ancestry, or
 recoverable lock/session state are reported with exit 0 for interactive use.
 Corrupt or unreadable persisted state returns a non-zero exit status.`,
@@ -28,7 +35,19 @@ Corrupt or unreadable persisted state returns a non-zero exit status.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Checkout mode dispatch
 			ws, wsErr := internal.RequireWorkspace()
-			if wsErr == nil && ws.Mode == internal.ModeCheckout {
+			if wsErr != nil {
+				// Fail closed on persisted-state errors. A workspace that
+				// cannot be resolved from inside a Git repository means the
+				// repo-local config is unusable (invalid workspace_mode, for
+				// example) and doctor must report it instead of silently
+				// continuing in external mode. Only a cwd with no repository
+				// at all — an external workspace root or feature directory —
+				// may fall through, which is the case ancestry then reports as
+				// unevaluated.
+				if _, repoErr := internal.MainRepoRoot(); repoErr == nil {
+					return wsErr
+				}
+			} else if ws.Mode == internal.ModeCheckout {
 				feature := ""
 				if len(args) == 1 {
 					feature = args[0]
@@ -36,8 +55,10 @@ Corrupt or unreadable persisted state returns a non-zero exit status.`,
 				return runCheckoutDoctor(ws, feature)
 			}
 
+			cfg := internal.LoadConfig()
+
 			if len(args) == 1 {
-				_, err := checkFeatureE(args[0])
+				_, err := checkFeatureE(ws, cfg, args[0])
 				return err
 			}
 
@@ -53,7 +74,7 @@ Corrupt or unreadable persisted state returns a non-zero exit status.`,
 
 			totalIssues := 0
 			for _, feature := range features {
-				issues, err := checkFeatureE(feature)
+				issues, err := checkFeatureE(ws, cfg, feature)
 				if err != nil {
 					return err
 				}
@@ -70,8 +91,12 @@ Corrupt or unreadable persisted state returns a non-zero exit status.`,
 	}
 }
 
-func checkFeatureE(feature string) (int, error) {
-	featurePath, err := internal.RequireFeaturePath(feature)
+func checkFeatureE(ws internal.Workspace, cfg internal.Config, feature string) (int, error) {
+	// Resolve from the workspace the command already resolved rather than
+	// re-deriving one: doctor must still run from an external workspace root
+	// or feature directory when the source repository is unavailable, which is
+	// exactly the case ancestry then reports as unevaluated.
+	featurePath, err := internal.ResolveFeaturePathFor(ws, feature)
 	if err != nil {
 		return 0, err
 	}
@@ -83,7 +108,14 @@ func checkFeatureE(feature string) (int, error) {
 
 	issues := internal.CheckFeatureHealth(featurePath)
 
-	if len(issues) == 0 {
+	if stack, sErr := internal.LoadStack(featurePath); sErr == nil && len(stack.Branches) > 0 {
+		edges, res := internal.FeatureStackEdges(ws, cfg, feature, featurePath, stack)
+		issues = append(issues, internal.AncestryHealthIssues(res, edges)...)
+	}
+
+	counted := internal.CountHealthIssues(issues)
+
+	if counted == 0 {
 		// Count active worktrees
 		wtDir := filepath.Join(featurePath, "worktrees")
 		entries, _ := os.ReadDir(wtDir)
@@ -95,13 +127,13 @@ func checkFeatureE(feature string) (int, error) {
 		}
 		fmt.Printf("%s: healthy (%d active worktree(s))\n", feature, active)
 	} else {
-		fmt.Printf("%s: %d issue(s)\n", feature, len(issues))
-		for _, issue := range issues {
-			fmt.Println(issue)
-		}
+		fmt.Printf("%s: %d issue(s)\n", feature, counted)
+	}
+	for _, issue := range issues {
+		fmt.Println(issue)
 	}
 
-	return len(issues), nil
+	return counted, nil
 }
 
 func runCheckoutDoctor(ws internal.Workspace, feature string) error {

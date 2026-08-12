@@ -106,8 +106,16 @@ When you `tws open`, unread decisions are shown automatically:
 ```sh
 tws list                     # all features and branches
 tws stack auth               # dependency tree for a feature
-tws doctor auth              # health checks (branch mismatch, dirty, etc.)
+tws doctor auth              # health checks (branch mismatch, dirty, ancestry, etc.)
 ```
+
+Ancestry is reported per configured parent-child edge as `current`, `stale`,
+`divergent`, `missing`, `cross-repo-unsupported`, or `unevaluated`, with a reason
+and guidance when one applies. It is read-only, never fetches, and never changes
+the exit status: `stale` means the parent moved (run `tws sync`), `divergent`
+means the recorded base commit left the parent's history so an `--onto` rebase is
+needed, and `cross-repo-unsupported` means the entry targets another repository
+that tws does not probe.
 
 ## Check agent status
 

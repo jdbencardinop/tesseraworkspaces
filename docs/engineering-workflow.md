@@ -18,14 +18,15 @@ Current shipped checkout slices:
 5. single-owner direct/tmux agent sessions;
 6. checkout doctor and list observability;
 7. workspace sibling links (`<spaces-root>/spaces.yaml`, `tws space add/list/show/remove`);
-8. agent work status (`tws status [feature] [--json]`) plus external per-invocation direct session records.
+8. agent work status (`tws status [feature] [--json]`) plus external per-invocation direct session records;
+9. mode-independent stack ancestry evaluation shared by checkout doctor, checkout list, and external `tws doctor`.
 
 The opt-in global workspace registry is also shipped for stable cross-repository
 discovery, health checks, and moved-target repair.
 
-Next roadmap feature: **stack ancestry doctor and stack status** — report
-current, stale, divergent, and missing parent refs per edge, and surface local
-head, configured parent, ancestry state, and ahead/behind counts.
+Next roadmap feature: **stack status** — surface local head, configured parent
+and parent head, ancestry state, dirty/rebase state, upstream, and ahead/behind
+counts as machine output, consuming the shipped `StackEdge` projection.
 See [`roadmap.md`](roadmap.md).
 
 ## Tpatch workflow

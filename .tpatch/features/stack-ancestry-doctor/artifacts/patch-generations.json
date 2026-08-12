@@ -1,0 +1,173 @@
+{
+  "version": 1,
+  "feature": "stack-ancestry-doctor",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_9896a6f41036",
+      "kind": "record",
+      "patch_sha256": "33b755b8559ef3d3a4fc3a79ad51b802b693d54635a7a9fa2a58f0e700d50ec0",
+      "git_patch_id": "cb3d3594c4f9e6baacad00bc2a161a29ae0e93db",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "4340f7b6171aec52dc9c81ea894893e40337a17fecd5e55c424c11ecb4453782",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "",
+      "base_commit": "f2a9be6c07805db9b7a024c0b369c0d51f847f37",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "CHANGELOG.md",
+        "assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md",
+        "assets/skills/claude/tesseraworkspaces/SKILL.md",
+        "assets/skills/copilot/tws.prompt.md",
+        "docs/cheatsheet.md",
+        "docs/engineering-workflow.md",
+        "docs/roadmap.md",
+        "internal/checkout_health.go",
+        "internal/cli/checkout_doctor_test.go",
+        "internal/cli/doctor.go",
+        "internal/cli/doctor_ancestry_test.go",
+        "internal/health.go",
+        "internal/resolve.go",
+        "internal/stack_ancestry.go",
+        "internal/stack_ancestry_test.go"
+      ],
+      "dependencies": [
+        {
+          "slug": "agent-work-status-dashboard",
+          "kind": "soft",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "f716dce956c72183a941298e02943478812f9293872e3ab85220f67f8a2fca9a",
+          "parent_recipe_sha256": "3aec279ef97d08eaeb2b668e849039c46d2c091a44e350a67dbccab8a1708d1d"
+        },
+        {
+          "slug": "amend-aware-rebase",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "branch-name-decoupling",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "checkout-doctor-observability",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "3080da47c2d6aad24ebe54f6f6b7e24bc7c1208f65ca9360ca4ea2a54d5003df",
+          "parent_recipe_sha256": "b74492c495f378ea86955504528a9f9314be13e19889c8e78c2515e6d1b24199"
+        },
+        {
+          "slug": "checkout-stack-safety",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "481f98df0a47377796d58068eef358da635879a49f695a02c41b5492e2998d2f",
+          "parent_recipe_sha256": "aca1663d17d69ebe8797492561d2eb36f3d69292906983d127f53af0d08b69f3"
+        },
+        {
+          "slug": "divergent-stack-sync",
+          "kind": "soft",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "fix-default-base-branch",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "fix-external-feature-dir-resolution",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "a74eee8fdca17dd26dd16030e4fe54afc72e36b1a3fa4aeb403cc04bacb134fc",
+          "parent_recipe_sha256": "d9a5f37a93ee74c18b6784aad1ca81eae3a0a7d6bcf399f3b8abfe9767f534cf"
+        },
+        {
+          "slug": "fix-sync-branch-identity",
+          "kind": "soft",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "3815958225ff9b475b20e15e585db43f11e0cf5292bc41d37cd727063ee7a55c",
+          "parent_recipe_sha256": "3eb1e2608c143be7e882d6fa68d872b4c57906caa83cb6dd46bbd8cf2615fb54"
+        },
+        {
+          "slug": "fix-sync-continue-descendants",
+          "kind": "soft",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "c4a6ac330d222fe74efd10ea1b55811ddfd4da53d79f3deba7433e3fcbf886b8",
+          "parent_recipe_sha256": "12d75e3930fa493607d0e216d0c48e1f5ab415c01f250dd49a6d74bcd95254a2"
+        },
+        {
+          "slug": "keep-track-of-stacked-diffs-and-dependencies",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "multi-repo-workspaces",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "post-rebase-validation",
+          "kind": "soft",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "skill-distribution",
+          "kind": "soft",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "workspace-sibling-links",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "c080af2926e6087f761aa42412729194fab57218f236afd89029d502e045e843",
+          "parent_recipe_sha256": "c5b9e83b6617ffb52f36109216a11dbd179776adf6b7425e28ea5f6c2890424c"
+        },
+        {
+          "slug": "worktree-health-check",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        }
+      ],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}

@@ -40,7 +40,7 @@ Every anchor the spec cites, confirmed present at the stated location.
 | `HealthIssue` + `String()` | `internal/health.go:11-15`, `17-23` | `Severity` field + `EffectiveSeverity()` + icon rewrite |
 | `CheckWorktree*` | `internal/health.go:26,48,65` | **not modified** (zero-value severity rule) |
 | `CheckFeatureHealth` | `internal/health.go:105-131` | **signature and body unchanged**; sole caller `internal/cli/doctor.go:84` |
-| `doctorCmd` `RequireWorkspace` | `internal/cli/doctor.go:30` | kept single call; `wsErr` stays non-fatal |
+| `doctorCmd` `RequireWorkspace` | `internal/cli/doctor.go:30` | kept single call; `wsErr` fatal when `MainRepoRoot()` succeeds, tolerated only for the repository-less external cwd |
 | `checkFeatureE` call sites | `internal/cli/doctor.go:40,56` | thread `(ws, cfg)` |
 | `checkFeatureE` | `internal/cli/doctor.go:73-105` | new signature + §10.3 body |
 | `runCheckoutDoctor` | `internal/cli/doctor.go:107-122` | **unchanged** |
@@ -60,8 +60,9 @@ Every anchor the spec cites, confirmed present at the stated location.
 | `canonicalize` | `internal/workspace.go:205-210` | applied to every candidate root |
 | `inferExternalRepoRoot` | `internal/workspace.go:339-394` | external candidate 3 |
 | `Workspace` fields | `internal/workspace.go:39-56` | `RepoRoot`, `MetadataRoot`, `Mode` |
-| `RequireWorkspace` | `internal/workspace.go:440-465` | already calls `LoadConfig`; persistent failure is returned again by `RequireFeaturePath` before ancestry |
-| `RequireFeaturePath` | `internal/resolve.go:294-303` | **first** call in `checkFeatureE`, error text unchanged |
+| `RequireWorkspace` | `internal/workspace.go:440-465` | already calls `LoadConfig`; **fails** when no repository can be derived, which is why `checkFeatureE` must not route its path lookup back through it |
+| `RequireFeaturePath` | `internal/resolve.go:294-303` | unchanged and still used by every other caller; **not** used by `checkFeatureE`, because its `RequireWorkspace` call aborts exactly the `repo-unavailable` case doctor must report |
+| `ResolveFeaturePathFor` | `internal/resolve.go` (new, additive) | **first** call in `checkFeatureE`: same `validateFeatureName` + `GuardFeatureName` guards, resolved from the already-resolved `ws` or a guarded `TwsRoot()`, never re-deriving a repository |
 | `ListFeaturesResolved` | `internal/resolve.go:139` | fail-closed listing both checkout builders sit inside |
 | `gitRefExists` retained callers | `internal/agent_status.go:1384`, `1433` | why the `agent-work-status-dashboard` edge stays soft |
 | `LoadConfig` cwd dependency | `internal/config.go:35-40` (`repoConfigPath` → `RepoRoot`) → `internal/exec.go:44-50` | the reason `cfg` is threaded, never re-loaded |
@@ -122,11 +123,11 @@ returns the 10 existing hits, so it will return nothing once they are deleted.
 
 | Case | `Status` | `Reason` | `RefProbed` / `RefExists` | `MergeBase` | Heads | `BaseRecord` |
 |---|---|---|---|---|---|---|
-| cross-repo (`se.Repo != ""`) | `cross-repo-unsupported` | `cross-repo` | false / false | nil | "" | `absent` |
-| `se.Base == ""` | `""` | `base-unset` | false / false | nil | "" | `absent` |
-| repo unavailable | `""` | `repo-unavailable` | false / false | nil | "" | `absent` |
-| child ref unresolved | `missing` | `child-ref-missing` | true / false | nil | "" | as resolved (§4.2 rule 6 not reached ⇒ `absent`) |
-| base ref unresolved | `missing` | `base-ref-missing` | true / **true** | nil | `LocalHead*` set, `ParentHead*` empty | `absent` |
+| cross-repo (`se.Repo != ""`) | `cross-repo-unsupported` | `cross-repo` | false / false | nil | "" | `""` (zero — never consulted) |
+| `se.Base == ""` | `""` | `base-unset` | false / false | nil | "" | `""` (zero — never consulted) |
+| repo unavailable | `""` | `repo-unavailable` | false / false | nil | "" | `""` (zero — never consulted) |
+| child ref unresolved | `missing` | `child-ref-missing` | true / false | nil | "" | `""` (zero — §4.2 rule 6 not reached) |
+| base ref unresolved | `missing` | `base-ref-missing` | true / **true** | nil | `LocalHead*` set, `ParentHead*` empty | `""` (zero — §4.2 rule 6 not reached) |
 | `P ⊆ C` | `current` | `parent-contained` | true / true | `&ParentHead` (no probe) | both | as resolved |
 | no merge base | `divergent` | `unrelated-histories` | true / true | **nil** | both | as resolved |
 | `L` unresolvable | `stale` | `base-record-unresolvable` | true / true | probe result | both | `unresolvable` |
@@ -170,6 +171,10 @@ func ancestrySeverity(status AncestryStatus, archived bool) CheckoutSeverity
 - Sanitisation limits: **40 runes** for `se.Base`, `se.LastBaseSHA`, `se.Repo`, `GitBranch()`,
   entry names; **200 runes** for `<detail>`. Replacement rune `?` for anything failing
   `unicode.IsPrint`. Truncation marker `…`. Guidance must never contain `\n` — assert in AC 54/57.
+  These limits are **prose-only**: every token inside a backticked command span
+  (`ancestryCommandToken`) is control-sanitized, shell-quoted when needed, and never truncated —
+  the `base-rewritten` `--onto` repair and the `child-ref-missing` `git branch <B> <known-commit>`
+  restore example both carry complete refs.
 - `<l>` is `abbrev(LastBaseCommit)` when `BaseRecord == present`, and `%q`-quoted
   `ancestrySanitize(se.LastBaseSHA, 40)` when `unresolvable`.
 - Classification always uses the **raw** values; sanitisation is display-only.
@@ -179,6 +184,7 @@ func ancestrySeverity(status AncestryStatus, archived bool) CheckoutSeverity
 ```go
 type ancestryEvaluator struct {
     repoDir       string
+    basePolicy    StackBasePolicy          // selected from the caller's workspace mode
     refs          map[string]refResolution // keyed by the exact ref string passed in
     shorts        map[string]string        // keyed by full SHA
     defaultBranch string
@@ -288,8 +294,9 @@ Permitted `LoadConfig()` placement — at most one call per body, outside every 
 | `doctorCmd` | `internal/cli/doctor.go` RunE, before the external `checkFeatureE` calls at 40 and 56 | `checkFeatureE(ws, cfg, feature)` |
 
 These are ancestry-added direct call sites only. Pre-existing config loads remain:
-`doctorCmd`'s `RequireWorkspace()` calls `LoadConfig()` internally, and every `checkFeatureE` starts
-with `RequireFeaturePath`, which calls `RequireWorkspace()` and therefore loads config again. AC 53
+`doctorCmd`'s `RequireWorkspace()` calls `LoadConfig()` internally. `checkFeatureE` now starts with
+`ResolveFeaturePathFor`, which does **not** call `RequireWorkspace`, so it removes one transitive
+config load per feature rather than adding one. AC 53
 must distinguish those existing transitive loads from the single new direct `LoadConfig()` allowed
 in each body; the AC 41 shim must allow their existing repository-discovery invocation shapes.
 
@@ -300,7 +307,8 @@ res := ResolveStackAncestryRepo(ws, cfg, featurePath, stack)
 if res.RepoDir == "" {
     return UnevaluatedStackEdges(feature, stack, ReasonRepoUnavailable, res.Reason), res
 }
-edges, err := EvaluateStackAncestry(res.RepoDir, feature, stack)
+opts := StackAncestryOptions{BasePolicy: StackBasePolicyForMode(ws.Mode)}
+edges, err := EvaluateStackAncestry(res.RepoDir, feature, stack, opts)
 if err != nil {
     return UnevaluatedStackEdges(feature, stack, ReasonRepoUnavailable, err.Error()),
         StackRepoResolution{Source: StackRepoUnavailable, Reason: err.Error()}
@@ -308,7 +316,10 @@ if err != nil {
 // stamp res.Source onto every edge, then return
 ```
 
-`EvaluateStackAncestry` itself always leaves `RepoSource == ""`; only `FeatureStackEdges` stamps it.
+`EvaluateStackAncestry` itself always leaves `RepoSource == ""`; only `FeatureStackEdges` stamps it,
+and it stamps it exactly once. `FeatureStackEdges` is also the only place that maps a workspace mode
+to a base policy, so no other caller has to know that external sync resolves `origin/<default>` while
+checkout sync resolves `entry.Base` literally (§9).
 `UnevaluatedStackEdges` issues zero Git processes and still returns `cross-repo-unsupported` for
 `se.Repo != ""` and reason `base-unset` for `se.Base == ""`, so an entry never changes meaning just
 because the repository was unresolvable.
@@ -480,8 +491,11 @@ unchanged, and `EffectiveSeverity()` makes them render `[!]` and count exactly a
 
 `checkFeatureE(ws internal.Workspace, cfg internal.Config, feature string) (int, error)`:
 
-1. `internal.RequireFeaturePath(feature)` — **first**, unchanged, still the source of the existing
-   error text and ordering (line 74);
+1. `internal.ResolveFeaturePathFor(ws, feature)` — **first**, still the source of the existing error
+   text and ordering (line 74). It keeps the strict feature-name and sibling-space guards but drops
+   the `RequireWorkspace` dependency, so doctor still runs from an external workspace root or feature
+   directory whose repository cannot be derived — the exact state ancestry then reports as
+   `repo-unavailable`;
 2. the `os.Stat` "not found" short-circuit (79-82) — unchanged;
 3. `issues := internal.CheckFeatureHealth(featurePath)` (84) — unchanged;
 4. `stack, err := internal.LoadStack(featurePath)`; when it loads **and has entries**,
@@ -494,11 +508,16 @@ unchanged, and `EffectiveSeverity()` makes them render `[!]` and count exactly a
    `len(issues)` at line 98, and `len(issues)` at the `return` on line 104) followed by all issues in order;
 7. `return counted, nil`.
 
-`doctorCmd`: keep the single `internal.RequireWorkspace()` at line 30 and keep `wsErr` non-fatal for
-the external control flow; add at most one direct `internal.LoadConfig()` in the RunE body **before**
-the feature loop; pass `(ws, cfg)` at both call sites (40, 56). A stable `RequireWorkspace` failure
-is returned by `checkFeatureE`'s first `RequireFeaturePath` call before ancestry runs, so there is no
-dedicated zero-`Workspace` ancestry fixture. `runCheckoutDoctor` (107-122) is untouched, so exit
+`doctorCmd`: keep the single `internal.RequireWorkspace()` at line 30; add at most one direct
+`internal.LoadConfig()` in the RunE body **before** the feature loop; pass `(ws, cfg)` at both call
+sites (40, 56). `wsErr` is fail-closed: `doctorCmd` probes `internal.MainRepoRoot()` and returns the
+original `wsErr` whenever the cwd is inside a Git repository, so an invalid `workspace_mode` or other
+unusable repo-local persisted config still aborts both `tws doctor` and `tws doctor <feature>`
+exactly as before this feature (baseline reached the same error through
+`RequireFeaturePath` → `RequireWorkspace` inside `checkFeatureE`). Only when `MainRepoRoot()` also
+fails — no repository at all — does the zero `Workspace` fall through: `ResolveFeaturePathFor` takes
+its guarded `TwsRoot()` fallback, ancestry candidate 2 fails, and the feature reports one info
+`repo-unavailable` issue while every regular check still runs. `runCheckoutDoctor` (107-122) is untouched, so exit
 semantics are literally unchanged.
 
 **Fail-soft behaviour** to preserve: an unresolvable repository produces one info issue, a counted
@@ -742,11 +761,12 @@ the five constant lines today. AC 46's ERE returns exactly the 10 hits that will
 7. **Shim cwd on macOS** — compare `pwd -P` against `canonicalize(repoDir)` (§10.4.3).
 8. **`BuildCheckoutList` must keep returning `nil` (not an empty slice) on the spaces failure path**
    (`TestCheckoutHealth_MalformedSpacesFailsClosed:1191-1196`).
-9. **Do not justify a zero-`Workspace` ancestry test from `doctorCmd`.** Although the resolver's
-   mode switch remains checkout-only (`ws.Mode == ModeCheckout`), `checkFeatureE` first calls
-   `RequireFeaturePath`, which calls `RequireWorkspace` again. A stable workspace-resolution failure
-   therefore returns before stack loading or ancestry; supported external cwd cases use a resolved
-   external `Workspace`.
+9. **Do not weaken the workspace fail-closed rule.** Baseline `checkFeatureE` called
+   `RequireFeaturePath` → `RequireWorkspace`, so a stable workspace-resolution failure (invalid
+   `workspace_mode`, for example) returned before stack loading or ancestry. `ResolveFeaturePathFor`
+   removes that transitive guard, so `doctorCmd` must re-assert it explicitly: return `wsErr` when
+   `MainRepoRoot()` succeeds. The zero-`Workspace` path is reachable **only** where no repository
+   exists at all; supported external cwd cases use a resolved external `Workspace`.
 10. **`ancestryGuidance` needs a detail carrier** for `repo-unavailable` / `ancestry-probe-failed`;
     `StackEdge` has no `Detail` field. Pass it as a parameter (§2.3) — the alternative, adding a
     field, would change the §5.2 struct contract.
@@ -766,7 +786,8 @@ reading:
 | §12.1 "no probe touches …" + AC 41 clause (b) | applies to ancestry probes issued via `ancestryGit`/`gitIsAncestor`; `MainRepoRootIn` and `DefaultBranchIn` legitimately keep `-C` |
 | §14.1 `ancestryGuidance(e StackEdge) string` | needs a `detail string` parameter (§2.3, trap 10) |
 | AC 41 shim | must truncate its record file around the measured call, use `pwd -P`, account for pre-existing `RequireWorkspace`/config discovery shapes, and assert the deleted line-599 bare `gitRefExists` probe is absent (§10.4) |
-| AC 56 "no 40-hex substring anywhere in the entry block" | applies to `BaseRecord == present` or `absent`; unresolvable recorded metadata is governed by AC 54 sanitization and may contain hex-looking user input |
+| AC 56 "no 40-hex substring anywhere in the entry block" | applies to `BaseRecord == present` or `absent`, **and only outside backticked command spans**: the `base-rewritten` repair command must carry the full 40-hex recorded commit (§4.6). Unresolvable recorded metadata is governed by AC 54 sanitization and may contain hex-looking user input |
+| `BaseRecord` on unevaluated edges | set **only** at §4.2 rule 6; every earlier exit leaves it `""` even with a nonempty `LastBaseSHA`, and the formatter suppresses `base-record=` for the zero value |
 | Cross-repo `RefExists` rendered output | when the same-named local branch was missing, `[ref-missing]` was previously printed; it is now intentionally suppressed because no local probe is meaningful. Pin this in a formatter test and list it in `CHANGELOG.md` |
 
 No spec clause is unsafe: the feature writes nothing, starts no network process, and cannot emit

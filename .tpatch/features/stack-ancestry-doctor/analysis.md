@@ -50,7 +50,7 @@ for any other code.
 | Parent advanced by new commits; child holds unique commits on the old base | plain `git rebase parent` is safe | **divergent** | stale |
 | Parent tip amended/rebased after the child's last sync (`L` no longer in parent history) | plain rebase replays already-rewritten commits | divergent | divergent (right answer, accidental reasoning) |
 | Parent advanced; child holds *no* unique commits | fast-forward | stale | stale |
-| Parent branch reset/force-moved **backwards inside the child's history** | nothing to do | **divergent** | current |
+| Parent branch reset/force-moved **backwards inside the child's history** | nothing to do | current | current (already correct; only incidentally, via `merge-base(C,P) == P`) |
 | Parent force-moved to a sibling/unrelated commit not in the child's history | `--onto` needed | divergent | divergent |
 | Base is an annotated tag whose commit is the child's ancestor | up to date | **stale/divergent forever** | current |
 | Base ref and a tag share a name | tws branch head | **tag's head** | branch head |
@@ -66,12 +66,14 @@ Details:
    even though `LastBaseSHA` was still an ancestor of the parent head. The existing test
    `TestCheckoutHealth_StaleChild` (`internal/checkout_health_test.go:189-229`) only covers the
    zero-unique-commit case, which is why this never surfaced. No test asserts `divergent` at all.
-2. **Parent-contained test is written backwards.** The `current` arm compares
+2. **Parent-contained test is indirect.** The `current` arm compares
    `mb == gitFullSHA(repo, baseGitBranch)` (`internal/checkout_health.go:658-660`), which is the
    right idea (`merge-base(C,P) == P` ⇔ `P` is an ancestor of `C`) but is implemented on unpeeled
-   SHAs, and the fallback arm then asks the reverse question. The direct predicate
-   `merge-base --is-ancestor P C` is cheaper, peels tags, and stays correct when the parent has been
-   reset *backwards* into the child's own history.
+   SHAs, and the fallback arm then asks the reverse question. For plain branch heads this arm is
+   already correct, including when the parent has been reset *backwards* into the child's own
+   history — that case is **not** a misclassification and is only pinned by a new test. The direct
+   predicate `merge-base --is-ancestor P C` is cheaper, peels tags (which the unpeeled equality does
+   not), and states the intended rule once.
 3. **Annotated tags can never be current.** `git rev-parse v1` on an annotated tag returns the tag
    object (`5361c26`) while `git merge-base` returns the commit (`fb84483`) — verified — so the
    equality at line 659 never holds. Nothing peels with `^{commit}`, unlike `internal.VerifyGitRef`
@@ -173,8 +175,9 @@ Guidance wording must follow that split exactly:
 
 - `stale` → "parent advanced; run `tws sync <feature>` — plain `git rebase <parent>` replays only your
   commits (sync may still use `--onto`, which is equivalent here)."
-- `divergent` → "the parent's recorded base commit `<L>` is no longer in `<parent>`'s history; the
-  repair is `git rebase --onto <parent> <L>`, which `tws sync` will select automatically."
+- `divergent` → "the parent's recorded base commit `<L>` is no longer in `<parent>`'s history; an
+  equivalent manual repair is `git rebase --onto <parent> <L> <child>`. `tws sync` also uses an
+  `--onto` rebase, with mode-specific flags."
 
 Doctor must never claim "sync will use a plain rebase" for `stale`.
 
@@ -215,9 +218,10 @@ stood. Validation is `repoDir != ""` plus a successful `MainRepoRootIn(repoDir)`
 **Caller refactor.**
 
 - `doctorCmd` (`internal/cli/doctor.go:30-37`) already calls `internal.RequireWorkspace()` once. Keep
-  that single call, keep `wsErr` non-fatal for the external path (today's error text and ordering
-  come from `RequireFeaturePath` inside `checkFeatureE`, and must not change), and pass the resolved
-  `internal.Workspace` (zero value when `wsErr != nil`) down.
+  that single call and pass the resolved `internal.Workspace` down. Because `checkFeatureE` no longer
+  routes through `RequireFeaturePath` → `RequireWorkspace`, `doctorCmd` must re-assert the
+  fail-closed rule itself: `wsErr` is returned unchanged when `internal.MainRepoRoot()` succeeds, and
+  tolerated (zero `Workspace`) only when the cwd is in no Git repository at all.
 - Checkout mode: `runCheckoutDoctor` / `buildFeatureEntries` / `BuildCheckoutList` pass
   `ws.RepoRoot`, which is already canonical and repo-derived.
 - External mode: `checkFeatureE(feature string) (int, error)` becomes
@@ -368,9 +372,10 @@ theory inside tws", `docs/roadmap.md:127`, with the read-only contract framing a
   (`internal/cli/doctor.go:107-120`) still errors only on `HasErrors()` (corrupt/unreadable state),
   external doctor still returns nil with a count.
 - Deliberate, user-visible reclassifications: "parent advanced, child has work" now prints `stale`
-  instead of `divergent`; a parent reset backwards inside the child's history now prints `current`
   instead of `divergent`; true rewrites now print `divergent` in `tws list` where it previously
-  printed `stale`; an annotated-tag base now reaches `current`. No existing test asserts any of these
+  printed `stale`; an annotated-tag base now reaches `current`. A parent reset backwards inside the
+  child's history is **not** in this list: checkout doctor and list already answered `current`
+  there, and the new rule only pins that answer explicitly. No existing test asserts any of these
   transitions. `TestCheckoutHealth_StaleChild` (`internal/checkout_health_test.go:189-229`) creates a
   child with **zero** unique commits, so it keeps its current `stale` + warning answer under the new
   rules; `TestCheckoutList_*` keep theirs.
@@ -420,7 +425,8 @@ Reuse `setupHealthTestRepo`/`gitInTest` (`internal/checkout_health_test.go:40-12
 - parent contained in child → `current`;
 - child identical to parent → `current`;
 - **parent reset/force-moved backwards to a commit still inside the child's history → `current`**
-  (own test; asserts `L` being ahead of `P` does not force `divergent`);
+  (own test; asserts `L` being ahead of `P` does not force `divergent`. This is a pin, not a
+  reclassification: the baseline already answered `current` here);
 - **parent force-moved sideways to a commit outside the child's history → `divergent`/`base-rewritten`**
   (own test, separate from the backwards-move test);
 - parent advanced, child has unique commits, `L` = old parent → **`stale` (regression for the

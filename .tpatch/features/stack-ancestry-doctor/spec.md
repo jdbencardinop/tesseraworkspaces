@@ -22,9 +22,8 @@ Neither classifier reads `LastBaseSHA`, the only recorded fact that separates "t
 forward" from "the parent's history was rewritten", so the most common stacked-diff state — parent
 advanced while the child holds unique commits — is reported as `divergent`, the alarming label.
 Four further demonstrable misclassifications are listed in `analysis.md` (annotated-tag bases can
-never be `current`; a parent reset backwards inside the child's history reports `divergent`;
-`gitRefExists` accepts non-existent 40-hex SHAs; bare `rev-parse` prefers a tag over a same-named
-branch).
+never be `current`; `gitRefExists` accepts non-existent 40-hex SHAs; bare `rev-parse` prefers a tag
+over a same-named branch; unrelated histories reach `divergent` only by luck).
 
 This feature extracts **one shared, mode-independent, read-only evaluator** and makes checkout
 doctor, checkout list, and external doctor consume it. It is a correction plus an extraction, not
@@ -177,7 +176,23 @@ edge that has a base record.
 ### 4.5 Guidance strings (exact templates)
 
 `<f>` = feature, `<n>` = entry name, `<b>` = `GitBranch()`, `<r>` = `BaseRef`, `<p>` = parent short
-SHA, `<l>` = the rendered recorded base (§4.6).
+SHA, `<l>` = the rendered recorded base (§4.6). Uppercase placeholders are **command tokens**, never
+abbreviated: `<R>` = the complete `BaseRef`, `<L>` = the complete 40-hex `LastBaseCommit`, `<C>` =
+`<B>` = the complete, untruncated `GitBranch()` **bare branch name** (§4.6).
+
+The `base-rewritten` repair command names the target child branch **explicitly**, so it can never
+rebase whatever happens to be checked out. `<C>` is deliberately the bare branch name and **not**
+`ChildRef`: `git rebase` checks out its third argument, and a fully-qualified `refs/heads/<name>`
+does not resolve to a branch there — Git detaches HEAD, replays onto the detached HEAD, and leaves
+the child branch untouched, which would make the printed repair a silent no-op. A bare name resolves
+to the branch even when a tag shares it. The same rule applies to `<B>` in the `child-ref-missing`
+restore example, where `git branch refs/heads/<name>` would create a nested `refs/heads/refs/heads/…`
+ref. The clause is emitted only when `<R>`, `<C>`, and a structurally valid 40-hex `<L>` are all
+available; otherwise the guidance omits the command clause entirely and keeps the surrounding prose.
+The printed command carries the same precondition tws sync's own `--onto` invocation carries (both
+use the recorded base as `<upstream>`); it is offered as an equivalent repair, not as a guarantee
+about the child's own history. `<se.Repo>` is a filesystem path and is bounded at 200 runes, not 40,
+because a 40-rune prefix identifies no repository.
 
 | Reason | Guidance |
 |---|---|
@@ -185,12 +200,12 @@ SHA, `<l>` = the rendered recorded base (§4.6).
 | `parent-advanced` | ``parent `<r>` advanced to <p>; run: tws sync <f>`` |
 | `parent-advanced-no-base-record` | ``parent `<r>` advanced to <p>; no recorded base commit for this branch, so sync uses a plain rebase — verify the parent history was not rewritten; run: tws sync <f>`` |
 | `base-record-unresolvable` | ``recorded base commit <l> is not present in this repository; the replay strategy cannot be verified — inspect before running: tws sync <f>`` |
-| `base-rewritten` | ``recorded base commit <l> is no longer in `<r>` history; repair is `git rebase --onto <r> <l>`, which tws sync selects automatically; run: tws sync <f>`` |
+| `base-rewritten` | ``recorded base commit <l> is no longer in `<r>` history; an equivalent manual repair is `git rebase --onto <R> <L> <C>`; tws sync also replays this edge with an --onto rebase, using the flags its own workspace mode requires; run: tws sync <f>`` |
 | `unrelated-histories` | ``` `<b>` and `<r>` share no common history; check the configured base — a rebase would replay every commit ``` |
-| `child-ref-missing` (active) | ``git branch `<b>` does not exist; run: tws new <f> <n>`` |
+| `child-ref-missing` (active) | ``git branch `<b>` does not exist while stack entry "<n>" of feature <f> is still configured; restore the branch from its remote or from a known commit, for example `git branch <B> <known-commit>`, or deliberately remove and recreate the stack entry if no work must be preserved`` |
 | `child-ref-missing` (archived) | ``archived branch `<b>` has no git ref`` |
 | `base-ref-missing` | ``base ref `<r>` does not exist; restore it or update `base` in stack.yaml`` |
-| `cross-repo` | ``entry targets repository <se.Repo>; cross-repo ancestry is not evaluated`` |
+| `cross-repo` | ``entry targets another repository (<se.Repo>); cross-repo ancestry is not evaluated, so this edge is reported as cross-repo-unsupported`` |
 | `base-unset` | ``no base configured for this entry; ancestry is not evaluated`` |
 | `repo-unavailable` | ``source repository could not be determined; ancestry is not evaluated (<detail>)`` |
 | `ancestry-probe-failed` | ``ancestry probe failed (<detail>); refs may have changed during evaluation — the recorded base was not consulted; re-run: tws doctor <f>`` |
@@ -221,6 +236,15 @@ echoed raw:
   truncated. `<detail>` uses the same replacement with a 200-rune limit.
 - `<r>`, `<b>`, `<n>`, and `<se.Repo>` are sanitized the same way before interpolation.
 
+**Command tokens are exempt from truncation (normative).** A token interpolated inside a backticked,
+runnable command is a value the evaluator itself resolved through Git — a ref it peeled or a 40-hex
+object name it validated. Such a token has every non-printable rune replaced exactly as above, but is
+**never** truncated and never gains `…`: a shortened ref or SHA yields a command that silently
+targets the wrong object or does not run. A token outside `[A-Za-z0-9._/@+-]+` is single-quoted with
+embedded `'` escaped as `'\''`, so a base such as `:/some message` stays pasteable. Display prose in
+the same line may still be abbreviated. Filesystem paths (`se.Repo`, `StackRepoResolution.RepoDir`,
+`StackRepoResolution.Alternate`) are sanitized at the 200-rune path limit before rendering.
+
 This is a display rule only; classification always uses the raw value.
 
 ## 5. Type contract
@@ -235,6 +259,7 @@ type StackBaseRecord string        // "absent" | "present" | "unresolvable"
 type StackRepoSource string        // "workspace" | "worktree" | "inferred" | "unavailable"
 type StackAncestryReason string
 type StackNoteKind string
+type StackBasePolicy string       // "" (none) | "remote-default" | "literal-entry"
 ```
 
 `StackAncestryReason` constants, exactly and only these thirteen:
@@ -314,6 +339,13 @@ Normative field rules:
    `StackNoteKind` values of §5.1; a `repo-source-mismatch` entry in `Notes` is a bug (AC 51).
 9. The JSON tags exist for `stack-status` only. **Nothing in this feature encodes a `StackEdge`**;
    no command gains JSON output. `stack-status` owns and may still refine that contract.
+10. `BaseRecord` is a statement about an evaluation that **ran**. It is set exactly once, at §4.2
+    rule 6, after both the child and the base resolved — the only point at which the recorded base
+    is actually consulted. Every earlier exit (cross-repo, `base-unset`, `child-ref-missing`,
+    `base-ref-missing`, `repo-unavailable`, and every `UnevaluatedStackEdges` edge) leaves it at the
+    zero value `""`, **even when `LastBaseSHA` is nonempty**, because no verdict about the record was
+    formed. `absent` therefore means "the record was consulted and was empty", never "the record was
+    not reached". Consumers must not render a `base-record=` token for the zero value (§10.1).
 
 ### 5.3 Repository resolution result
 
@@ -337,10 +369,25 @@ type StackRepoResolution struct {
 ```go
 var ErrRepoUnavailable = errors.New("stack ancestry: source repository unavailable")
 
-func EvaluateStackAncestry(repoDir, feature string, stack Stack) ([]StackEdge, error)
-func EvaluateStackEdge(repoDir, feature string, se StackEntry, stack Stack) (StackEdge, error)
+type StackAncestryOptions struct {
+    BasePolicy StackBasePolicy
+}
+
+func StackBasePolicyForMode(mode WorkspaceMode) StackBasePolicy
+
+func EvaluateStackAncestry(repoDir, feature string, stack Stack, opts StackAncestryOptions) ([]StackEdge, error)
+func EvaluateStackEdge(repoDir, feature string, se StackEntry, stack Stack, opts StackAncestryOptions) (StackEdge, error)
 func UnevaluatedStackEdges(feature string, stack Stack, reason StackAncestryReason, detail string) []StackEdge
 ```
+
+- `StackAncestryOptions` carries the only caller-selected evaluator behaviour: which sync path's base
+  resolution the identity notes of §9 describe. The **zero value is safe and silent** — it emits no
+  note at all, so a caller that has not decided cannot accidentally assert one. The classification
+  table of §4.3 is unaffected by it: the same fixture always classifies identically under every
+  policy. This is why `opts` is a required parameter rather than a variadic or a package default:
+  the claim "your sync would resolve this base elsewhere" is only true for one mode at a time.
+- `StackBasePolicyForMode` is the single mapping: `ModeCheckout` → `literal-entry`, every other mode
+  (including the zero mode) → `remote-default`.
 
 - `EvaluateStackAncestry` **refuses** an empty or unvalidated `repoDir` and returns
   `fmt.Errorf("%w: %s", ErrRepoUnavailable, detail)` with **nil** edges **before issuing any Git
@@ -349,7 +396,10 @@ func UnevaluatedStackEdges(feature string, stack Stack, reason StackAncestryReas
   anywhere in this feature: an empty `-C` silently means the process working directory, which would
   make results depend on where the user is standing.
 - `EvaluateStackEdge` is the single-edge form used by tests and future consumers; it allocates a
-  fresh cache and applies the same validation.
+  fresh cache and applies the same validation and the same base policy.
+- `resolveCommit` accepts a peeled result only when it matches `^[0-9a-f]{40}$`. Any other output —
+  empty, truncated, or a warning line — is a negative result, so no malformed value can reach a
+  comparison, a rendered SHA, or a command token.
 - Errors are reserved for **evaluation-wide preconditions only** (bad `repoDir`). No per-edge
   condition ever produces an error: a missing ref, a pruned `L`, unrelated histories, a cross-repo
   entry, and a mid-run ref deletion are all *results*, expressed through `Status`/`Reason`.
@@ -656,6 +706,19 @@ Because both sync paths can target a *different* ref than the one doctor probes,
 surfaces the disagreement as an informational note instead of silently picking a side. Edge notes are
 computed only when the edge reached a classification (`Status != ""`, not cross-repo).
 
+**A note is gated on the caller's base policy (normative, §6.1).** The two mismatches below describe
+two *different* sync implementations, and only one of them can ever run for a given workspace. So:
+
+- `remote-default` (external mode) may emit **only** `base-identity-remote-mismatch`, because
+  external sync resolves a base equal to the default branch through `origin/<default>`;
+- `literal-entry` (checkout mode) may emit **only** `base-identity-literal-mismatch`, because
+  checkout sync resolves `entry.Base` literally instead of through the parent's `GitBranch()`;
+- the zero policy emits neither.
+
+Emitting the other policy's note is a false claim about a code path that will not run, and is a bug
+(AC R3). `FeatureStackEdges` selects the policy from `ws.Mode` via `StackBasePolicyForMode`, so no
+caller has to remember the mapping.
+
 ### 9.1 `base-identity-remote-mismatch` (edge note)
 
 Mirrors external sync's `resolveBase`
@@ -716,7 +779,9 @@ suffix**:
 ```
 
 `ancestry=%s` prints `ancestryDisplayStatus(f.AncestryStatus)` (§6.3) — the status verbatim, or
-`unevaluated` when it is empty. Tag rules:
+`unevaluated` when it is empty. The indented reason line appends ` base-record=<v>` only when
+`BaseRecord` is non-zero and not `present`; the zero value prints nothing, because an edge that never
+reached the record must not claim a verdict about it (§5.2 rule 10). Tag rules:
 
 - `[archived]`, `[current]` — unchanged;
 - `[ref-missing]` is emitted when `!f.RefExists` **and** the edge was ref-probed
@@ -730,7 +795,7 @@ at six spaces, matching the existing sync/session guidance style
 ```
   [!] auth/api (git: jd-api) base=main ancestry=divergent head=1a2b3c4 parent=9f8e7d6
       reason: base-rewritten last-base=5c6d7e8 merge-base=3f2e1d0
-      recorded base commit 5c6d7e8 is no longer in `refs/heads/jd-main` history; repair is `git rebase --onto refs/heads/jd-main 5c6d7e8`, which tws sync selects automatically; run: tws sync auth
+      recorded base commit 5c6d7e8 is no longer in `refs/heads/jd-main` history; an equivalent manual repair is `git rebase --onto refs/heads/jd-main 5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d jd-api`; tws sync also replays this edge with an --onto rebase, using the flags its own workspace mode requires; run: tws sync auth
       note: base name "main" also resolves as a literal ref to 7a7a7a7, …
 ```
 
@@ -842,6 +907,13 @@ issues:
   `Severity = edge.Severity`;
 - **collapsing rule**: at most **one** `repo-unavailable` issue per feature (feature-scoped, not one
   per entry), with `Branch = "stack"`, so an unresolvable repository cannot flood the output;
+- **per-edge notes are projected too**, one `HealthIssue` per `StackEdgeNote`, immediately after
+  that edge's own issue (or on its own when the edge is `current`, which is a real case: a `current`
+  edge can still have a base a sync path resolves elsewhere). `Branch = edge.Name`,
+  `Problem = "ancestry note: " + string(note.Kind)`, `Hint = note.Detail`,
+  `Severity = SeverityInfo`. Notes are never counted and never change the exit status. At most one
+  note exists per edge (§9), so this adds at most one line per edge;
+- both mismatch paths are sanitized at the 200-rune path limit (§4.6) before rendering;
 - **exactly one** additional info issue when `res.Alternate != ""`, built from
   `RepoSourceMismatchLabel` per §9.3. It is emitted once per feature, is derived solely from `res`,
   and no `edge.Notes` entry participates. This is the **only** place in the codebase that can emit
@@ -849,8 +921,15 @@ issues:
 
 `checkFeatureE` becomes `checkFeatureE(ws internal.Workspace, cfg internal.Config, feature string) (int, error)`:
 
-1. `internal.RequireFeaturePath(feature)` — **unchanged, first, and still the source of the existing
-   error text and ordering**;
+1. `internal.ResolveFeaturePathFor(ws, feature)` — first, and still the source of the existing error
+   text and ordering. It resolves the feature from the workspace `doctorCmd` **already** resolved,
+   falling back to a guarded `TwsRoot()` when the caller holds no workspace at all, and applies
+   exactly the same `validateFeatureName` + `GuardFeatureName` checks as `RequireFeaturePath`. The
+   change is required because `RequireFeaturePath` calls `RequireWorkspace`, which *fails* whenever
+   no source repository can be derived — precisely the `repo-unavailable` case this feature must
+   report rather than abort on. Without it, `tws doctor` cannot run at all from an external workspace
+   root or feature directory whose repository is missing, so the "evaluation unavailable, regular
+   checks continue" contract of §6.3 would be unreachable there;
 2. the existing `os.Stat` "not found" short-circuit — unchanged;
 3. `issues := internal.CheckFeatureHealth(featurePath)` — unchanged call, unchanged function;
 4. `stack, err := internal.LoadStack(featurePath)`; when it loads and has entries,
@@ -862,8 +941,15 @@ issues:
    below it), else `%s: %d issue(s)` with `counted`, then all issues in order;
 7. return `counted, nil`.
 
-`doctorCmd` keeps its single `internal.RequireWorkspace()` call, keeps `wsErr` non-fatal for the
-external path (the zero `Workspace` simply makes candidate 2 fail), may add at most one
+`doctorCmd` keeps its single `internal.RequireWorkspace()` call. `wsErr` is **fail-closed by
+default** and tolerated only for the genuinely repository-less external case: when `wsErr != nil`,
+`doctorCmd` probes `internal.MainRepoRoot()`, and if the current directory *is* inside a Git
+repository the original `wsErr` is returned unchanged — an invalid `workspace_mode` or any other
+unusable persisted repo-local config must abort exactly as it did before this feature, for both the
+filtered (`tws doctor <feature>`) and unfiltered (`tws doctor`) forms. Only when `MainRepoRoot()`
+also fails — an external workspace root or feature directory with no derivable repository — does the
+zero `Workspace` fall through, making candidate 2 fail and sending `ResolveFeaturePathFor` down its
+guarded `TwsRoot()` fallback. It may add at most one
 `internal.LoadConfig()` call in its own body, before the feature loop, and passes both values into every
 `checkFeatureE` call (`internal/cli/doctor.go:40,56`). `checkFeatureE` itself never calls
 `LoadConfig`; no config load is added inside either feature loop or any edge loop (§6.2).
@@ -877,7 +963,7 @@ untouched; ancestry is composed by the CLI layer, not injected into it.
 |---|---|---|
 | checkout doctor | indented 6-space detail lines under the entry | ≤3 per entry |
 | checkout list | tag only | 0 |
-| external doctor | `HealthIssue.Hint` (existing 6-space continuation) | ≤1 issue per edge + ≤2 feature-scoped info (`repo-unavailable`, `repo-source-mismatch`) |
+| external doctor | `HealthIssue.Hint` (existing 6-space continuation) | ≤1 issue per edge + ≤1 uncounted `ancestry note:` info issue per edge + ≤2 feature-scoped info (`repo-unavailable`, `repo-source-mismatch`) |
 
 ## 11. `RefExists` consistency and the cross-repo / missing-head deltas
 
@@ -956,28 +1042,41 @@ differ.
 | 12 | either | dirty tree | ancestry unaffected; existing dirty reporting unchanged |
 | 13 | either | rebase in progress | ancestry unaffected; existing active-op reporting unchanged |
 | 14 | either | no feature filter, multiple features | all features evaluated, order preserved |
+| 15 | external | workspace root or feature directory with **no** derivable repository | doctor still runs; one info `repo-unavailable` issue, zero counted, regular non-Git checks unchanged |
+| 16 | external | nested directory under the feature (e.g. `<feature>/worktrees`) | identical to #8 |
+
+Rows 4-8 and 16 must produce **byte-identical** feature output, since only the repo source may differ
+and it normalises to one canonical main root. Row 15 is the row that requires
+`ResolveFeaturePathFor` (§10.3): `RequireFeaturePath` returns an error there instead of a path.
 
 ## 14. Files and symbols plan
 
 ### 14.1 New — `internal/stack_ancestry.go`
 
 Types: `StackBaseKind`, `StackBaseRecord`, `StackRepoSource`, `StackAncestryReason`, `StackNoteKind`,
-`StackEdgeNote`, `StackEdge`, `StackRepoResolution`, unexported `ancestryEvaluator`, `refResolution`.
+`StackBasePolicy`, `StackAncestryOptions`, `StackEdgeNote`, `StackEdge`, `StackRepoResolution`,
+unexported `ancestryEvaluator`, `refResolution`.
 
 Vars/consts: `ErrRepoUnavailable`; `RepoSourceMismatchLabel`; the unexported
-`ancestryUnevaluatedToken`; the reason, kind, record, source, and note constants of §5.1.
+`ancestryUnevaluatedToken`, `ancestryPathLimit`, `ancestryFullSHA`, `ancestryPlainCommandToken`; the
+reason, kind, record, source, note, and base-policy constants of §5.1.
 
 Exported functions: `EvaluateStackAncestry`, `EvaluateStackEdge`, `UnevaluatedStackEdges`,
-`ResolveStackAncestryRepo`, `FeatureStackEdges`.
+`ResolveStackAncestryRepo`, `FeatureStackEdges`, `StackBasePolicyForMode`.
 
-Unexported: `newAncestryEvaluator(repoDir string) (*ancestryEvaluator, error)`,
+Unexported: `newAncestryEvaluator(repoDir string, opts StackAncestryOptions) (*ancestryEvaluator, error)`,
 `ancestryGit(repoDir string, args ...string) *exec.Cmd` (§7.1, the single command runner),
 `ancestryRepoCandidate(path string) (string, bool)` (§6.2),
 `(*ancestryEvaluator) edge(feature string, se StackEntry, stack Stack) StackEdge`,
 `(*ancestryEvaluator) resolveCommit(ref string) (full, short string, ok bool)`,
 `(*ancestryEvaluator) abbrev(full string) string`,
 `(*ancestryEvaluator) defaultBranchName() string`,
-`(*ancestryEvaluator) identityNotes(...) []StackEdgeNote`,
+`(*ancestryEvaluator) identityNotes(...) []StackEdgeNote` (policy dispatch only),
+`(*ancestryEvaluator) remoteMismatchNotes(...) []StackEdgeNote`,
+`(*ancestryEvaluator) literalMismatchNotes(...) []StackEdgeNote`,
+`ancestryCommandToken(s string) string` (§4.6),
+`ancestryChildCommandToken(e StackEdge) string`,
+`ancestryRebaseRepair(e StackEdge) string`,
 `stackBaseRef(stack Stack, se StackEntry) (string, StackBaseKind)`,
 `ancestryMergeBase(repoDir, a, b string) (sha string, exists bool, err error)`,
 `ancestrySeverity(status AncestryStatus, archived bool) CheckoutSeverity`,
@@ -1005,7 +1104,8 @@ Reused unchanged: `gitIsAncestor` (`internal/checkout_sync.go:365-377`), `MainRe
 | `buildFeatureEntries` | new signature `buildFeatureEntries(ws Workspace, cfg Config) ([]CheckoutFeatureEntry, error)`; one `FeatureStackEdges(ws, cfg, feature, fp, stack)` call per feature; pass the matching edge into the entry builder; never calls `LoadConfig` |
 | `buildOneFeatureEntry` | new signature `buildOneFeatureEntry(ws Workspace, feature string, se StackEntry, edge StackEdge, currentBranch, sessionFeature, sessionName string) CheckoutFeatureEntry` — the `stack Stack` parameter is dropped (base resolution moved into the evaluator); lines 609-667 (base resolution plus the whole ancestry block, up to and including the final `divergent` arm) deleted, leaving the `return e` at line 669; `RefExists`/heads/status/severity/new fields copied from the edge per §10.1.1 |
 | `BuildCheckoutList` | exported signature **unchanged** (`BuildCheckoutList(ws Workspace) ([]CheckoutListEntry, error)`) so `internal/cli/list.go:118` is untouched; it may add at most one `cfg := LoadConfig()` in its body and delegates to a new unexported `buildCheckoutListEntries(ws Workspace, cfg Config) ([]CheckoutListEntry, error)`; lines 959-981 replaced by a `FeatureStackEdges` lookup |
-| `FormatCheckoutHealth` | `ancestry=` via `ancestryDisplayStatus`, `[ref-missing]` gating, the ≤3 detail lines |
+| `FormatCheckoutHealth` | `ancestry=` via `ancestryDisplayStatus`, `[ref-missing]` gating, the ≤3 detail lines; `base-record=` suppressed for the zero value (§5.2 rule 10) |
+| `ancestryEdgesFor` | new unexported helper guaranteeing one edge per `stack.Branches` element; a short slice falls back to `UnevaluatedStackEdges` instead of indexing a zero `StackEdge`, which would read as an evaluated `current` verdict with no severity. `buildOneFeatureEntry` additionally floors a zero `Severity` to `info` |
 | `FormatCheckoutList` | ` [<ancestryDisplayStatus>]` tag, so the empty status renders `[unevaluated]` |
 | **deleted** | `gitMergeBase`, `gitFullSHA`, `gitShortSHA` — all three become unused once both classifiers are gone (verified: no other caller in the tree) |
 | **kept** | `gitRefExists` (still used by `internal/agent_status.go:1384,1433`), `healthCurrentBranch`, `gitDirty`, `gitActiveOp`, `countIssues`, `HasErrors` |
@@ -1020,6 +1120,8 @@ Add `Severity` to `HealthIssue`; add `func (h HealthIssue) EffectiveSeverity() C
 rewrite `String()` to use `severityIcon(EffectiveSeverity())`; add
 `func CountHealthIssues(issues []HealthIssue) int` and
 `func AncestryHealthIssues(res StackRepoResolution, edges []StackEdge) []HealthIssue`.
+`AncestryHealthIssues` also projects `edge.Notes` as uncounted `SeverityInfo` issues, including for
+`current` edges, and sanitizes `res.RepoDir`/`res.Alternate` at the path limit (§10.3).
 `CheckFeatureHealth` (`internal/health.go:105-131`) and the three `CheckWorktree*` functions are
 **not** modified.
 
@@ -1027,8 +1129,10 @@ rewrite `String()` to use `severityIcon(EffectiveSeverity())`; add
 
 `doctorCmd` may add at most one `internal.LoadConfig()` call and threads `(ws, cfg)` into both
 `checkFeatureE` call sites (`internal/cli/doctor.go:40,56`); `checkFeatureE`
-(`internal/cli/doctor.go:73-105`) gains the new signature and the §10.3 body and never calls
-`LoadConfig`; `runCheckoutDoctor` (`internal/cli/doctor.go:107-122`) is unchanged.
+(`internal/cli/doctor.go:73-105`) gains the new signature and the §10.3 body, resolves its feature
+path through `internal.ResolveFeaturePathFor(ws, feature)`, and never calls `LoadConfig`;
+`runCheckoutDoctor` (`internal/cli/doctor.go:107-122`) is unchanged. The `Long` help text gains the
+ancestry paragraph of §15.
 
 ### 14.5 Changed — tests
 
@@ -1037,11 +1141,25 @@ rewrite `String()` to use `severityIcon(EffectiveSeverity())`; add
 `internal/cli/checkout_doctor_test.go:184`; no other test in the tree calls it. New test files
 `internal/stack_ancestry_test.go` and `internal/cli/doctor_ancestry_test.go` per §17.
 
-### 14.6 Not changed
+### 14.6 Changed — `internal/resolve.go`
+
+One additive exported function:
+
+```go
+func ResolveFeaturePathFor(ws Workspace, feature string) (string, error)
+```
+
+It applies `GuardFeatureName` then `ws.ResolveFeaturePath`, substituting
+`Workspace{Mode: ModeExternal, MetadataRoot: TwsRoot()}` when `ws.MetadataRoot == ""`. It never
+derives a repository, which is exactly why it survives `repo-unavailable` (§10.3, matrix row 15).
+`RequireFeaturePath` itself is **unchanged**, so every other caller keeps its current behaviour and
+error text.
+
+### 14.7 Not changed
 
 `internal/agent_status.go`, `internal/checkout_sync.go`, `internal/cli/sync_helpers.go`,
 `internal/cli/new.go`, `internal/cli/list.go`, `internal/stack.go`, `internal/workspace.go`,
-`internal/exec.go`, `internal/config.go`.
+`internal/exec.go`, `internal/config.go`, and `RequireFeaturePath`.
 
 ## 15. Documentation and skills
 
@@ -1051,10 +1169,12 @@ Same commit, because `assets/skills/**` is `go:embed`-compiled and would otherwi
    ancestry ("wrong branch, uncommitted changes, missing inject symlinks, **and per-edge stack
    ancestry when the source repository is resolvable**").
 2. `assets/skills/claude/tesseraworkspaces/SKILL.md:251` — ancestry set becomes
-   `current/stale/divergent/missing/cross-repo`, plus the reason/last-base/merge-base detail line and
-   the "archived entries are informational" rule.
+   `current/stale/divergent/missing/cross-repo-unsupported`, plus the reason/last-base/merge-base
+   detail line and the "archived entries are informational" rule. The documented token must be the
+   token the formatter actually prints (`cross-repo-unsupported`, `AncestryStatusCrossRepo`), not the
+   shorthand "cross-repo", which is only the *reason* name.
 3. `assets/skills/claude/tesseraworkspaces/SKILL.md:262` — list ancestry set becomes
-   `stale/divergent/missing/cross-repo/unevaluated`.
+   `stale/divergent/missing/cross-repo-unsupported/unevaluated`.
 4. Same file — one short paragraph: `stale` means "run `tws sync`"; `divergent` means "the recorded
    base commit left the parent's history, `--onto` is required and sync selects it"; both exit 0;
    doctor never fetches.
@@ -1063,11 +1183,19 @@ Same commit, because `assets/skills/**` is `go:embed`-compiled and would otherwi
 6. `assets/skills/copilot/tws.prompt.md:33` — `tws doctor [feature]` description gains "including
    stack ancestry per configured parent-child edge".
 7. `docs/cheatsheet.md:109` — doctor line gains "ancestry".
-8. `docs/roadmap.md:60` — mark "Stack ancestry doctor" shipped, leaving ahead/behind counts with
-   "Stack status".
+8. `docs/roadmap.md:26,60` — mark "Stack ancestry doctor" shipped, leaving ahead/behind counts with
+   "Stack status", and move the "Current target" line to **stack status** alone so the roadmap does
+   not still list a shipped feature as the current target.
 9. `docs/engineering-workflow.md:19-21,26-29` — add the shipped slice to the numbered list and point
    the "Next roadmap feature" paragraph at `stack-status`.
 10. `CHANGELOG.md` — one entry under the next patch version listing the user-visible changes of §16.
+11. `internal/cli/doctor.go` `Long` help — one paragraph naming the five states, the runnable repair
+    guidance, the read-only/no-fetch guarantee, and the "evaluation unavailable, other checks
+    continue" behaviour, so `tws doctor --help` matches what the command now prints.
+12. Same `SKILL.md` external-mode bullet — describe the external issue shapes doctor now emits:
+    `ancestry <status>: <reason>` per edge, an uncounted `ancestry note:` per edge, and the at most
+    two feature-scoped info lines; plus that doctor runs from the workspace root or a feature
+    directory even with no source repository.
 
 ## 16. Deliberate, user-visible reclassifications
 
@@ -1075,19 +1203,23 @@ Status/severity reclassifications:
 
 1. Parent advanced while the child holds unique commits: `divergent` → **`stale`** (the headline
    correction).
-2. Parent reset/force-moved backwards inside the child's history: `divergent` → **`current`**.
-3. True rewrites in `tws list`: `stale` → **`divergent`** (list had no `divergent` arm).
-4. Annotated-tag base at an ancestor of the child: `stale`/`divergent` forever → **`current`**.
-5. Archived entries with `missing`/`stale`/`divergent` edges: `warning` → **`info`**, lowering the
+2. True rewrites in `tws list`: `stale` → **`divergent`** (list had no `divergent` arm).
+3. Annotated-tag base at an ancestor of the child: `stale`/`divergent` forever → **`current`**.
+4. Archived entries with `missing`/`stale`/`divergent` edges: `warning` → **`info`**, lowering the
    checkout issue count for workspaces containing them.
-6. An entry with `base: ""`: `missing` + warning → **not evaluated** + info.
-7. External doctor gains an ancestry section (intended scope change, stated in the request).
+5. An entry with `base: ""`: `missing` + warning → **not evaluated** + info.
+6. External doctor gains an ancestry section (intended scope change, stated in the request).
+
+Explicitly **not** a reclassification: a parent reset/force-moved backwards to a commit still inside
+the child's history. Checkout doctor and `tws list` already answered `current` there, because
+`merge-base(C, P) == P` holds. Rule 1 pins that answer as a stated rule and a dedicated test rather
+than leaving it as a side effect of an equality comparison; the user-visible label does not change.
 
 Field/output deltas that change no status and no count (§11):
 
 8. Cross-repo, `base-unset`, and `repo-unavailable` entries report `ref_exists: false` instead of the
-   previous local-repo probe result; rendered output is unchanged because `[ref-missing]` is gated on
-   `RefProbed`.
+   previous local-repo probe result. Cross-repo entries no longer print the misleading
+   `[ref-missing]` tag; unevaluated entries never print it because no local ref probe ran.
 9. A `missing` entry caused by a missing **base** ref now prints a `head=<short>` token, because the
    child ref resolved before the base ref failed. `child-ref-missing` entries still print neither
    head token.
@@ -1173,7 +1305,9 @@ needed. No mocks, no fake `git`, except the deliberate PATH shim of AC 41.
 18. `TestStackAncestry_DeletedBaseBranch`: base branch deleted → `missing`,
     `reason=base-ref-missing`, and the child's `RefExists` is still true.
 19. `TestStackAncestry_MissingChildRefActive`: active entry whose branch does not exist → `missing`,
-    `reason=child-ref-missing`, `severity=warning`, guidance contains `tws new`.
+    `reason=child-ref-missing`, `severity=warning`, guidance names the complete `git branch <B>
+    <known-commit>` restore example and the stack-entry removal alternative, and contains **no**
+    `tws new` shortcut (the entry already exists, so no creation command applies).
 20. `TestStackAncestry_BranchTagCollision`: a branch **and** a tag both named `dup`, with the tag
     pointing elsewhere → the branch wins on both sides, `RefExists` agrees with the classification,
     and doctor output contains no `refname .* is ambiguous` warning text.
@@ -1395,13 +1529,72 @@ needed. No mocks, no fake `git`, except the deliberate PATH shim of AC 41.
     `BaseRef == "v1"`; `MergeBase` is the full SHA and `MergeBaseShort` is its abbreviation. The
     rendered line is asserted to contain `head=<short>` and `parent=<short>` with the **abbreviated**
     tokens and to contain **no** 40-hex substring anywhere in the entry block, including the reason,
-    guidance, and note lines.
+    guidance, and note lines — **except inside a backticked command span**, where §4.6 forbids
+    truncation. The assertion therefore strips backticked spans before searching for 40-hex, and a
+    companion criterion (AC R2) pins that the stripped spans themselves *do* carry the full SHA.
 57. `TestStackAncestry_ProbeFailedGuidanceDistinct`: a Go-level table test over `ancestryGuidance`
     with synthesized `StackEdge` values asserts that the three "base record unusable" reasons produce
     three pairwise-different strings, that `ancestry-probe-failed` guidance contains
     `ancestry probe failed` and `re-run: tws doctor` and contains **neither** `no recorded base
     commit` nor `is not present in this repository`, and that every guidance string in §4.5 is a
     single line after §4.6 sanitization.
+
+### 17.1 Revision criteria (expert-review round)
+
+R1. `TestStackAncestry_BaseRecordOnlyAfterEvaluation`: for a stack whose cross-repo, `base-unset`,
+    `child-ref-missing`, and `base-ref-missing` entries **all carry a nonempty `LastBaseSHA`**, every
+    resulting edge has `BaseRecord == ""`, `LastBaseCommit == ""`, and `LastBaseShort == ""`; the
+    same holds for every `UnevaluatedStackEdges` edge. `TestStackAncestry_BaseRecordAbsentOnlyWhenEvaluated`
+    is the positive half: a resolved child and base with an empty record does report `absent` with
+    reason `parent-advanced-no-base-record`. `TestCheckoutHealth_NoBaseRecordDetailWhenUnevaluated`
+    asserts the rendering consequence — no `base-record=` token appears anywhere in the checkout
+    doctor output for such a stack (§5.2 rule 10, §10.1).
+R2. `TestStackAncestry_RepairCommandIsComplete` asserts the `base-rewritten` guidance contains
+    exactly ``` `git rebase --onto <BaseRef> <LastBaseCommit> <ChildRef>` ``` with `ChildRef ==
+    "refs/heads/" + GitBranch`, while the surrounding prose still carries `LastBaseShort`.
+    `TestStackAncestry_LongRefsAreNotTruncatedInCommands` is the regression: with a parent and child
+    branch far longer than the 40-rune display limit, every backticked command span contains both
+    full branch names and the full 40-hex recorded commit and contains **no** `…`, while the line as
+    a whole remains single-line and control-character free.
+    `TestStackAncestry_CommandTokenQuoting` pins the quoting rule of §4.6, and
+    `TestStackAncestry_CrossRepoPathStaysUseful` pins that a long cross-repo path survives intact and
+    that a hostile one is still sanitized (§4.5).
+R3. `TestStackAncestry_BasePolicyForMode`, `TestStackAncestry_PolicyNoneEmitsNoNotes`, and
+    `TestStackAncestry_PolicyNeverCrossesModes` pin §9: on a remote-mismatch fixture the
+    `remote-default` policy emits exactly one remote note and the `literal-entry` policy emits none;
+    on a literal-mismatch fixture the `literal-entry` policy emits exactly one literal note and the
+    `remote-default` policy emits none; the zero policy emits nothing on either.
+    `TestStackAncestry_CheckoutModeUsesLiteralPolicy` and
+    `TestExternalDoctor_ModeSpecificIdentityNotes` /
+    `TestExternalDoctor_NoCheckoutNoteInExternalMode` prove the selection is wired through
+    `FeatureStackEdges` and reaches both surfaces.
+R4. `TestAncestryHealthIssues_NotesProjected` asserts one `SeverityInfo` `ancestry note: <kind>`
+    issue per edge note, including for a `current` edge, ordered immediately after that edge's own
+    issue, with `CountHealthIssues` unchanged. `TestExternalDoctor_ModeSpecificIdentityNotes` asserts
+    the same end to end through `checkFeatureE` output (§10.3).
+R5. `TestStackAncestry_ExternalWorkspaceCandidate` (external, no worktrees, valid `ws.RepoRoot` ⇒
+    `Source == workspace`, `RepoDir == canonicalize(repo)`, no `Alternate`) and
+    `TestStackAncestry_ExternalInferredCandidate` (external, no worktrees, empty `RepoRoot`, sibling
+    `<repo>.tws` metadata root ⇒ `Source == inferred` at the canonical main root) cover §6.2
+    candidates 2 and 3. `TestAncestryHealthIssues_MismatchPathsSanitized` pins §10.3 path
+    sanitization.
+R6. `TestExternalDoctor_InvocationMatrix` runs `checkFeatureE` from the repo root, a linked worktree,
+    a nested directory inside it, the workspace root, the feature directory, and a nested feature
+    directory, and requires **byte-identical** output and the same count from every one (matrix rows
+    4-8, 16). `TestExternalDoctor_RunsFromWorkspaceRootWithoutRepo` covers row 15: from a workspace
+    with no derivable repository, doctor returns no error, counts 0, still prints the healthy line,
+    and prints exactly one `repo-unavailable` line.
+    `TestExternalDoctor_RejectsUnsafeFeatureNames` and
+    `TestExternalDoctor_SpaceNameConflictStillRefused` prove `ResolveFeaturePathFor` kept the strict
+    feature-name and sibling-space guards, with and without a resolvable workspace.
+R7. `TestExternalDoctor_BaseUnsetUnevaluated` asserts external doctor renders
+    `ancestry unevaluated: base-unset` as a single uncounted info issue with no `base-record` token.
+    `TestStackAncestry_ProbeFailedEndToEnd` uses a `PATH` shim that fails `git merge-base` fatally
+    and asserts the real classifier and real formatter produce `Status == ""`,
+    `Reason == ancestry-probe-failed`, `Severity == info`, `MergeBase == nil`,
+    `ancestry=unevaluated`, and `HasErrors() == false`.
+R8. `TestStackAncestry_PeeledOutputMustBeFullSHA` pins that every peeled head matches
+    `^[0-9a-f]{40}$` and that the structural guard rejects an abbreviated value (§6.1).
 
 ## 18. Follow-ups (explicitly not this feature)
 

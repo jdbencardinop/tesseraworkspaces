@@ -9,17 +9,93 @@ import (
 )
 
 type HealthIssue struct {
-	Branch  string
-	Problem string
-	Hint    string
+	Branch   string
+	Problem  string
+	Hint     string
+	Severity CheckoutSeverity // "" is treated as a warning
+}
+
+// EffectiveSeverity resolves the zero value to a warning, so every producer
+// that predates the Severity field renders and counts exactly as before.
+func (h HealthIssue) EffectiveSeverity() CheckoutSeverity {
+	if h.Severity == "" {
+		return SeverityWarning
+	}
+	return h.Severity
 }
 
 func (h HealthIssue) String() string {
-	s := fmt.Sprintf("  [!] %s: %s", h.Branch, h.Problem)
+	s := fmt.Sprintf("  %s %s: %s", severityIcon(h.EffectiveSeverity()), h.Branch, h.Problem)
 	if h.Hint != "" {
 		s += fmt.Sprintf("\n      %s", h.Hint)
 	}
 	return s
+}
+
+// CountHealthIssues counts only issues that need attention. Informational
+// findings print but never change a total or an exit status.
+func CountHealthIssues(issues []HealthIssue) int {
+	n := 0
+	for _, issue := range issues {
+		switch issue.EffectiveSeverity() {
+		case SeverityWarning, SeverityError:
+			n++
+		}
+	}
+	return n
+}
+
+// AncestryHealthIssues projects evaluated stack edges into external doctor
+// issues. Repository-unavailable edges collapse to a single feature-scoped
+// issue so an unresolvable repository cannot flood the output. Per-edge notes
+// are projected too — including for `current` edges, whose base a sync path
+// may still resolve differently — always as informational and never counted.
+func AncestryHealthIssues(res StackRepoResolution, edges []StackEdge) []HealthIssue {
+	var issues []HealthIssue
+	repoUnavailableReported := false
+	for _, edge := range edges {
+		if edge.Status != AncestryStatusCurrent {
+			problem := fmt.Sprintf("ancestry %s: %s", ancestryDisplayStatus(edge.Status), edge.Reason)
+			if edge.Reason == ReasonRepoUnavailable {
+				if repoUnavailableReported {
+					continue
+				}
+				repoUnavailableReported = true
+				issues = append(issues, HealthIssue{
+					Branch:   "stack",
+					Problem:  problem,
+					Hint:     edge.Guidance,
+					Severity: edge.Severity,
+				})
+				continue
+			}
+			issues = append(issues, HealthIssue{
+				Branch:   edge.Name,
+				Problem:  problem,
+				Hint:     edge.Guidance,
+				Severity: edge.Severity,
+			})
+		}
+		for _, note := range edge.Notes {
+			issues = append(issues, HealthIssue{
+				Branch:   edge.Name,
+				Problem:  fmt.Sprintf("ancestry note: %s", note.Kind),
+				Hint:     note.Detail,
+				Severity: SeverityInfo,
+			})
+		}
+	}
+	if res.Alternate != "" {
+		issues = append(issues, HealthIssue{
+			Branch: "stack",
+			Problem: fmt.Sprintf("%s: ancestry evaluated against %s (source: %s)",
+				RepoSourceMismatchLabel, ancestrySanitize(res.RepoDir, ancestryPathLimit), res.Source),
+			Hint: fmt.Sprintf("the workspace also resolves to %s; check TWS_ROOT or the configured workspace path",
+				ancestrySanitize(res.Alternate, ancestryPathLimit)),
+			Severity: SeverityInfo,
+		})
+	}
+	return issues
 }
 
 // CheckWorktreeBranch verifies the worktree is on the expected branch.

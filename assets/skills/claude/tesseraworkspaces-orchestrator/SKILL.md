@@ -104,6 +104,10 @@ tws export <feature> --to-repo    # save to repo for sharing
 - Run `tws decisions show` regularly to stay updated
 - After communicating, worktree agents will see your decisions on their next session start (via hooks)
 - Use `tws doctor` before `tws sync` to catch branch mismatches
+- Doctor's stack ancestry is advisory: `stale` just means the parent moved and
+  `tws sync` fixes it, and `divergent` only means the recorded base commit left
+  the parent's history so sync must replay with `--onto` (with mode-specific
+  flags). Neither is an emergency and both exit 0
 - `tws status` is read-only: it never removes a session record, and tws never
   kills a direct agent process. To free a branch held by a live record, ask the
   agent to exit its session. `tws close` reports — but never removes — records it

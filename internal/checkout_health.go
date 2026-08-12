@@ -165,6 +165,20 @@ type CheckoutFeatureEntry struct {
 	LocalHead      string           `json:"local_head,omitempty"`
 	ParentHead     string           `json:"parent_head,omitempty"`
 	Severity       CheckoutSeverity `json:"severity"`
+
+	LocalHeadFull  string              `json:"local_head_full,omitempty"`
+	ParentHeadFull string              `json:"parent_head_full,omitempty"`
+	BaseKind       StackBaseKind       `json:"base_kind,omitempty"`
+	BaseRef        string              `json:"base_ref,omitempty"`
+	LastBaseSHA    string              `json:"last_base_sha,omitempty"`
+	LastBaseShort  string              `json:"last_base_short,omitempty"`
+	BaseRecord     StackBaseRecord     `json:"base_record,omitempty"`
+	MergeBase      *string             `json:"merge_base"`
+	MergeBaseShort string              `json:"merge_base_short,omitempty"`
+	Reason         StackAncestryReason `json:"reason,omitempty"`
+	Guidance       string              `json:"guidance,omitempty"`
+	Notes          []StackEdgeNote     `json:"notes,omitempty"`
+	RepoSource     StackRepoSource     `json:"repo_source,omitempty"`
 }
 
 // CheckoutContextLinkReport describes a single session context link.
@@ -278,7 +292,8 @@ func BuildCheckoutHealthReport(ws Workspace, opts *CheckoutHealthOpts) (*Checkou
 	report.Session = buildSessionReport(ws, opts.Proc, opts.Tmux)
 
 	// 4. Feature entries
-	features, fErr := buildFeatureEntries(ws)
+	cfg := LoadConfig()
+	features, fErr := buildFeatureEntries(ws, cfg)
 	if fErr != nil {
 		return nil, fmt.Errorf("cannot list features: %w", fErr)
 	}
@@ -548,7 +563,7 @@ func buildSessionReport(ws Workspace, proc ProcessChecker, tmux TmuxChecker) *Ch
 
 // ---------- Features ----------
 
-func buildFeatureEntries(ws Workspace) ([]CheckoutFeatureEntry, error) {
+func buildFeatureEntries(ws Workspace, cfg Config) ([]CheckoutFeatureEntry, error) {
 	features, err := ws.ListFeaturesResolved()
 	if err != nil {
 		return nil, err
@@ -577,26 +592,41 @@ func buildFeatureEntries(ws Workspace) ([]CheckoutFeatureEntry, error) {
 		if sErr != nil {
 			continue
 		}
-		for _, se := range stack.Branches {
-			entry := buildOneFeatureEntry(ws, feature, se, stack, currentBranch, sessionFeature, sessionName)
+		edges, _ := FeatureStackEdges(ws, cfg, feature, fp, stack)
+		edges = ancestryEdgesFor(feature, stack, edges)
+		for i, se := range stack.Branches {
+			entry := buildOneFeatureEntry(feature, se, edges[i], currentBranch, sessionFeature, sessionName)
 			entries = append(entries, entry)
 		}
 	}
 	return entries, nil
 }
 
-func buildOneFeatureEntry(ws Workspace, feature string, se StackEntry, stack Stack, currentBranch, sessionFeature, sessionName string) CheckoutFeatureEntry {
+// ancestryEdgesFor guarantees one edge per stack entry. FeatureStackEdges is
+// already total over stack.Branches; a short slice would otherwise render the
+// unmatched entries from a zero StackEdge, which reads as an evaluated
+// `current` verdict with no severity. Falling back to an explicit unevaluated
+// projection keeps the output honest instead.
+func ancestryEdgesFor(feature string, stack Stack, edges []StackEdge) []StackEdge {
+	if len(edges) == len(stack.Branches) {
+		return edges
+	}
+	return UnevaluatedStackEdges(feature, stack, ReasonRepoUnavailable,
+		"ancestry evaluation returned no result for this stack")
+}
+
+func buildOneFeatureEntry(feature string, se StackEntry, edge StackEdge, currentBranch, sessionFeature, sessionName string) CheckoutFeatureEntry {
 	gitBranch := se.GitBranch()
 	e := CheckoutFeatureEntry{
 		Feature:   feature,
 		Name:      se.Name,
 		GitBranch: gitBranch,
 		Archived:  se.Archived,
-		Severity:  SeverityOK,
 	}
 
-	// Ref exists
-	e.RefExists = gitRefExists(ws.RepoRoot, gitBranch)
+	// Ref existence comes from the evaluator's peeled child probe, so the flag
+	// and the classification are backed by one process and cannot disagree.
+	e.RefExists = edge.RefExists
 
 	// Current — branch matches what's checked out
 	e.Current = currentBranch == gitBranch
@@ -606,95 +636,44 @@ func buildOneFeatureEntry(ws Workspace, feature string, se StackEntry, stack Sta
 		e.Current = true
 	}
 
-	// Base resolution — find parent entry or use literal ref
-	baseGitBranch := se.Base
-	isParentEntry := false
-	for _, parent := range stack.Branches {
-		if parent.Name == se.Base {
-			baseGitBranch = parent.GitBranch()
-			isParentEntry = true
-			break
-		}
+	e.BaseName = edge.BaseName
+	switch edge.BaseKind {
+	case StackBaseStackEntry:
+		e.BaseGitBranch = strings.TrimPrefix(edge.BaseRef, "refs/heads/")
+	case StackBaseLiteralRef:
+		e.BaseGitBranch = edge.BaseName
+	default:
+		e.BaseGitBranch = ""
 	}
-	e.BaseName = se.Base
-	e.BaseGitBranch = baseGitBranch
 
-	// Cross-repo check
-	if se.Repo != "" {
-		e.AncestryStatus = AncestryStatusCrossRepo
+	e.AncestryStatus = edge.Status
+	e.Severity = edge.Severity
+	if e.Severity == "" {
+		// An edge that reached no severity is informational, never a silent
+		// zero value that renders as an unlabelled icon.
 		e.Severity = SeverityInfo
-		return e
 	}
-
-	// Ancestry classification
-	if !e.RefExists {
-		e.AncestryStatus = AncestryStatusMissing
-		e.Severity = SeverityWarning
-		return e
-	}
-
-	if !gitRefExists(ws.RepoRoot, baseGitBranch) {
-		e.AncestryStatus = AncestryStatusMissing
-		e.Severity = SeverityWarning
-		return e
-	}
-
-	// Get heads for display
-	e.LocalHead = gitShortSHA(ws.RepoRoot, gitBranch)
-	if isParentEntry {
-		e.ParentHead = gitShortSHA(ws.RepoRoot, baseGitBranch)
-	} else {
-		e.ParentHead = gitShortSHA(ws.RepoRoot, baseGitBranch)
-	}
-
-	// merge-base check
-	mb, mbErr := gitMergeBase(ws.RepoRoot, gitBranch, baseGitBranch)
-	if mbErr != nil {
-		e.AncestryStatus = AncestryStatusMissing
-		e.Severity = SeverityWarning
-		return e
-	}
-
-	baseHead := gitFullSHA(ws.RepoRoot, baseGitBranch)
-	if mb == baseHead {
-		e.AncestryStatus = AncestryStatusCurrent
-	} else if childBehind, _ := gitIsAncestor(ws.RepoRoot, gitBranch, baseGitBranch); childBehind {
-		e.AncestryStatus = AncestryStatusStale
-		e.Severity = SeverityWarning
-	} else {
-		e.AncestryStatus = AncestryStatusDivergent
-		e.Severity = SeverityWarning
-	}
+	e.LocalHead = edge.LocalHeadShort
+	e.ParentHead = edge.ParentHeadShort
+	e.LocalHeadFull = edge.LocalHead
+	e.ParentHeadFull = edge.ParentHead
+	e.BaseKind = edge.BaseKind
+	e.BaseRef = edge.BaseRef
+	e.LastBaseSHA = edge.LastBaseSHA
+	e.LastBaseShort = edge.LastBaseShort
+	e.BaseRecord = edge.BaseRecord
+	e.MergeBase = edge.MergeBase
+	e.MergeBaseShort = edge.MergeBaseShort
+	e.Reason = edge.Reason
+	e.Guidance = edge.Guidance
+	e.Notes = edge.Notes
+	e.RepoSource = edge.RepoSource
 
 	return e
 }
 
 func gitRefExists(repo, ref string) bool {
 	return exec.Command("git", "-C", repo, "rev-parse", "--verify", "--quiet", ref).Run() == nil
-}
-
-func gitShortSHA(repo, ref string) string {
-	out, err := exec.Command("git", "-C", repo, "rev-parse", "--short", ref).Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
-
-func gitFullSHA(repo, ref string) string {
-	out, err := exec.Command("git", "-C", repo, "rev-parse", ref).Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
-
-func gitMergeBase(repo, a, b string) (string, error) {
-	out, err := exec.Command("git", "-C", repo, "merge-base", a, b).Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
 }
 
 // ---------- Context Links ----------
@@ -855,14 +834,16 @@ func FormatCheckoutHealth(r *CheckoutHealthReport) string {
 			if f.Current {
 				tags += " [current]"
 			}
-			if !f.RefExists {
+			// Only a ref probe that actually ran can report a missing ref;
+			// cross-repo and unevaluated edges are never probed locally.
+			if !f.RefExists && f.AncestryStatus != AncestryStatusCrossRepo && f.AncestryStatus != "" {
 				tags += " [ref-missing]"
 			}
 			fmt.Fprintf(&b, "  %s %s/%s", icon, f.Feature, f.Name)
 			if f.GitBranch != f.Name {
 				fmt.Fprintf(&b, " (git: %s)", f.GitBranch)
 			}
-			fmt.Fprintf(&b, " base=%s ancestry=%s%s", f.BaseName, f.AncestryStatus, tags)
+			fmt.Fprintf(&b, " base=%s ancestry=%s%s", f.BaseName, ancestryDisplayStatus(f.AncestryStatus), tags)
 			if f.LocalHead != "" {
 				fmt.Fprintf(&b, " head=%s", f.LocalHead)
 			}
@@ -870,6 +851,9 @@ func FormatCheckoutHealth(r *CheckoutHealthReport) string {
 				fmt.Fprintf(&b, " parent=%s", f.ParentHead)
 			}
 			b.WriteString("\n")
+			for _, line := range checkoutFeatureDetailLines(f) {
+				fmt.Fprintf(&b, "      %s\n", line)
+			}
 		}
 	}
 
@@ -890,6 +874,35 @@ func FormatCheckoutHealth(r *CheckoutHealthReport) string {
 	}
 
 	return b.String()
+}
+
+// checkoutFeatureDetailLines renders the additive indented detail lines that
+// follow an entry line: at most one reason line, one guidance line, and one
+// note line. The `base-record=` token is printed only when the record was
+// actually consulted, so an edge that never reached the record cannot claim a
+// verdict about it.
+func checkoutFeatureDetailLines(f CheckoutFeatureEntry) []string {
+	var lines []string
+	if f.AncestryStatus != AncestryStatusCurrent {
+		reason := fmt.Sprintf("reason: %s", f.Reason)
+		if f.LastBaseShort != "" {
+			reason += fmt.Sprintf(" last-base=%s", f.LastBaseShort)
+		}
+		if f.MergeBase != nil {
+			reason += fmt.Sprintf(" merge-base=%s", f.MergeBaseShort)
+		}
+		if f.BaseRecord != "" && f.BaseRecord != StackBaseRecordPresent {
+			reason += fmt.Sprintf(" base-record=%s", f.BaseRecord)
+		}
+		lines = append(lines, reason)
+	}
+	if f.Guidance != "" {
+		lines = append(lines, f.Guidance)
+	}
+	for _, note := range f.Notes {
+		lines = append(lines, fmt.Sprintf("note: %s", note.Detail))
+	}
+	return lines
 }
 
 func severityIcon(s CheckoutSeverity) string {
@@ -922,6 +935,11 @@ type CheckoutListEntry struct {
 
 // BuildCheckoutList builds the checkout list view entries.
 func BuildCheckoutList(ws Workspace) ([]CheckoutListEntry, error) {
+	cfg := LoadConfig()
+	return buildCheckoutListEntries(ws, cfg)
+}
+
+func buildCheckoutListEntries(ws Workspace, cfg Config) ([]CheckoutListEntry, error) {
 	features, err := ws.ListFeaturesResolved()
 	if err != nil {
 		return nil, err
@@ -946,7 +964,9 @@ func BuildCheckoutList(ws Workspace) ([]CheckoutListEntry, error) {
 		if sErr != nil {
 			continue
 		}
-		for _, se := range stack.Branches {
+		edges, _ := FeatureStackEdges(ws, cfg, feature, fp, stack)
+		edges = ancestryEdgesFor(feature, stack, edges)
+		for i, se := range stack.Branches {
 			gitBranch := se.GitBranch()
 			e := CheckoutListEntry{
 				Feature:   feature,
@@ -956,29 +976,8 @@ func BuildCheckoutList(ws Workspace) ([]CheckoutListEntry, error) {
 				Archived:  se.Archived,
 			}
 
-			// Ancestry
-			if se.Repo != "" {
-				e.AncestryStatus = string(AncestryStatusCrossRepo)
-			} else if !gitRefExists(ws.RepoRoot, gitBranch) {
-				e.AncestryStatus = string(AncestryStatusMissing)
-			} else {
-				baseRef := se.Base
-				for _, parent := range stack.Branches {
-					if parent.Name == se.Base {
-						baseRef = parent.GitBranch()
-						break
-					}
-				}
-				if !gitRefExists(ws.RepoRoot, baseRef) {
-					e.AncestryStatus = string(AncestryStatusMissing)
-				} else if mb, mbErr := gitMergeBase(ws.RepoRoot, gitBranch, baseRef); mbErr != nil {
-					e.AncestryStatus = string(AncestryStatusMissing)
-				} else if mb == gitFullSHA(ws.RepoRoot, baseRef) {
-					e.AncestryStatus = string(AncestryStatusCurrent)
-				} else {
-					e.AncestryStatus = string(AncestryStatusStale)
-				}
-			}
+			// Ancestry — same evaluator as doctor, so the two cannot disagree.
+			e.AncestryStatus = string(edges[i].Status)
 
 			// Session
 			if sessionFeature == feature && sessionName == se.Name {
@@ -1033,8 +1032,8 @@ func FormatCheckoutList(ws Workspace, entries []CheckoutListEntry) string {
 			if e.Archived {
 				tags += " [archived]"
 			}
-			if e.AncestryStatus != "" && e.AncestryStatus != string(AncestryStatusCurrent) {
-				tags += fmt.Sprintf(" [%s]", e.AncestryStatus)
+			if AncestryStatus(e.AncestryStatus) != AncestryStatusCurrent {
+				tags += fmt.Sprintf(" [%s]", ancestryDisplayStatus(AncestryStatus(e.AncestryStatus)))
 			}
 			if e.SessionActive {
 				tags += " [session]"

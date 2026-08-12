@@ -2,13 +2,17 @@
   "id": "stack-ancestry-doctor",
   "slug": "stack-ancestry-doctor",
   "title": "Extract one mode-independent, read-only stack edge evaluator and integrate it into tws doctor. For every configured parent-child edge, use StackEntry.GitBranch(), literal base refs, the current parent head, and LastBaseSHA to classify current, stale, divergent, missing, or cross-repo; report the relevant heads/merge base/last base plus actionable guidance. Support external and checkout modes without fetching or mutating Git, preserve doctor exit semantics, and expose a reusable projection for stack status and later additive tws status enrichment.",
-  "state": "defined",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-08-11T17:39:15Z",
-  "updated_at": "2026-08-12T09:12:11Z",
-  "last_command": "explore",
-  "notes": "Phase advanced manually (--manual); artifact authored at exploration.md",
-  "apply": {},
+  "updated_at": "2026-08-12T12:03:39Z",
+  "last_command": "record",
+  "notes": "landed at 2026-08-12T12:03:39Z",
+  "apply": {
+    "completed_at": "2026-08-12T11:55:35Z",
+    "base_commit": "f2a9be6c07805db9b7a024c0b369c0d51f847f37",
+    "has_patch": true
+  },
   "reconcile": {},
   "depends_on": [
     {

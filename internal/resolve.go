@@ -302,6 +302,24 @@ func RequireFeaturePath(feature string) (string, error) {
 	return ws.ResolveFeaturePath(feature)
 }
 
+// ResolveFeaturePathFor resolves a feature directory from a workspace the
+// caller has already resolved, so a read-only command can keep working when
+// the workspace itself is resolvable but its source repository is not.
+//
+// It applies exactly the same strict feature-name and sibling-space validation
+// as RequireFeaturePath. When the caller holds no usable workspace, it falls
+// back to the guarded TwsRoot, which still honours TWS_ROOT and workspace
+// detection from the current directory; it never re-derives a repository.
+func ResolveFeaturePathFor(ws Workspace, feature string) (string, error) {
+	if ws.MetadataRoot == "" {
+		ws = Workspace{Mode: ModeExternal, MetadataRoot: TwsRoot()}
+	}
+	if err := GuardFeatureName(ws.MetadataRoot, feature); err != nil {
+		return "", err
+	}
+	return ws.ResolveFeaturePath(feature)
+}
+
 // RequireWorktreePath resolves a worktree path through the workspace layer.
 // Returns ErrWorktreeUnsupported in checkout mode.
 func RequireWorktreePath(feature, worktree string) (string, error) {

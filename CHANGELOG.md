@@ -2,6 +2,69 @@
 
 ## Unreleased
 
+- **Stack ancestry doctor** — one mode-independent, read-only evaluator now
+  classifies every configured parent-child edge. Checkout doctor, checkout
+  list, and external `tws doctor` all consume it, so the same fixture produces
+  the same answer everywhere. External doctor gains a per-edge ancestry section
+  it never had
+- **Correct stale vs. divergent** — the recorded `last_base_sha` is finally
+  read, so a parent that merely advanced while the child holds unique commits
+  is `stale` (was `divergent`), a true rewrite in `tws list` is `divergent`
+  (list had no such arm), and an annotated-tag base that is an ancestor of the
+  child is `current` (was permanently stale/divergent). A parent reset
+  backwards to a commit still inside the child's history stays `current`; that
+  was already the checkout answer and is now an explicitly pinned rule rather
+  than a side effect of the merge-base comparison. `divergent` is phrased as
+  "the recorded base commit is no longer in the parent's history", never as a
+  claim about your change
+- **Honest unevaluated state** — an entry with no configured `base` is reported
+  as `unevaluated` + informational instead of `missing` + warning, and a
+  feature whose source repository cannot be determined produces one collapsed
+  informational issue instead of flooding the output per entry
+- **Archived entries are informational** — archived entries with `missing`,
+  `stale`, or `divergent` edges report `info` instead of `warning`, lowering
+  the checkout issue count for workspaces containing them. Exit status is
+  unchanged: no ancestry finding can produce a non-zero exit in either mode
+- **Actionable detail lines** — checkout doctor adds up to three indented lines
+  under an entry: the reason with `last-base`/`merge-base`, the guidance, and
+  an informational note when the sync path for this workspace mode would
+  resolve the base to a different ref than doctor probed. Rendered prose keeps
+  abbreviated SHAs, while the `git rebase --onto` repair is printed as a
+  complete, runnable command naming the full base ref, the full recorded base
+  commit, and the target child branch explicitly (as a bare branch name, so
+  the rebase actually moves that branch instead of detaching HEAD). It is
+  offered as an
+  *equivalent* manual repair: `tws sync` also replays such an edge with an
+  `--onto` rebase, but the exact flags differ per workspace mode, and the
+  guidance no longer claims otherwise
+- **Honest recovery for a missing child branch** — an entry whose Git branch
+  disappeared no longer suggests `tws new`, which cannot help because the stack
+  entry still exists. The guidance now offers restoring the branch from its
+  remote or from a known commit (with a complete, untruncated
+  `git branch <branch> <known-commit>` example), or deliberately removing and
+  recreating the stack entry when no work must be preserved
+- **`tws doctor` still fails closed on unusable persisted config** — an invalid
+  `workspace_mode` inside a repository aborts both `tws doctor` and
+  `tws doctor <feature>` exactly as before; only a directory with no Git
+  repository at all falls through to the repository-less external path
+- **Mode-aware base identity notes** — external mode reports only the
+  `origin/<default>` mismatch its sync performs, and checkout mode only the
+  literal-name mismatch its sync performs; neither mode can emit the other's
+  note. External `tws doctor` surfaces these notes as uncounted informational
+  issues, including for edges that are otherwise `current`
+- **External doctor no longer needs a source repository to run** — it resolves
+  the feature from the workspace it already resolved, so it works from the
+  external workspace root or a feature directory even when ancestry itself is
+  unevaluated
+- **Cross-repo entries no longer print a misleading `[ref-missing]` tag** — the
+  old local-repository ref probe said nothing about the foreign repository, so
+  it is gone; cross-repo entries start zero Git processes and are reported as
+  `cross-repo-unsupported`
+- **Safer ref handling** — branch identity always goes through
+  `refs/heads/<branch>`, so a same-named tag can never win; a syntactically
+  valid but non-existent 40-hex base is now `missing`; recorded metadata is
+  sanitized before display; and ancestry never fetches, writes, or runs Git
+  outside the validated repository directory
 - **Agent work status** — new `tws status [feature] [--json]` reports what tws
   knows about every logical branch: materialization, tws-launched runtimes, and
   whether anything needs attention. With no argument it always covers every
