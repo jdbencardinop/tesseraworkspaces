@@ -1,0 +1,18 @@
+ .tpatch/FEATURES.md                                |   2 +-
+ .tpatch/features/stack-status/spec.md              |  22 ++-
+ .tpatch/features/stack-status/status.json          |  14 +-
+ CHANGELOG.md                                       |  47 ++++++
+ README.md                                          |   1 +
+ .../claude/tesseraworkspaces-orchestrator/SKILL.md |  12 +-
+ assets/skills/claude/tesseraworkspaces/SKILL.md    |  30 ++++
+ assets/skills/copilot/tws.prompt.md                |  14 +-
+ docs/cheatsheet.md                                 |  10 ++
+ docs/configuration.md                              |   6 +
+ docs/engineering-workflow.md                       |   8 +-
+ docs/roadmap.md                                    |  19 ++-
+ internal/agent_status.go                           | 162 ++++++++++++++++--
+ internal/agent_status_test.go                      | 182 +++++++++++++++++++++
+ internal/checkout_health.go                        |  45 ++---
+ internal/cli/stack.go                              |  19 ++-
+ internal/stack_ancestry_test.go                    |  11 +-
+ 17 files changed, 519 insertions(+), 85 deletions(-)

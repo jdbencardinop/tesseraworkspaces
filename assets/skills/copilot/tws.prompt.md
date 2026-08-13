@@ -20,6 +20,7 @@ You are working in a project that uses `tws` for feature-scoped workspaces with 
 - `tws export <feature> [--full] [--to-repo]` — Export workspace metadata
 - `tws import <file> [--from-repo <feature>]` — Import workspace
 - `tws stack <feature>` — Show branch dependency tree
+- `tws stack status <feature> [--json]` — Stack ancestry, materialization, and upstream status
 - `tws list` — List features and branches
 - `tws delete <feature>` — Remove feature and all worktrees
 - `tws archive <feature> <branch>` — Remove worktree, keep branch ref
@@ -132,9 +133,10 @@ tws status auth --json | jq '.issues[] | select(.severity=="warning")'
 1. Run `tws list` to see current state
 2. Run `tws decisions show <feature>` to check for unread decisions from siblings
 3. Run `tws stack <feature>` to understand dependencies
-4. Use `tws sync <feature>` to keep branches up to date
-5. Use `tws sync <feature> --push` to sync and push in one command
-6. After breaking changes, run `tws decide <feature> "summary" --type breaking`
-7. Run `tws doctor` if something seems wrong
-8. Use `tws archive` to free disk space, `tws new` to restore
-9. Set `test_command` in config for automatic validation after rebase
+4. Run `tws stack status <feature> --json` before syncing and check `ancestry.status` and `materialization.dirty`. `tws stack status` never fetches; upstream and parent counts describe local refs only. A null field means tws could not establish the fact locally — it never means clean, attached, zero, or no upstream. `tws stack -- status` prints the legacy tree for a feature literally named `status`
+5. Use `tws sync <feature>` to keep branches up to date
+6. Use `tws sync <feature> --push` to sync and push in one command
+7. After breaking changes, run `tws decide <feature> "summary" --type breaking`
+8. Run `tws doctor` if something seems wrong
+9. Use `tws archive` to free disk space, `tws new` to restore
+10. Set `test_command` in config for automatic validation after rebase

@@ -106,8 +106,18 @@ When you `tws open`, unread decisions are shown automatically:
 ```sh
 tws list                     # all features and branches
 tws stack auth               # dependency tree for a feature
+tws stack status auth        # per-entry ancestry, materialization, upstream, parent counts
+tws stack status auth --json | jq '.entries[] | select(.ancestry.status!="current")'
 tws doctor auth              # health checks (branch mismatch, dirty, ancestry, etc.)
 ```
+
+`tws stack status` is local-only: it never fetches, so upstream state and parent
+counts describe local refs only. A `null` field means tws could not establish the
+fact locally — it never means clean, attached, zero, or no upstream. Any
+reportable state exits 0, including `stale`, `divergent`, `missing`,
+`cross-repo-unsupported`, and `unevaluated`. For a feature literally named
+`status`, `tws stack -- status` prints the legacy dependency tree and
+`tws stack status status` reports its stack status.
 
 Ancestry is reported per configured parent-child edge as `current`, `stale`,
 `divergent`, `missing`, `cross-repo-unsupported`, or `unevaluated`, with a reason

@@ -2,6 +2,53 @@
 
 ## Unreleased
 
+- **Stack status** — `tws stack status <feature> [--json]` reports, for every
+  entry in `stack.yaml` order, its logical name and Git branch, local head,
+  configured base and parent head, the recorded `last_base_sha` verdict,
+  ancestry state, materialization, dirty and in-progress Git operation, upstream
+  state, and ahead/behind counts against the parent. `--json` emits one
+  versioned document (`schema_version: 1`) with a stable key set, no
+  `stack_state` key and no generated timestamp, so two runs over an unchanged
+  repository are byte-identical
+- **Ancestry is projected, never recomputed** — the report consumes the shipped
+  `StackEdge` evaluator that `tws doctor` and `tws list` already use, so stack
+  status can never contradict doctor for the same fixture
+- **Local-only and read-only** — nothing is fetched, written, or refreshed.
+  Upstream state describes the configured upstream ref exactly as it exists in
+  this repository right now, and parent counts compare local commits. A fact
+  that cannot be established locally is reported as `null` — never as clean,
+  attached, zero, or "no upstream" — so dirty state, in-progress operation,
+  upstream state, and parent counts are all nullable
+- **Exit status** — 0 whenever a report was produced, including for `stale`,
+  `divergent`, `missing`, `cross-repo-unsupported`, and unevaluated edges and
+  dirty worktrees. A non-zero exit means no report was produced at all and
+  nothing is written to stdout
+- **Legacy `tws stack <feature>` is unchanged** — the same tree bytes, the same
+  cycle warning, the same error strings, and the same exit code. Adding the
+  child command does change two Cobra-generated surfaces, both accepted:
+  `tws stack --help` now lists an `Available Commands:` section, and the usage
+  block printed for a parent arity error takes the `tws stack [command]` shape.
+  A feature literally named `status` stays reachable: `tws stack -- status`
+  prints its legacy dependency tree and `tws stack status status` reports its
+  stack status. At the parent completion position the feature list drops an
+  exact `status` element, because Cobra already contributes that subcommand
+  there
+- **Shared worktree inventory extended additively** — it gains complete
+  per-block records (`Records`, a canonical-path `ByPath` map, and an `Err`
+  cause) while `Available`, `ByBranch` (keys and raw porcelain path values), and
+  `Prunable` keep their exact previous behaviour on real, well-formed Git
+  output. Both supplemental inventories are object-format neutral: SHA-1
+  (40-hex) and SHA-256 (64-hex) object IDs parse identically and are stored
+  verbatim. This makes no claim that stack ancestry itself is SHA-256-ready
+- **`tws status`, `tws doctor`, and `tws list` are unchanged** for real,
+  well-formed Git output and for ordinary command failures. Two deliberate
+  differences: their dirty probe now runs with `GIT_OPTIONAL_LOCKS=0` and
+  therefore no longer refreshes the index, and the shared worktree inventory —
+  read in production only by `tws status` — now fails closed on malformed
+  porcelain instead of publishing a partial map, in which case `tws status`
+  reports the worktree inventory as unavailable. No schema key, issue code,
+  severity, message, or exit code changes anywhere
+
 - **Stack ancestry doctor** — one mode-independent, read-only evaluator now
   classifies every configured parent-child edge. Checkout doctor, checkout
   list, and external `tws doctor` all consume it, so the same fixture produces

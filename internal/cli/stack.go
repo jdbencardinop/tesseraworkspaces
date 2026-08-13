@@ -8,13 +8,25 @@ import (
 )
 
 func stackCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "stack <feature>",
 		Short: "Show branch dependency tree",
 		Args:  cobra.ExactArgs(1),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			if len(args) == 0 {
-				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
+				// Cobra already contributes the `status` subcommand at this
+				// position; two candidates spelled identically with different
+				// meanings is worse than one. `tws stack -- status` always
+				// reaches a feature literally named `status`.
+				features := internal.ListFeatures()
+				deduped := make([]string, 0, len(features))
+				for _, name := range features {
+					if name == "status" {
+						continue
+					}
+					deduped = append(deduped, name)
+				}
+				return deduped, cobra.ShellCompDirectiveNoFileComp
 			}
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
@@ -38,4 +50,7 @@ func stackCmd() *cobra.Command {
 			return nil
 		},
 	}
+
+	cmd.AddCommand(stackStatusCmd())
+	return cmd
 }

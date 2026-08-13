@@ -1,0 +1,12 @@
+exit: 0
+Workspace: <META> (mode: checkout)
+  ID:   <STABLE_ID>
+  Repo: <REPO>
+  HEAD: b79744b (detached)
+  [!] Working tree is dirty
+
+Features:
+  [ok] auth/models base=main ancestry=current head=b79744b parent=b79744b
+  [ok] auth/api base=models ancestry=current head=b79744b parent=b79744b
+
+1 issue(s) found.

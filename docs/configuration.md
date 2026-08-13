@@ -128,6 +128,12 @@ tws new auth wiki-docs --repo ../wiki --base master
         └── auth-routes
 ```
 
+`tws stack status <feature> [--json]` reports, for every entry in `stack.yaml`
+order, its configured base and parent head, ancestry state, materialization,
+dirty and in-progress Git operation, upstream state, and ahead/behind counts
+against the parent. It consumes the shared ancestry evaluator, is read-only and
+local-only, and leaves the legacy tree above unchanged.
+
 Features without a `stack.yaml` use the repository's detected default remote branch for fallback sync.
 
 ### Divergent stacks

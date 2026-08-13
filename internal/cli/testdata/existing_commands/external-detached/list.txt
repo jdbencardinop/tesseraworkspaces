@@ -1,0 +1,7 @@
+exit: 0
+Workspace: <META> (mode: external)
+
+auth
+  ├── models (base: main) [active]
+  └── api (base: models) [active] [wrong-branch!]
+

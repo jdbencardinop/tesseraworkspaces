@@ -1,0 +1,6 @@
+exit: 0
+auth: healthy (2 active worktree(s))
+  [i] wiki: ancestry cross-repo-unsupported: cross-repo
+      entry targets another repository (<OTHER>); cross-repo ancestry is not evaluated, so this edge is reported as cross-repo-unsupported
+
+All healthy.

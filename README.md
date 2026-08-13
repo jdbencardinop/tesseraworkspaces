@@ -127,6 +127,7 @@ tws init --register --register-alias myapp   # also enroll in the global registr
 | `tws sync <feature> [--push] [--continue] [--abort] [--verbose]` | Rebase in dependency order |
 | `tws push <feature> [--dry-run]` | Push all branches |
 | `tws stack <feature>` | Show dependency tree |
+| `tws stack status <feature> [--json]` | Stack ancestry, materialization, and upstream status |
 | `tws list` / `tws ls` | List features and branches |
 | `tws delete <feature>` | Remove feature and worktrees |
 | `tws archive <feature> <branch>` | Remove worktree, keep branch |

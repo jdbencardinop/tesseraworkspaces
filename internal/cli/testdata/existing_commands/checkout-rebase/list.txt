@@ -1,0 +1,7 @@
+exit: 0
+Workspace: <META> (mode: checkout)
+
+auth
+  ├── models
+  └── api [stale]
+

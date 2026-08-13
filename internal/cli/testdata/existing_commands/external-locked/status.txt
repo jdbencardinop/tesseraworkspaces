@@ -1,0 +1,13 @@
+exit: 0
+Workspace: <META> (mode: external)
+  Attention: [ok] idle
+  ID:        <STABLE_ID>
+  Repo:      <REPO>
+  tmux:      available (no server)
+
+STATUS     BRANCH                       PRESENCE  AGENT    SESSIONS  DETAIL
+[ok] idle  auth/models                  absent    unknown  0/0       -
+[ok] idle  auth/api                     absent    unknown  0/0       -
+[ok] idle  auth/locked (git: lockedbr)  absent    unknown  0/0       -
+
+3 branch(es): 0 active, 3 idle, 0 needs attention. 0 issue(s).

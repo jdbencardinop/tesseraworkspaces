@@ -1,0 +1,6 @@
+exit: 0
+auth: 1 issue(s)
+  [!] ../escape: ancestry missing: child-ref-missing
+      git branch `../escape` does not exist while stack entry "../escape" of feature auth is still configured; restore the branch from its remote or from a known commit, for example `git branch ../escape <known-commit>`, or deliberately remove and recreate the stack entry if no work must be preserved
+
+1 issue(s) found.

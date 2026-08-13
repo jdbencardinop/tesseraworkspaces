@@ -1,0 +1,6 @@
+exit: 0
+auth: 1 issue(s)
+  [!] api: has uncommitted changes
+      commit or stash changes before syncing
+
+1 issue(s) found.

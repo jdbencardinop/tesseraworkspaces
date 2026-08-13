@@ -1,0 +1,15 @@
+exit: 0
+Workspace: <META> (mode: checkout)
+  ID:   <STABLE_ID>
+  Repo: <REPO>
+  HEAD: 0e0c8ce (detached)
+  [!] Working tree is dirty
+  [!] Active Git operation: rebase
+
+Features:
+  [ok] auth/models base=main ancestry=current head=0e0c8ce parent=b79744b
+  [!] auth/api base=models ancestry=stale head=2cdac3a parent=0e0c8ce
+      reason: parent-advanced-no-base-record merge-base=b79744b base-record=absent
+      parent `refs/heads/models` advanced to 0e0c8ce; no recorded base commit for this branch, so sync uses a plain rebase — verify the parent history was not rewritten; run: tws sync auth
+
+3 issue(s) found.

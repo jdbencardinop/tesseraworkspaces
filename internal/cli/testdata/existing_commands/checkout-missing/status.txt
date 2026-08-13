@@ -1,0 +1,18 @@
+exit: 0
+Workspace: <META> (mode: checkout)
+  Attention: [!] needs_attention
+  ID:        <STABLE_ID>
+  Repo:      <REPO>
+  tmux:      available (no server)
+
+STATUS     BRANCH       PRESENCE  AGENT    SESSIONS  DETAIL
+[ok] idle  auth/models  absent    unknown  0/0       -
+[!] attn   auth/api     absent    unknown  0/0       [missing]
+
+Branch: auth/api
+  [!] ref-missing: git branch "api" does not exist; run: tws new auth api
+
+Workspace:
+  [i] repo-dirty: checkout repository has uncommitted changes
+
+2 branch(es): 0 active, 1 idle, 1 needs attention. 2 issue(s).

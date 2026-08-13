@@ -1,0 +1,16 @@
+exit: 0
+Workspace: <META> (mode: external)
+  Attention: [!] needs_attention
+  ID:        <STABLE_ID>
+  Repo:      <REPO>
+  tmux:      available (no server)
+
+STATUS     BRANCH          PRESENCE  AGENT    SESSIONS  DETAIL
+[ok] idle  auth/models     absent    unknown  0/0       -
+[ok] idle  auth/api        absent    unknown  0/0       -
+[!] attn   auth/../escape  absent    unknown  0/0       [missing]
+
+Branch: auth/../escape
+  [!] worktree-missing: worktree <META>/auth/escape does not exist; run: tws add auth ../escape
+
+3 branch(es): 0 active, 2 idle, 1 needs attention. 1 issue(s).

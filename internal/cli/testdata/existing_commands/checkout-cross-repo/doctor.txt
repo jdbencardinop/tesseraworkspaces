@@ -1,0 +1,15 @@
+exit: 0
+Workspace: <META> (mode: checkout)
+  ID:   <STABLE_ID>
+  Repo: <REPO>
+  Branch: main
+  [!] Working tree is dirty
+
+Features:
+  [ok] auth/models base=main ancestry=current head=b79744b parent=b79744b
+  [ok] auth/api base=models ancestry=current head=b79744b parent=b79744b
+  [i] auth/wiki base=main ancestry=cross-repo-unsupported
+      reason: cross-repo
+      entry targets another repository (<OTHER>); cross-repo ancestry is not evaluated, so this edge is reported as cross-repo-unsupported
+
+1 issue(s) found.

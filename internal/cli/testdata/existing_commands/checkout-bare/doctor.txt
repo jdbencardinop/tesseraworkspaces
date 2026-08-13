@@ -1,0 +1,11 @@
+exit: 0
+Workspace: <META> (mode: checkout)
+  ID:   <STABLE_ID>
+  Repo: <REPO>
+  Branch: main
+
+Features:
+  [ok] auth/models base=main ancestry=current head=b79744b parent=b79744b
+  [ok] auth/api base=models ancestry=current head=b79744b parent=b79744b
+
+All healthy.

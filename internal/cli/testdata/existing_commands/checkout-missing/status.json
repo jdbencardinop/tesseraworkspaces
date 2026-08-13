@@ -1,0 +1,156 @@
+exit: 0
+{
+  "features": [
+    {
+      "agent_state": "unknown",
+      "attention": {
+        "codes": [],
+        "issue_count": 0,
+        "status": "needs_attention"
+      },
+      "entries": [
+        {
+          "agent_state": "unknown",
+          "archived": false,
+          "attention": {
+            "codes": [],
+            "issue_count": 0,
+            "status": "idle"
+          },
+          "base": "main",
+          "base_git_branch": "main",
+          "feature": "auth",
+          "feature_attention": false,
+          "git_branch": "models",
+          "is_current_checkout": false,
+          "materialization": {
+            "checked_out_branch": null,
+            "dirty": null,
+            "kind": "ref",
+            "path": null,
+            "ref_exists": true,
+            "state": "present"
+          },
+          "name": "models",
+          "repo": null,
+          "runtime_presence": "absent",
+          "session_counts": {
+            "invalid": 0,
+            "live": 0,
+            "stale": 0,
+            "total": 0,
+            "unknown": 0
+          },
+          "sessions": [],
+          "unread_decisions": 0
+        },
+        {
+          "agent_state": "unknown",
+          "archived": false,
+          "attention": {
+            "codes": [
+              "ref-missing"
+            ],
+            "issue_count": 1,
+            "status": "needs_attention"
+          },
+          "base": "models",
+          "base_git_branch": "models",
+          "feature": "auth",
+          "feature_attention": false,
+          "git_branch": "api",
+          "is_current_checkout": false,
+          "materialization": {
+            "checked_out_branch": null,
+            "dirty": null,
+            "kind": "ref",
+            "path": null,
+            "ref_exists": false,
+            "state": "missing"
+          },
+          "name": "api",
+          "repo": null,
+          "runtime_presence": "absent",
+          "session_counts": {
+            "invalid": 0,
+            "live": 0,
+            "stale": 0,
+            "total": 0,
+            "unknown": 0
+          },
+          "sessions": [],
+          "unread_decisions": 0
+        }
+      ],
+      "feature": "auth",
+      "feature_tmux": null,
+      "path": "\u003cMETA\u003e/features/auth",
+      "runtime_presence": "absent",
+      "stack_state": "ok",
+      "sync": null
+    }
+  ],
+  "issues": [
+    {
+      "code": "repo-dirty",
+      "feature": null,
+      "guidance": null,
+      "message": "checkout repository has uncommitted changes",
+      "name": null,
+      "scope": "workspace",
+      "severity": "info"
+    },
+    {
+      "code": "ref-missing",
+      "feature": "auth",
+      "guidance": "run: tws new auth api",
+      "message": "git branch \"api\" does not exist",
+      "name": "api",
+      "scope": "entry",
+      "severity": "warning"
+    }
+  ],
+  "schema_version": 1,
+  "summary": {
+    "active": 0,
+    "entries": 2,
+    "errors": 0,
+    "features": 1,
+    "idle": 1,
+    "issues": 2,
+    "needs_attention": 1,
+    "runtime_absent": 2,
+    "runtime_present": 0,
+    "runtime_stale": 0,
+    "runtime_unknown": 0,
+    "warnings": 1
+  },
+  "workspace": {
+    "active_git_op": null,
+    "agent_state": "unknown",
+    "attention": {
+      "codes": [
+        "repo-dirty"
+      ],
+      "issue_count": 0,
+      "status": "needs_attention"
+    },
+    "branch": "main",
+    "checkout_session": null,
+    "degraded": false,
+    "degraded_reason": null,
+    "detached": false,
+    "dirty": true,
+    "metadata_root": "\u003cMETA\u003e",
+    "mode": "checkout",
+    "repo_root": "\u003cREPO\u003e",
+    "runtime_presence": "absent",
+    "stable_id": "\u003cSTABLE_ID\u003e",
+    "tmux": {
+      "available": true,
+      "path_verification": false,
+      "server_running": false,
+      "session_count": 0
+    }
+  }
+}

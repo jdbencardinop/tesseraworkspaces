@@ -18,6 +18,7 @@ You are an orchestrator agent running from a feature workspace directory. Your j
 tws status --json                 # agent work status for every branch (poll this first)
 tws list                          # see all features and branches
 tws stack <feature>               # see dependency tree
+tws stack status <feature> --json # ancestry, materialization, upstream, parent counts
 tws decisions show                # see all decisions (auto-detects feature)
 tws decisions show --all          # include already-read decisions
 tws doctor <feature>              # check health of all worktrees
@@ -85,8 +86,15 @@ tws export <feature> --to-repo    # save to repo for sharing
 3. **Plan**: Based on the stack and decisions, decide what each branch should work on
 4. **Communicate**: Use `tws decide` to send instructions or design decisions to branches
 5. **Monitor**: Run `tws doctor <feature>` to check for issues
-6. **Sync**: Run `tws sync <feature>` to keep branches up to date
-7. **Review**: Check decisions from worktree agents for review requests or questions
+6. **Pre-sync check**: Run `tws stack status <feature> --json` and inspect
+   `ancestry.status` and `materialization.dirty` before syncing; resolve dirty
+   or divergent branches first. **`tws stack status` never fetches; upstream and
+   parent counts describe local refs only.** **A null field means tws could not
+   establish the fact locally — it never means clean, attached, zero, or no
+   upstream.** **`tws stack -- status` prints the legacy tree for a feature
+   literally named `status`.**
+7. **Sync**: Run `tws sync <feature>` to keep branches up to date
+8. **Review**: Check decisions from worktree agents for review requests or questions
 
 ## Decision Types
 

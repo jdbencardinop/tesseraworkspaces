@@ -1714,7 +1714,9 @@ func TestStackAncestry_DisplayTokenCentralized(t *testing.T) {
 	callSites := 0
 	for _, file := range nonTestGoFiles(t) {
 		body := readSourceFile(t, file)
-		tokenHits += len(regexp.MustCompile(`"unevaluated"`).FindAllString(body, -1))
+		// A JSON struct tag is a schema key, not a display token, so the
+		// stack status summary counter is deliberately not counted here.
+		tokenHits += len(regexp.MustCompile(`(^|[^:])"unevaluated"`).FindAllString(body, -1))
 		callSites += len(regexp.MustCompile(`ancestryDisplayStatus\(`).FindAllString(body, -1))
 		if strings.Contains(body, "evaluation-unavailable") {
 			t.Errorf("%s uses the rejected evaluation-unavailable wording", file)
@@ -1723,9 +1725,10 @@ func TestStackAncestry_DisplayTokenCentralized(t *testing.T) {
 	if tokenHits != 1 {
 		t.Errorf(`the "unevaluated" literal appears %d times, want 1`, tokenHits)
 	}
-	// One declaration plus exactly three call sites.
-	if callSites != 4 {
-		t.Errorf("ancestryDisplayStatus appears %d times, want 1 declaration + 3 call sites", callSites)
+	// One declaration plus exactly four call sites: external doctor, checkout
+	// doctor, checkout list, and stack status.
+	if callSites != 5 {
+		t.Errorf("ancestryDisplayStatus appears %d times, want 1 declaration + 4 call sites", callSites)
 	}
 
 	statusConsts := countSourceMatches(t, "checkout_health.go", `(?m)^\s*AncestryStatus\w*\s+AncestryStatus\s*=`)

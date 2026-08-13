@@ -1,0 +1,8 @@
+{
+  "slug": "stack-status",
+  "completed_at": "2026-08-13T10:30:14Z",
+  "base_commit": "2ef1428c6a8bfad2eb43c1b7d45dae91e65e437c",
+  "has_patch": true,
+  "validation_status": "passed",
+  "validation_notes": "tpatch test — command: GIT_CONFIG_COUNT=0 go test ./... -count=1"
+}

@@ -1,0 +1,16 @@
+exit: 0
+Workspace: <META> (mode: external)
+  Attention: [!] needs_attention
+  ID:        <STABLE_ID>
+  Repo:      <REPO>
+  tmux:      available (no server)
+
+STATUS     BRANCH       PRESENCE  AGENT    SESSIONS  DETAIL
+[ok] idle  auth/models  absent    unknown  0/0       -
+[ok] idle  auth/api     absent    unknown  0/0       -
+[!] attn   auth/gone    absent    unknown  0/0       [prunable-missing]
+
+Branch: auth/gone
+  [!] worktree-prunable-missing: worktree <WORKTREES>/gone is gone and git still lists a prunable entry for "gone"; run: git worktree prune, then: tws add auth gone
+
+3 branch(es): 0 active, 2 idle, 1 needs attention. 1 issue(s).

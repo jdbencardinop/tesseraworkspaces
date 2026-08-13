@@ -1,0 +1,6 @@
+exit: 0
+auth: 1 issue(s)
+  [!] api: on branch "HEAD", expected "api"
+      run: cd <WORKTREES>/api && git checkout api
+
+1 issue(s) found.

@@ -904,12 +904,18 @@ wrong-branch vocabulary.
   `archived` is reported by the row's own `archived` field; checkout mode never uses the `archived`
   materialization state, because a checkout entry has no worktree to be absent.
 - `checked_out_branch`, `dirty`, and `active_git_op` are **copies of the workspace checkout facts**,
-  written only onto rows whose `git_branch` equals a known `workspace.checkout.branch`; every other
-  row gets `null` for all three. Duplicate rows sharing that Git branch each receive the same copies
-  and remain separate rows.
-- `is_current_checkout` is a bool **only** when `workspace.checkout.branch != null` **and**
+  written only onto **same-repository** rows (`edge.Repo == ""`) whose `git_branch` equals a known
+  `workspace.checkout.branch`; every other row gets `null` for all three. Duplicate rows sharing that
+  Git branch each receive the same copies and remain separate rows.
+- A **cross-repo row** (`edge.Repo != ""`) is owned by another repository, so it reports
+  `state: "cross-repo-unsupported"` and **nothing else**: `checked_out_branch`, `detached`, `dirty`,
+  `active_git_op`, `path`, and `is_current_checkout` are all `null`, **even when its `git_branch` is
+  byte-identical to `workspace.checkout.branch`**. A name collision across repositories is not
+  evidence about this checkout, and no supplemental process is started for such a row.
+- `is_current_checkout` is a bool **only** when the row is same-repository (`edge.Repo == ""`) **and**
+  `workspace.checkout.branch != null` **and**
   `workspace.checkout.detached == false`; then it is `git_branch == branch`. In every other case —
-  detached checkout, unavailable inventory, unavailable repository — it is `null` for **every** row.
+  cross-repo row, detached checkout, unavailable inventory, unavailable repository — it is `null`.
 - The current checkout branch is never inferred from a session record, from `HEAD` parsing, or from
   a ref merely existing. Only Git's worktree inventory may name it.
 
@@ -1926,7 +1932,11 @@ temporary repository with real local bare remotes and real linked worktrees.
     `present` — the deliberate, documented divergence of §9.3.
 31. `TestStackStatus_CheckoutModeTruth`: attached checkout populates `workspace.checkout.branch`,
     `detached:false`, and copies `checked_out_branch`/`dirty`/`active_git_op` onto **only** the
-    matching row(s), including both duplicate rows sharing that branch; detached checkout yields
+    matching same-repository row(s), including both duplicate rows sharing that branch; a cross-repo
+    row whose `git_branch` **equals** the checked-out branch reports
+    `state: "cross-repo-unsupported"` with `checked_out_branch`, `detached`, `dirty`,
+    `active_git_op`, and `is_current_checkout` all `null` and starts no process naming the foreign
+    repository; detached checkout yields
     `branch: null`, `detached: true`, and `is_current_checkout == null` on **every** row; an
     unavailable inventory yields null branch/detached and no attached/clean claim; a base-unset row
     has `materialization.state == "unknown"`.

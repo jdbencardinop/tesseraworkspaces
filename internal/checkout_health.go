@@ -349,46 +349,27 @@ func healthCurrentBranch(repo string) (string, bool) {
 	return b, false
 }
 
+// gitDirty preserves its legacy contract exactly: a probe failure collapses to
+// "not dirty" for the existing callers. The probe itself is error-returning
+// and read-only (GIT_OPTIONAL_LOCKS=0), so the index is no longer refreshed.
 func gitDirty(repo string) bool {
-	out, err := exec.Command("git", "-C", repo, "status", "--porcelain").Output()
+	dirty, err := probeDirty(repo)
 	if err != nil {
 		return false
 	}
-	return len(strings.TrimSpace(string(out))) > 0
+	return dirty
 }
 
+// gitActiveOp preserves its legacy contract exactly: a missing .git, an
+// unreadable or malformed gitdir pointer, a vanished or non-directory gitdir
+// target, and a non-ENOENT marker stat all produced "" before (no marker was
+// found) and still produce "" now (the probe errors).
 func gitActiveOp(repo string) string {
-	gitDir := filepath.Join(repo, ".git")
-	// Check if .git is a file (worktree) — resolve the actual git dir
-	if info, err := os.Stat(gitDir); err == nil && !info.IsDir() {
-		data, readErr := os.ReadFile(gitDir)
-		if readErr == nil {
-			line := strings.TrimSpace(string(data))
-			if after, ok := strings.CutPrefix(line, "gitdir: "); ok {
-				if !filepath.IsAbs(after) {
-					after = filepath.Join(repo, after)
-				}
-				gitDir = filepath.Clean(after)
-			}
-		}
+	op, err := probeActiveGitOp(repo)
+	if err != nil || op == StackStatusOpNone {
+		return ""
 	}
-	checks := []struct {
-		marker string
-		name   string
-	}{
-		{"rebase-merge", "rebase"},
-		{"rebase-apply", "rebase"},
-		{"MERGE_HEAD", "merge"},
-		{"CHERRY_PICK_HEAD", "cherry-pick"},
-		{"REVERT_HEAD", "revert"},
-		{"BISECT_LOG", "bisect"},
-	}
-	for _, c := range checks {
-		if _, err := os.Stat(filepath.Join(gitDir, c.marker)); err == nil {
-			return c.name
-		}
-	}
-	return ""
+	return op
 }
 
 // ---------- Sync ----------

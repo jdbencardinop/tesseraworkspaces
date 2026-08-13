@@ -470,55 +470,183 @@ func (RealTmuxInventory) Snapshot() TmuxSnapshot {
 
 // ---------- worktree inventory ----------
 
+// WorktreeRecord is one `git worktree list --porcelain` block. Object IDs are
+// stored verbatim, so a 40-hex SHA-1 and a 64-hex SHA-256 name are both
+// retained unchanged.
+type WorktreeRecord struct {
+	Path           string // canonical worktree path
+	Head           *string
+	BranchRef      *string
+	Detached       *bool
+	Bare           bool
+	Locked         bool
+	LockReason     *string
+	Prunable       bool
+	PrunableReason *string
+}
+
 // WorktreeInventory is a single `git worktree list --porcelain` result. It
 // replaces IsPrunableWorktree for status because that helper runs without -C
 // and therefore fails when invoked from an external workspace root.
+//
+// ByBranch and Prunable keep their pre-existing meaning byte for byte: they
+// are keyed by the short branch name and ByBranch values stay the raw
+// porcelain path. Records and ByPath are the new authoritative join surface
+// and are canonicalized, because a path join must not fail on /var versus
+// /private/var.
 type WorktreeInventory struct {
 	Available bool
 	ByBranch  map[string]string
 	Prunable  map[string]bool
+	Records   []WorktreeRecord
+	ByPath    map[string]WorktreeRecord
+	Err       error
+}
+
+// worktreeInventoryUnavailable is the fail-closed result. Every map is empty
+// and no slice is populated, which is the shape existing consumers already
+// handle for a Git failure.
+func worktreeInventoryUnavailable(err error) WorktreeInventory {
+	return WorktreeInventory{
+		ByBranch: map[string]string{},
+		Prunable: map[string]bool{},
+		ByPath:   map[string]WorktreeRecord{},
+		Err:      err,
+	}
 }
 
 // BuildWorktreeInventory runs one `git -C <repoRoot> worktree list
 // --porcelain`. An empty repoRoot or a Git failure yields Available == false,
 // which makes prunability unknown rather than false.
+//
+// Malformed porcelain — reachable only from a fabricated shim, never from real
+// Git — now fails closed instead of publishing a partial map, because a
+// partially parsed worktree map is exactly the input that would let a caller
+// claim a false materialization. Object format is not a hardening trigger: a
+// 64-hex HEAD keeps the inventory available.
 func BuildWorktreeInventory(repoRoot string) WorktreeInventory {
-	inv := WorktreeInventory{ByBranch: map[string]string{}, Prunable: map[string]bool{}}
 	if repoRoot == "" {
-		return inv
+		return worktreeInventoryUnavailable(errors.New("worktree inventory requires a non-empty repository root"))
 	}
 	out, err := exec.Command("git", "-C", repoRoot, "worktree", "list", "--porcelain").Output()
 	if err != nil {
-		return inv
+		return worktreeInventoryUnavailable(err)
 	}
-	inv.Available = true
+	return parseWorktreeInventory(out)
+}
 
-	var curPath, curBranch string
-	var curPrunable bool
+func parseWorktreeInventory(out []byte) WorktreeInventory {
+	inv := WorktreeInventory{
+		ByBranch: map[string]string{},
+		Prunable: map[string]bool{},
+		ByPath:   map[string]WorktreeRecord{},
+	}
+
+	var rawPath string
+	var rec WorktreeRecord
+	started := false
+	var failure error
+
 	flush := func() {
-		if curBranch != "" {
-			if curPrunable {
-				inv.Prunable[curBranch] = true
+		// A block in which no line at all was seen is not a block: real
+		// porcelain ends with a blank line after the last record, so the
+		// trailing split element must be a no-op rather than a violation.
+		if !started {
+			return
+		}
+		defer func() {
+			rawPath, rec, started = "", WorktreeRecord{}, false
+		}()
+		if failure != nil {
+			return
+		}
+		if rec.Path == "" {
+			failure = errors.New("worktree inventory: block has no worktree line")
+			return
+		}
+		if _, dup := inv.ByPath[rec.Path]; dup {
+			failure = fmt.Errorf("worktree inventory: duplicate worktree path %q", rec.Path)
+			return
+		}
+		inv.Records = append(inv.Records, rec)
+		inv.ByPath[rec.Path] = rec
+		if rec.BranchRef != nil {
+			short := strings.TrimPrefix(*rec.BranchRef, "refs/heads/")
+			if rec.Prunable {
+				inv.Prunable[short] = true
 			} else {
-				inv.ByBranch[curBranch] = curPath
+				inv.ByBranch[short] = rawPath
 			}
 		}
-		curPath, curBranch, curPrunable = "", "", false
 	}
+
 	for _, raw := range strings.Split(string(out), "\n") {
 		line := strings.TrimRight(raw, "\r")
-		switch {
-		case strings.TrimSpace(line) == "":
+		if strings.TrimSpace(line) == "" {
 			flush()
+			continue
+		}
+		started = true
+		if failure != nil {
+			continue
+		}
+		switch {
 		case strings.HasPrefix(line, "worktree "):
-			curPath = strings.TrimPrefix(line, "worktree ")
+			rawPath = strings.TrimPrefix(line, "worktree ")
+			// An empty or whitespace-only suffix is not a path: canonicalize
+			// would resolve it against the process working directory and
+			// silently accept a block that carries no worktree path.
+			if strings.TrimSpace(rawPath) == "" {
+				rawPath = ""
+				failure = errors.New("worktree inventory: block has no worktree line")
+				continue
+			}
+			rec.Path = canonicalize(rawPath)
+		case strings.HasPrefix(line, "HEAD "):
+			head := strings.TrimPrefix(line, "HEAD ")
+			if !stackStatusObjectID.MatchString(head) {
+				failure = fmt.Errorf("worktree inventory: malformed HEAD object id %q", head)
+				continue
+			}
+			rec.Head = strPtr(head)
 		case strings.HasPrefix(line, "branch "):
-			curBranch = strings.TrimPrefix(strings.TrimPrefix(line, "branch "), "refs/heads/")
-		case line == "prunable" || strings.HasPrefix(line, "prunable "):
-			curPrunable = true
+			ref := strings.TrimPrefix(line, "branch ")
+			if !strings.HasPrefix(ref, "refs/heads/") || len(ref) <= len("refs/heads/") {
+				failure = fmt.Errorf("worktree inventory: malformed branch ref %q", ref)
+				continue
+			}
+			if rec.Detached != nil && *rec.Detached {
+				failure = errors.New("worktree inventory: block carries both detached and a branch line")
+				continue
+			}
+			rec.BranchRef = strPtr(ref)
+			rec.Detached = boolPtr(false)
+		case line == "detached":
+			if rec.BranchRef != nil {
+				failure = errors.New("worktree inventory: block carries both detached and a branch line")
+				continue
+			}
+			rec.Detached = boolPtr(true)
+		case line == "bare":
+			rec.Bare = true
+		case line == "locked":
+			rec.Locked = true
+		case strings.HasPrefix(line, "locked "):
+			rec.Locked = true
+			rec.LockReason = strPtr(strings.TrimPrefix(line, "locked "))
+		case line == "prunable":
+			rec.Prunable = true
+		case strings.HasPrefix(line, "prunable "):
+			rec.Prunable = true
+			rec.PrunableReason = strPtr(strings.TrimPrefix(line, "prunable "))
 		}
 	}
 	flush()
+
+	if failure != nil {
+		return worktreeInventoryUnavailable(failure)
+	}
+	inv.Available = true
 	return inv
 }
 

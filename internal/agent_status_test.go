@@ -2164,3 +2164,185 @@ func TestFormatAgentStatusKeepsOneIssuePerLine(t *testing.T) {
 	}
 	t.Fatalf("the issue line was never rendered:\n%s", out)
 }
+
+// TestBuildWorktreeInventory_Additive pins the new Records/ByPath surface while
+// asserting that Available, ByBranch (keys and raw porcelain path values), and
+// Prunable keep exactly their pre-feature values.
+func TestBuildWorktreeInventory_Additive(t *testing.T) {
+	t.Setenv("GIT_CONFIG_COUNT", "0")
+	// Git always records a symlink-free worktree path, so a canonical fixture
+	// root keeps the real-Git assertions exact; the raw/canonical split of the
+	// legacy ByBranch value is pinned at the parser below.
+	root := canonicalize(t.TempDir())
+	repo := filepath.Join(root, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitInTest(t, root, "init", "--initial-branch=main", repo)
+	gitInTest(t, repo, "commit", "--allow-empty", "-m", "init")
+	for _, branch := range []string{"attached", "detachedbr", "lockedbr", "gonebr"} {
+		gitInTest(t, repo, "branch", branch, "main")
+	}
+	attached := filepath.Join(root, "wt-attached")
+	detached := filepath.Join(root, "wt-detached")
+	locked := filepath.Join(root, "wt-locked")
+	gone := filepath.Join(root, "wt-gone")
+	gitInTest(t, repo, "worktree", "add", attached, "attached")
+	gitInTest(t, repo, "worktree", "add", detached, "detachedbr")
+	gitInTest(t, detached, "checkout", "--detach")
+	gitInTest(t, repo, "worktree", "add", locked, "lockedbr")
+	gitInTest(t, repo, "worktree", "lock", "--reason", "busy testing", locked)
+	gitInTest(t, repo, "worktree", "add", gone, "gonebr")
+	if err := os.RemoveAll(gone); err != nil {
+		t.Fatal(err)
+	}
+
+	inv := BuildWorktreeInventory(repo)
+	if !inv.Available || inv.Err != nil {
+		t.Fatalf("inventory = %+v", inv)
+	}
+	if len(inv.Records) != 5 {
+		t.Fatalf("one record per block, got %d: %+v", len(inv.Records), inv.Records)
+	}
+	if len(inv.ByPath) != len(inv.Records) {
+		t.Fatalf("ByPath must key every record: %+v", inv.ByPath)
+	}
+
+	main := inv.ByPath[canonicalize(repo)]
+	if main.Head == nil || !stackStatusObjectID.MatchString(*main.Head) {
+		t.Fatalf("main record head = %v", main.Head)
+	}
+	if main.BranchRef == nil || *main.BranchRef != "refs/heads/main" {
+		t.Fatalf("main record branch = %v", main.BranchRef)
+	}
+	if main.Detached == nil || *main.Detached {
+		t.Fatalf("main record detached = %v", main.Detached)
+	}
+
+	det := inv.ByPath[canonicalize(detached)]
+	if det.Detached == nil || !*det.Detached || det.BranchRef != nil {
+		t.Fatalf("detached record = %+v", det)
+	}
+
+	lock := inv.ByPath[canonicalize(locked)]
+	if !lock.Locked || lock.LockReason == nil || *lock.LockReason != "busy testing" {
+		t.Fatalf("locked record = %+v", lock)
+	}
+
+	prunable := inv.ByPath[canonicalize(gone)]
+	if !prunable.Prunable || prunable.PrunableReason == nil || *prunable.PrunableReason == "" {
+		t.Fatalf("prunable record = %+v", prunable)
+	}
+
+	if inv.ByBranch["attached"] != attached {
+		t.Fatalf("ByBranch value must stay the raw porcelain path: %q vs %q", inv.ByBranch["attached"], attached)
+	}
+	if got := inv.ByPath[canonicalize(attached)].Path; got != canonicalize(attached) {
+		t.Fatalf("Record.Path must be canonical, got %q", got)
+	}
+	for _, rec := range inv.Records {
+		if rec.Path != canonicalize(rec.Path) {
+			t.Fatalf("every Record.Path must be canonical, got %q", rec.Path)
+		}
+	}
+
+	// The legacy ByBranch value stays the raw porcelain string while
+	// Record.Path and the ByPath key are canonicalized, asserted on a path
+	// whose temp root differs before and after filepath.EvalSymlinks.
+	realRoot := filepath.Join(root, "real")
+	linkRoot := filepath.Join(root, "link")
+	if err := os.MkdirAll(realRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realRoot, linkRoot); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	rawPath := filepath.Join(linkRoot, "wt")
+	if err := os.MkdirAll(rawPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	split := parseWorktreeInventory([]byte("worktree " + rawPath + "\nbranch refs/heads/split\n\n"))
+	if !split.Available {
+		t.Fatalf("split fixture = %+v", split)
+	}
+	if canonicalize(rawPath) == rawPath {
+		t.Fatalf("the split fixture must differ before and after EvalSymlinks: %q", rawPath)
+	}
+	if split.ByBranch["split"] != rawPath {
+		t.Fatalf("ByBranch value = %q, want the raw porcelain path %q", split.ByBranch["split"], rawPath)
+	}
+	if _, ok := split.ByPath[canonicalize(rawPath)]; !ok {
+		t.Fatalf("ByPath must be keyed by the canonical path: %+v", split.ByPath)
+	}
+	if !inv.Prunable["gonebr"] {
+		t.Fatal("a prunable branch stays in Prunable")
+	}
+	if _, ok := inv.ByBranch["gonebr"]; ok {
+		t.Fatal("a prunable branch must not land in ByBranch")
+	}
+	if _, ok := inv.ByBranch["detachedbr"]; ok {
+		t.Fatal("a detached worktree contributes no branch key")
+	}
+}
+
+// TestBuildWorktreeInventory_FailClosed pins the deliberate hardening: on
+// malformed porcelain the whole inventory is invalidated instead of publishing
+// a partial map. A well-formed 64-hex HEAD is valid and must never be
+// re-tightened into a 40-length rule.
+func TestBuildWorktreeInventory_FailClosed(t *testing.T) {
+	sha1 := strings.Repeat("a", 40)
+	sha256 := strings.Repeat("b", 64)
+	cases := []struct {
+		name    string
+		payload string
+		valid   bool
+	}{
+		{name: "no worktree line", payload: "HEAD " + sha1 + "\nbranch refs/heads/a\n\n"},
+		{name: "empty worktree path", payload: "worktree \nHEAD " + sha1 + "\nbranch refs/heads/a\n\n"},
+		{name: "whitespace only worktree path", payload: "worktree \t  \nHEAD " + sha1 + "\nbranch refs/heads/a\n\n"},
+		{name: "duplicate path", payload: "worktree /x\nbranch refs/heads/a\n\nworktree /x\nbranch refs/heads/b\n\n"},
+		{name: "malformed branch ref", payload: "worktree /x\nbranch heads/a\n\n"},
+		{name: "empty branch remainder", payload: "worktree /x\nbranch refs/heads/\n\n"},
+		{name: "empty head", payload: "worktree /x\nHEAD \nbranch refs/heads/a\n\n"},
+		{name: "non hex head", payload: "worktree /x\nHEAD ZZZZ\nbranch refs/heads/a\n\n"},
+		{name: "branch then detached", payload: "worktree /x\nbranch refs/heads/a\ndetached\n\n"},
+		{name: "detached then branch", payload: "worktree /x\ndetached\nbranch refs/heads/a\n\n"},
+		{name: "sha1 head is valid", payload: "worktree /x\nHEAD " + sha1 + "\nbranch refs/heads/a\n\n", valid: true},
+		{name: "sha256 head is valid", payload: "worktree /x\nHEAD " + sha256 + "\nbranch refs/heads/a\n\n", valid: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			inv := parseWorktreeInventory([]byte(tc.payload))
+			if tc.valid {
+				if !inv.Available || inv.Err != nil {
+					t.Fatalf("a well-formed payload must stay available: %+v", inv)
+				}
+				if inv.Records[0].Head == nil || !strings.Contains(tc.payload, *inv.Records[0].Head) {
+					t.Fatalf("the object id must be stored verbatim: %v", inv.Records[0].Head)
+				}
+				return
+			}
+			if inv.Available || inv.Err == nil {
+				t.Fatalf("malformed porcelain must fail closed: %+v", inv)
+			}
+			if len(inv.Records) != 0 || len(inv.ByPath) != 0 || len(inv.ByBranch) != 0 || len(inv.Prunable) != 0 {
+				t.Fatalf("a failed inventory publishes no partial map: %+v", inv)
+			}
+		})
+	}
+
+	// Real porcelain ends with a blank line after the last block; the trailing
+	// empty split element must be a no-op rather than a violation.
+	trailing := parseWorktreeInventory([]byte("worktree /x\nHEAD " + sha1 + "\nbranch refs/heads/a\n\n\n"))
+	if !trailing.Available {
+		t.Fatalf("a trailing blank line must not invalidate the inventory: %+v", trailing)
+	}
+	// A bare main worktree carries neither a branch nor a detached line.
+	bare := parseWorktreeInventory([]byte("worktree /x\nbare\n\n"))
+	if !bare.Available || bare.Records[0].Detached != nil || !bare.Records[0].Bare {
+		t.Fatalf("bare record = %+v", bare)
+	}
+	if empty := BuildWorktreeInventory(""); empty.Available || empty.Err == nil {
+		t.Fatalf("an empty repo root yields an unavailable inventory with a cause: %+v", empty)
+	}
+}

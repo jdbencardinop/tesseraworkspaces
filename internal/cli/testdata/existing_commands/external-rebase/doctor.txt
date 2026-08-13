@@ -1,0 +1,10 @@
+exit: 0
+auth: 3 issue(s)
+  [!] api: on branch "HEAD", expected "api"
+      run: cd <WORKTREES>/api && git checkout api
+  [!] api: has uncommitted changes
+      commit or stash changes before syncing
+  [!] api: ancestry stale: parent-advanced-no-base-record
+      parent `refs/heads/models` advanced to 0e0c8ce; no recorded base commit for this branch, so sync uses a plain rebase — verify the parent history was not rewritten; run: tws sync auth
+
+3 issue(s) found.

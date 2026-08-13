@@ -1,0 +1,15 @@
+exit: 0
+Workspace: <META> (mode: checkout)
+  ID:   <STABLE_ID>
+  Repo: <REPO>
+  Branch: main
+  [!] Working tree is dirty
+
+Features:
+  [ok] auth/models base=main ancestry=current head=b79744b parent=b79744b
+  [ok] auth/api base=models ancestry=current head=b79744b parent=b79744b
+  [!] auth/../escape base=main ancestry=missing [ref-missing]
+      reason: child-ref-missing
+      git branch `../escape` does not exist while stack entry "../escape" of feature auth is still configured; restore the branch from its remote or from a known commit, for example `git branch ../escape <known-commit>`, or deliberately remove and recreate the stack entry if no work must be preserved
+
+2 issue(s) found.

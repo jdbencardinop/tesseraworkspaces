@@ -19,14 +19,14 @@ Current shipped checkout slices:
 6. checkout doctor and list observability;
 7. workspace sibling links (`<spaces-root>/spaces.yaml`, `tws space add/list/show/remove`);
 8. agent work status (`tws status [feature] [--json]`) plus external per-invocation direct session records;
-9. mode-independent stack ancestry evaluation shared by checkout doctor, checkout list, and external `tws doctor`.
+9. mode-independent stack ancestry evaluation shared by checkout doctor, checkout list, and external `tws doctor`;
+10. stack status (`tws stack status <feature> [--json]`) projecting ancestry, materialization, upstream, and parent counts.
 
 The opt-in global workspace registry is also shipped for stable cross-repository
 discovery, health checks, and moved-target repair.
 
-Next roadmap feature: **stack status** — surface local head, configured parent
-and parent head, ancestry state, dirty/rebase state, upstream, and ahead/behind
-counts as machine output, consuming the shipped `StackEdge` projection.
+Next roadmap feature: **sync modes** — local-only propagation, no-fetch
+operation, surgical branch/descendant sync, and explicit root targets.
 See [`roadmap.md`](roadmap.md).
 
 ## Tpatch workflow

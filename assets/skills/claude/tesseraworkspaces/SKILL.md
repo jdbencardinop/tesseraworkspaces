@@ -29,6 +29,7 @@ tws <command> [args]
 | `tws export <feature> [--full] [--to-repo] [-o file]` | Export workspace metadata |
 | `tws import <file> [--from-repo <feature>]` | Import workspace from YAML or tarball |
 | `tws stack <feature>` | Show branch dependency tree |
+| `tws stack status <feature> [--json]` | Stack ancestry, materialization, and upstream status |
 | `tws list` / `tws ls` | List features and branches |
 | `tws delete <feature>` | Remove feature and all worktrees |
 | `tws archive <feature> <branch>` | Remove worktree, keep branch ref |
@@ -330,6 +331,35 @@ The human view prints the workspace verdict in its header and every issue in a
 block keyed by its own home (`Branch: <feature>/<name>`, `Feature: <feature>`,
 `Workspace:`), so a `[!] attn` row always shows its code, message, and guidance
 without `--json`.
+
+### Stack Status
+
+`tws stack status <feature> [--json]` reports, for every entry in `stack.yaml`
+order, its logical name and Git branch, local head, configured base and parent
+head, the recorded `last_base_sha` verdict, ancestry state, materialization,
+dirty and in-progress Git operation, upstream state, and ahead/behind counts
+against the parent. The legacy `tws stack <feature>` tree is unchanged.
+
+- It **consumes the shipped ancestry projection** that `tws doctor` and
+  `tws list` use and computes no ancestry of its own, so the same fixture always
+  reports the same state.
+- **`tws stack status` never fetches; upstream and parent counts describe local
+  refs only.**
+- **A null field means tws could not establish the fact locally — it never means
+  clean, attached, zero, or no upstream.**
+- `is_current_checkout` is **always `null` in external mode**: there is no single
+  current checkout there.
+- Exit status is 0 on any reportable state, including `stale`, `divergent`,
+  `missing`, `cross-repo-unsupported`, unevaluated edges, and dirty worktrees. A
+  non-zero exit means no report was produced and nothing reached stdout.
+- **`tws stack -- status` prints the legacy tree for a feature literally named
+  `status`**, and `tws stack status status` reports that feature's stack status.
+
+```sh
+tws stack status auth
+tws stack status auth --json | jq '.entries[] | select(.ancestry.status!="current")'
+tws stack status auth --json | jq -r '.entries[] | "\(.name) \(.materialization.state) \(.upstream.state)"'
+```
 
 ## Checkout Workspace Mode
 

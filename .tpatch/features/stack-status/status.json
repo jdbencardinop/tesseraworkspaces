@@ -2,13 +2,17 @@
   "id": "stack-status",
   "slug": "stack-status",
   "title": "Add tws stack status \u003cfeature\u003e [--json] while preserving the existing tws stack \u003cfeature\u003e dependency tree. Use the shared stack ancestry evaluator to show each logical and Git branch, local head, configured parent/base and parent head, LastBaseSHA, ancestry state, materialization, dirty/rebase state, upstream, and ahead/behind counts. Keep it deterministic, read-only, local-only by default with no implicit fetch, mode-aware for external worktrees and checkout logical branches, and explicit about literal refs and cross-repo entries.",
-  "state": "defined",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-08-11T17:39:15Z",
-  "updated_at": "2026-08-13T08:22:33Z",
-  "last_command": "explore",
-  "notes": "Phase advanced manually (--manual); artifact authored at exploration.md",
-  "apply": {},
+  "updated_at": "2026-08-13T10:31:07Z",
+  "last_command": "record",
+  "notes": "landed at 2026-08-13T10:31:07Z",
+  "apply": {
+    "completed_at": "2026-08-13T10:30:14Z",
+    "base_commit": "2ef1428c6a8bfad2eb43c1b7d45dae91e65e437c",
+    "has_patch": true
+  },
   "reconcile": {},
   "depends_on": [
     {

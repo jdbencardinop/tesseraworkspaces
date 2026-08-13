@@ -1,0 +1,4 @@
+exit: 0
+auth: healthy (1 active worktree(s))
+
+All healthy.
