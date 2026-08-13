@@ -5,8 +5,8 @@
   "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-08-11T17:39:15Z",
-  "updated_at": "2026-08-13T10:31:07Z",
-  "last_command": "record",
+  "updated_at": "2026-08-13T10:37:57Z",
+  "last_command": "verify",
   "notes": "landed at 2026-08-13T10:31:07Z",
   "apply": {
     "completed_at": "2026-08-13T10:30:14Z",
@@ -47,5 +47,20 @@
       "slug": "fix-status-tmux-test-portability",
       "kind": "hard"
     }
-  ]
+  ],
+  "verify": {
+    "verified_at": "2026-08-13T10:37:57Z",
+    "passed": false,
+    "recipe_hash_at_verify": "952a51e35809c68b63649d54b25594fb5004600db6135b31115b4cf3eb8fe54d",
+    "patch_hash_at_verify": "f4a7ac2a9cb16fe98fdcf799a556ed87921b9b911edcb7bc0e6426cc880d6518",
+    "parent_snapshot": {
+      "agent-work-status-dashboard": "applied",
+      "archive-worktree": "applied",
+      "cobra-migration": "applied",
+      "fix-missing-completions": "applied",
+      "fix-space-test-git-maintenance-race": "applied",
+      "fix-status-tmux-test-portability": "applied",
+      "stack-ancestry-doctor": "applied"
+    }
+  }
 }
