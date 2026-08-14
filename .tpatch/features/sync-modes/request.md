@@ -1,0 +1,8 @@
+# Feature Request: Add explicit sync modes to tws sync while preserving no-flag behavior. Distinguish local-only propagation (update selected descendants from local parent tips without advancing roots from remote bases) from no-fetch operation (use existing local and remote-tracking refs without network access). Support selecting one logical branch, an explicit root, and an optional descendant subtree; carry the selected mode, scope, push, validation, and recovery semantics through --continue and --abort; make external and checkout behavior consistent; reject incompatible combinations before mutation; and use real repositories, remotes, and worktrees for safety tests. Keep rebase-plan preview, safe reparent/restack, patch identity, and implicit multi-parent behavior out of scope.
+
+**Slug**: `sync-modes`
+**Created**: 2026-08-14T08:02:34Z
+
+## Description
+
+Add explicit sync modes to tws sync while preserving no-flag behavior. Distinguish local-only propagation (update selected descendants from local parent tips without advancing roots from remote bases) from no-fetch operation (use existing local and remote-tracking refs without network access). Support selecting one logical branch, an explicit root, and an optional descendant subtree; carry the selected mode, scope, push, validation, and recovery semantics through --continue and --abort; make external and checkout behavior consistent; reject incompatible combinations before mutation; and use real repositories, remotes, and worktrees for safety tests. Keep rebase-plan preview, safe reparent/restack, patch identity, and implicit multi-parent behavior out of scope.

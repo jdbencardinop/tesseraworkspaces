@@ -1,0 +1,115 @@
+{
+  "id": "sync-modes",
+  "slug": "sync-modes",
+  "title": "Add explicit sync modes to tws sync while preserving no-flag behavior. Distinguish local-only propagation (update selected descendants from local parent tips without advancing roots from remote bases) from no-fetch operation (use existing local and remote-tracking refs without network access). Support selecting one logical branch, an explicit root, and an optional descendant subtree; carry the selected mode, scope, push, validation, and recovery semantics through --continue and --abort; make external and checkout behavior consistent; reject incompatible combinations before mutation; and use real repositories, remotes, and worktrees for safety tests. Keep rebase-plan preview, safe reparent/restack, patch identity, and implicit multi-parent behavior out of scope.",
+  "state": "analyzed",
+  "compatibility": "unknown",
+  "requested_at": "2026-08-14T08:02:34Z",
+  "updated_at": "2026-08-14T09:32:54Z",
+  "last_command": "analyze",
+  "notes": "Phase advanced manually (--manual); artifact authored at analysis.md",
+  "apply": {},
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "keep-track-of-stacked-diffs-and-dependencies",
+      "kind": "hard"
+    },
+    {
+      "slug": "sync-continue",
+      "kind": "hard"
+    },
+    {
+      "slug": "amend-aware-rebase",
+      "kind": "hard"
+    },
+    {
+      "slug": "checkout-stack-safety",
+      "kind": "hard"
+    },
+    {
+      "slug": "branch-name-decoupling",
+      "kind": "hard"
+    },
+    {
+      "slug": "multi-repo-workspaces",
+      "kind": "hard"
+    },
+    {
+      "slug": "fix-default-base-branch",
+      "kind": "hard"
+    },
+    {
+      "slug": "archive-worktree",
+      "kind": "hard"
+    },
+    {
+      "slug": "quiet-fetch-output",
+      "kind": "hard"
+    },
+    {
+      "slug": "cobra-migration",
+      "kind": "hard"
+    },
+    {
+      "slug": "fix-sync-continue-descendants",
+      "kind": "hard"
+    },
+    {
+      "slug": "push-branches",
+      "kind": "hard"
+    },
+    {
+      "slug": "fix-checkout-feature-path-routing",
+      "kind": "hard"
+    },
+    {
+      "slug": "fix-external-feature-dir-resolution",
+      "kind": "hard"
+    },
+    {
+      "slug": "agent-work-status-dashboard",
+      "kind": "hard"
+    },
+    {
+      "slug": "checkout-workspace-lifecycle",
+      "kind": "hard"
+    },
+    {
+      "slug": "fix-sync-branch-identity",
+      "kind": "soft"
+    },
+    {
+      "slug": "post-rebase-validation",
+      "kind": "soft"
+    },
+    {
+      "slug": "divergent-stack-sync",
+      "kind": "soft"
+    },
+    {
+      "slug": "stack-ancestry-doctor",
+      "kind": "soft"
+    },
+    {
+      "slug": "stack-status",
+      "kind": "soft"
+    },
+    {
+      "slug": "worktree-health-check",
+      "kind": "soft"
+    },
+    {
+      "slug": "clean-git-output",
+      "kind": "soft"
+    },
+    {
+      "slug": "fix-missing-completions",
+      "kind": "soft"
+    },
+    {
+      "slug": "skill-distribution",
+      "kind": "soft"
+    }
+  ]
+}
