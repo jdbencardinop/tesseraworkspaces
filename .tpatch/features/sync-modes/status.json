@@ -5,9 +5,9 @@
   "state": "defined",
   "compatibility": "unknown",
   "requested_at": "2026-08-14T08:02:34Z",
-  "updated_at": "2026-08-15T00:09:32Z",
-  "last_command": "define",
-  "notes": "Phase advanced manually (--manual); artifact authored at spec.md",
+  "updated_at": "2026-08-15T21:38:54Z",
+  "last_command": "explore",
+  "notes": "Phase advanced manually (--manual); artifact authored at exploration.md",
   "apply": {},
   "reconcile": {},
   "depends_on": [

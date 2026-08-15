@@ -20,7 +20,7 @@ always means: return a Cobra `RunE` error, exit 1, and perform **no** Git mutati
 
 | Where | Settles |
 |---|---|
-| §3 | D1, D14, D16, requirement 1 (CLI contract) |
+| §3 | D1, D14, D16, requirement 1 (CLI contract); §3.11 settles the external sync layout resolver (the external half of D9/C4) |
 | §4 | requirement 2 (no-flag compatibility), M15 |
 | §5 | D2, D3, D4, D11, D12, M4, M5, M6, requirement 3 (selector/plan model) |
 | §6 | D14, M1, M2, M3, requirement 4 (fetch/propagation matrix) |
@@ -60,7 +60,8 @@ Three genuinely independent decisions are compressed into that one point:
 no-new-flag invocation does in either mode — except for the **four** declared, bounded categories of
 observable change enumerated in §4.1 rules 3–7 and §4.5 (a corrupt `.sync-state.yaml`, C1; a
 `--push` over a decoupled `Name`/`Branch`, C2; a checkout over a stack with duplicate `GitBranch()`
-values, C3, plus C5's additive plan `name:` key; and the two broken cwd cells, C4) — and makes a
+values, C3, plus C5's additive plan `name:` key; and divergent external layouts plus the broken
+checkout cwd cell, C4) — and makes a
 partial (scoped) run recoverable through
 `--continue` / `--abort` with the run's decisions frozen in persisted state.
 
@@ -322,8 +323,11 @@ Rejected combinations that are **not** errors, stated so the implementer does no
   behaviour exactly: `--abort` wins and `--continue` is ignored, in both modes
   (`internal/cli/sync.go:49-55`, `internal/cli/checkout_sync.go:30-43`). Freezing this is required
   by §4.1; I7 only fires for new-mode invocations and new-mode state.
-- an ordinary legacy `.sync-state.yaml` that is a **symlink**, with no payload beside it and no
-  trigger flag, is **not** refused: the no-flag path reads it exactly as today, following the link.
+- an ordinary legacy `.sync-state.yaml` that is a **symlink** is **not** refused when all three of
+  these hold: the run carries no trigger flag, no `.sync-state.v2.yaml` exists beside it, and the
+  followed content does not decode to a sentinel marker. The no-flag path then reads it exactly as
+  today, following the link; the classifier still records `LegacySymlink` as a fact and simply
+  nobody acts on it. If any of the three fails, the path is a new-mode state path and I18 applies.
   This is a declared legacy safety limitation, not a fix deferred by oversight (§12 item 7).
 - `--no-fetch --push` is **legal** in both modes (D14). `no-fetch` constrains *input* refs; `--push`
   is an explicit, opt-in *output*.
@@ -341,26 +345,59 @@ Binding order for `RunE`. Steps 1–12 mutate nothing.
 3. Pure command-line checks, in this exact order: I1–I6; then I7 when any trigger flag is `Changed`;
    then I8, which is **skipped** when I7 already fired ("I7 before I8", §3.5). These
    run **before** mode dispatch so both modes reject identically and identically early.
-4. Mode dispatch: `ws.Mode == internal.ModeCheckout` → `runCheckoutSync(...)` with the resolved
-   options struct (§10.1). External continues below.
-5. `internal.GuardFeatureName(internal.TwsRoot(), feature)` — unchanged.
-6. `ws.ResolveFeaturePath(feature)` — unchanged.
+4. Mode dispatch: `ws.Mode == internal.ModeCheckout` → `runCheckoutSync(ws, opts)` — the resolved
+   workspace plus the resolved options struct (§10.1). `ws` supplies `ws.RepoRoot` and the mode
+   decision only; the wrapper still calls `internal.RequireFeaturePath(feature)` exactly as it does
+   today, keeping its own `RequireWorkspace` event, its `GuardFeatureName` guard, its layout
+   resolution, and its error semantics unchanged, so the checkout resolution prefix in the argv log
+   is byte-for-byte today's and the C4 containment probe keeps its pinned position immediately after
+   it (AC 2). External
+   continues below.
+5. `twsRoot := internal.TwsRoot()` — **exactly one** call, at the position the shipped code makes
+   its guard-time `internal.TwsRoot()` call — immediately followed by
+   `internal.GuardFeatureName(twsRoot, feature)`, whose root **value**, argument, and position are
+   unchanged. This is the run's only `TwsRoot` resolution event (§3.11).
+6. `ws.ResolveFeaturePath(feature)` — unchanged — immediately followed by the **single** external
+   sync layout resolution of §3.11, `resolveExternalSyncLayout(ws, twsRoot, feature)`, which issues
+   no Git command and re-resolves no root. Its result is the
+   `featurePath` and the worktrees root that **every** later step of this run uses, without
+   exception: state paths (legacy, payload, guard), `stack.yaml`, worktree probing, validation,
+   `--continue`, `--abort`, completion, and push. No later step re-derives a path through
+   `internal.FeaturePath` or `internal.WorktreePath`, and no later step calls `internal.TwsRoot` or
+   `internal.RequireWorkspace` again, so the whole external run performs exactly **two**
+   workspace-root resolution events (§3.11). Every occurrence of `featurePath` below means
+   `layout.FeaturePath`, and every worktree path means
+   `filepath.Join(layout.WorktreesRoot, <entry name>)`.
 7. **New-mode runs only**: symlink refusal I18 over `.sync-state.yaml`, `.sync-state.v2.yaml`, and
-   `.sync-run.lock` (`os.Lstat`, `Mode()&os.ModeSymlink != 0`). A no-flag run does **not** perform
-   this pass; its only symlink-sensitive read is step 8b.
+   `.sync-run.lock` (all three under `layout.FeaturePath`). The refusal is applied by package `cli`
+   from the symlink facts the classifier of step 8 already recorded with one `os.Lstat` per path
+   (§11.1); package `cli` MUST NOT `Lstat` those paths a second time. A no-flag run does **not**
+   perform this pass; its only symlink-sensitive read is step 8b.
 8. **State discrimination** (§8.6), through the single shared classifier
-   `internal.ClassifyExternalSyncState(featurePath, internal.SyncClassifyOpts{AlwaysReadGuard: newMode})`
+   `internal.ClassifyExternalSyncState(layout.FeaturePath, internal.SyncClassifyOpts{AlwaysReadGuard: newMode})`
    (§11.1). This is where the one declared no-flag added **runtime-state-path** read lives (§4.4);
-   the two declared read-only Git argv changes are separate and live in §4.1 rule 6. Sub-order,
-   binding:
-   - a. **legacy path**: on a new-mode run step 7 already refused a symlink; on a no-flag run the
-     file is read exactly as today (`HasSyncState` + `LoadSyncState`), following a symlink as today.
-   - b. **payload**: `os.Lstat(<featurePath>/.sync-state.v2.yaml)` — the single added ordinary
-     runtime-state-path read. A symlink at this path is refused (I18) on **every** run, because no
-     legacy run ever creates it; a regular file is read and decoded.
-   - c. **guard**: `.sync-run.lock` is `Lstat`-ed (I18) and read **only** when the run is a new-mode
-     run, or when step 8a decoded a sentinel marker, or when step 8b found a payload. A no-flag run
-     with no payload and no sentinel never touches the guard.
+   the three declared read-only Git argv changes are separate and live in §4.1 rule 6. The classifier
+   performs **exactly one `os.Lstat` per path it consults**, records the resulting symlink fact in
+   `SyncExternalState`, and performs only the legacy-compatible follow/read that classification
+   requires. Sub-order, binding:
+   - a. **legacy path**: `os.Lstat(<featurePath>/.sync-state.yaml)` records `LegacySymlink`. On a
+     no-flag run the file is then read exactly as today (`HasSyncState` + `LoadSyncState`),
+     **following the symlink as today**, so a legacy symlink with no payload beside it and no
+     trigger flag behaves byte for byte as it does now (§12 item 7, §18 item 9). On a new-mode run
+     package `cli` refuses on the recorded `LegacySymlink` fact (step 7) without re-`Lstat`ing, and
+     the followed content is never used.
+   - b. **payload**: the same single `os.Lstat(<featurePath>/.sync-state.v2.yaml)` — the single
+     added ordinary runtime-state-path read — records `PayloadSymlink`. A symlink at this path is
+     **never followed, never read, and never trusted as content**: the classifier records the fact
+     and leaves `Payload` nil with `PayloadErr` naming the path, and package `cli` refuses with I18
+     on **every** run, because no legacy run ever creates this file. A regular file is read and
+     decoded.
+   - c. **guard**: `.sync-run.lock` is `Lstat`-ed once — recording `GuardSymlink` — and read
+     **only** when the run is a new-mode run, or when step 8a decoded a sentinel marker, or when
+     step 8b found a payload. A guard symlink is likewise never followed, never read, and never
+     authoritative: the fact is recorded, `Guard` stays nil, `GuardLive` stays false, and package
+     `cli` refuses with I18. A no-flag run with no payload and no sentinel never touches the guard
+     at all — not even to `Lstat` it.
    - d. produces a cell of the 12-cell matrix plus guard precedence.
    - e. **deferred I7**: when `cont && abort` survived step 3 (no trigger flag), refuse now **iff**
      step 8a decoded a sentinel marker or step 8b found a payload; otherwise `--abort` wins exactly
@@ -369,7 +406,7 @@ Binding order for `RunE`. Steps 1–12 mutate nothing.
    arm of cells 1 and 7 runs, refuse **I20** when `cont` is set and any trigger flag of §3.3 is
    `Changed` — i.e. when step 8 found no valid-supported payload. `--abort` and
    `--continue` end here in every cell except the two resumable ones.
-10. New-mode only: `internal.LoadStack(featurePath)`; on failure → I9.
+10. New-mode only: `internal.LoadStack(layout.FeaturePath)`; on failure → I9.
 11. New-mode only:
     `internal.ResolveSyncSelection(stack, policy, internal.SyncSelectionOpts{Mode: ws.Mode, NewMode: true, Feature: feature})`
     (§5.2) → I10, I11, I12, I13; then the `no-fetch` local-ref preflight → I14. `Feature` is the
@@ -383,10 +420,11 @@ Binding order for `RunE`. Steps 1–12 mutate nothing.
 16. Fetch (or skip under `no-fetch`).
 17. Plan and rebase.
 
-For a **no-flag** run, steps 7 and 10–15 do not exist; step 8 degrades to today's `HasSyncState`
-behaviour plus the single payload `Lstat` of step 8b (§4.4), with the guard read of step 8c reached
-only when that `Lstat` found a payload or the legacy file decoded to a sentinel; and step 16 is
-today's fetch loop.
+For a **no-flag** run, steps 7 and 10–15 do not exist; step 6's layout resolution runs exactly as it
+does for a new-mode run (it is the run's only path derivation, §3.11); step 8 degrades to today's
+`HasSyncState` behaviour plus the single payload `Lstat` of step 8b (§4.4), with the guard read of
+step 8c reached only when that `Lstat` found a payload or the legacy file decoded to a sentinel; and
+step 16 is today's fetch loop.
 
 ### 3.7 New-mode output — header, no-op, informational, and error text
 
@@ -418,9 +456,26 @@ Nothing to propagate.
 
 Exit 0, no fetch beyond what the fetch policy already performed, no rebase, no `stack.yaml` write.
 The `[-]` symbol is the existing `skipped` symbol from `formatSyncStatus`
-(`internal/cli/sync_helpers.go:217-224`). When the scope is `subtree`/`all` and *several* selected
-entries are anchors, one `[-]` line is printed per anchor, in topological order, and the trailing
-`Nothing to propagate.` line is printed only when **no** selected entry was rebased. In external
+(`internal/cli/sync_helpers.go:217-224`), and the line is produced by **reusing that helper**, not
+by a second formatter: `formatSyncStatus(entry.Name, "no in-stack parent edge to propagate",
+"skipped")` renders `  [%s] %s (%s)` as exactly the bytes above, with the sentence occupying the
+mode slot (§13.3, §3.10 path 3). When the scope is `subtree`/`all` and *several* selected entries
+are anchors, one `[-]` line is printed per anchor and the trailing `Nothing to propagate.` line is
+printed only when **no** selected entry was rebased.
+
+**Ordering of the `[-]` block, stated exactly.** The lines are emitted in the order the selection
+holds, which is the order `internal.TopoSort` returned (§5.2 step 1). `TopoSort` seeds its Kahn
+queue from a Go **map**, so the relative order of entries that are mutually unordered — siblings,
+and independent anchors in particular — is **unspecified and may vary between runs**. This
+specification therefore guarantees exactly one ordering property, in both modes: **every parent
+precedes every child**. It does **not** guarantee, and MUST NOT be read as guaranteeing, any
+"topological sequence", any stable sibling order, or any deterministic anchor order. No second sort
+is added and `TopoSort` is not modified (§13.5). Consequently every multi-anchor `[-]` block —
+in output assertions, in goldens, and in the persisted `selected` list — is compared as an
+**unordered set** (plus the parent-before-child property); only fixtures with exactly **one**
+selected anchor may pin the block byte for byte.
+
+In external
 mode the block is printed by package `cli`; in checkout mode it is printed by
 `internal.RunCheckoutSync` through `printLocalOnlyNoOp` (§3.10 path 3, §10.3), and by nothing else.
 
@@ -456,11 +511,21 @@ _ = cmd.RegisterFlagCompletionFunc("from", syncEntryCompletion)
 1. If `len(args) == 0` → return `nil, cobra.ShellCompDirectiveNoFileComp`. It MUST NOT error and
    MUST NOT print anything: the feature argument may legitimately not be typed yet.
 2. Resolve the workspace and the feature path with the existing resolvable helpers —
-   `internal.RequireWorkspace()` then `ws.ResolveFeaturePath(feature)` — and **degrade every error
-   to "no candidates"**: on any error return `nil, cobra.ShellCompDirectiveNoFileComp`. It MUST NOT
+   `internal.RequireWorkspace()`, then **one** `internal.TwsRoot()` call, then
+   **`resolveExternalSyncLayout(ws, twsRoot, feature)`** (§3.11), the same
+   resolver the run itself uses, so `--only <TAB>` can never offer entries from a directory the run
+   would not sync (and can never offer nothing for a feature `--only <name>` syncs fine) — and
+   **degrade every error
+   to "no candidates"**: on any error return `nil, cobra.ShellCompDirectiveNoFileComp`. Exactly two
+   workspace-root resolution events are performed (one `RequireWorkspace` event, one `TwsRoot`
+   event, §3.11) and never more; the resolver itself performs none. It MUST NOT
    call `internal.RequireTool`, MUST NOT print, and MUST NOT exit. (There is no
-   `internal.ResolveWorkspace`; these two helpers are the resolution path.)
-3. Load `stack.yaml`; on error return `nil, cobra.ShellCompDirectiveNoFileComp`.
+   `internal.ResolveWorkspace`; `RequireWorkspace` plus `TwsRoot` plus the layout resolver are the
+   resolution path.)
+3. Load `stack.yaml` from `layout.FeaturePath`; on error return
+   `nil, cobra.ShellCompDirectiveNoFileComp`. `internal.ListBranches` MUST NOT be reused: it does
+   not filter `Archived` and it falls back to listing `worktrees/`, both of which this section
+   forbids.
 4. Return every `StackEntry.Name` where `!entry.Archived`, in `stack.yaml` file order, with
    `cobra.ShellCompDirectiveNoFileComp`.
 
@@ -499,8 +564,13 @@ exactly these three, and no others:
 Rule 3 is binding and settles ownership so the implementation is determinate: **`RunCheckoutSync`
 owns the checkout no-op print through `printLocalOnlyNoOp`; no formatter callback is introduced, and
 `internal/cli/checkout_sync.go` MUST NOT print the block.** `printLocalOnlyNoOp` prints one `[-]`
-line per selected anchor in topological order — anchors are excluded from the plan under
-`local-only` (§10.3, §6.6), so the lines cannot come from the plan — and prints
+line per selected anchor, in the selection's `TopoSort` order — parent-before-child only, sibling
+and independent-anchor order unspecified (§3.7) — so a multi-anchor block is asserted as an
+unordered set and never as a pinned sequence. Anchors are excluded from the plan under
+`local-only` (§10.3, §6.6), so the lines cannot come from the plan. It reproduces the exact bytes
+`formatSyncStatus(name, "no in-stack parent edge to propagate", "skipped")` produces in package
+`cli` — package `internal` cannot call that helper, so it repeats the same literal format, and the
+two MUST stay byte-identical (§3.7). It prints
 `Nothing to propagate.` **only** when the resulting plan is empty, i.e. when nothing will be
 rebased, matching §3.7 exactly. It prints nothing at all when the policy is not `local-only` or when
 the selection contains no anchor, and it is unreachable on a no-flag run because a no-flag run has
@@ -510,6 +580,510 @@ no selection.
 (`internal/cli/checkout_sync.go`) and are printed after the block. All three paths are guarded by
 the new-mode / v2 condition, so no-flag checkout output is unchanged, and they are the only
 `fmt.Print*` calls this feature adds to package `internal`.
+
+### 3.11 External sync layout resolution — one resolver for the whole external path (C4 rule 2)
+
+External sync derives the feature directory **twice today**, from two different roots, and mixes
+them inside a single run. The two derivations disagree exactly when `internal.TwsRoot()` and
+`ws.MetadataRoot` disagree, which is the **documented, supported `TWS_ROOT` override**:
+`resolveTwsRoot` honours `TWS_ROOT` first (`internal/paths.go:56-82`), while
+`ResolveCurrentWorkspaceE` / `resolveExternalRoot` never read it (`internal/workspace.go`).
+
+- **Candidate B — `internal.FeaturePath(feature)`** (`filepath.Join(internal.TwsRoot(), feature)`),
+  with worktrees at `internal.WorktreePath(feature, name)`. Every one of those calls re-enters
+  `internal.TwsRoot()` and therefore re-resolves the workspace root from Git; after this feature the
+  **same value** is computed once, as `filepath.Join(twsRoot, feature)`, from the single
+  `internal.TwsRoot()` call the command already makes (see "Workspace-root resolution happens once
+  per external command" below). This is **today's execution root**: it
+  is where `syncFeature` loads `stack.yaml` (`internal/cli/sync.go:173-174`), where
+  `syncWithStackFiltered` probes worktrees (`internal/cli/sync_helpers.go:32,79`), where
+  `staleStackEdges` probes children (`internal/cli/sync_helpers.go:164`), where
+  `markUpdatedAncestors` and `syncFallback` walk `worktrees/`, and where `handleSyncAbort` /
+  `handleSyncContinue` / `branchContainsConfiguredParent` resolve worktree paths
+  (`internal/cli/sync.go:92,107,158`).
+- **Candidate A — `ws.ResolveFeaturePath(feature)`** — the path `RunE` resolves at step 6
+  (`internal/cli/sync.go:45`), which is where `.sync-state.yaml` is read from today, and the root
+  `pushFeature` uses via `internal.RequireFeaturePath` / `internal.RequireWorktreePath` — the pair
+  that also carries `tws push`'s only sibling-space guard and its checkout-mode
+  `ErrWorktreeUnsupported` refusal, both of which are preserved explicitly below.
+
+Under a divergent `TWS_ROOT` the shipped code therefore already runs **split-brain**: it rebases
+under B while reading and writing sync state under A, and `tws sync --push` syncs under B and then
+fails its push half with `no stack.yaml found for feature: <f>` under A. Re-routing only the
+`syncFeature` half onto candidate A would be **strictly worse**: the run would load no stack, fall
+into `syncFallback` over a non-existent `worktrees/` directory, print nothing, rebase nothing, and
+exit 0 with `Sync complete.` — a silent no-op on the frozen no-flag path. This specification
+therefore replaces both derivations with **one** resolver, used by the entire external sync path.
+
+**Type and function** (package `cli`, `internal/cli/sync_modes.go`, unexported):
+
+```go
+// externalSyncLayout is the one physical layout of one external sync run.
+// Every path the run touches is derived from these two fields and nothing else.
+type externalSyncLayout struct {
+    FeaturePath   string // <root>/<feature>
+    WorktreesRoot string // <root>/<feature>/worktrees
+}
+
+func resolveExternalSyncLayout(ws internal.Workspace, twsRoot, feature string) (externalSyncLayout, error)
+```
+
+`twsRoot` is **always** the value of the caller's own single `internal.TwsRoot()` call. The resolver
+never calls `internal.TwsRoot`, `internal.FeaturePath`, `internal.WorktreePath`,
+`internal.RequireWorkspace`, `internal.LoadConfig`, or any Git command, so it can never hide a
+workspace resolution inside itself (§13.4 rule 2, AC 51).
+
+**Resolution rule, binding and total.** In this exact order:
+
+1. `b := filepath.Join(twsRoot, feature)` (candidate B — byte-identical to today's
+   `internal.FeaturePath(feature)`, but computed from the already-resolved root) and
+   `a, err := ws.ResolveFeaturePath(feature)`
+   (candidate A). When `ws.ResolveFeaturePath` errors — including
+   `*ErrAmbiguousFeature` — the error is returned **verbatim**, exactly as step 6 does today; the
+   resolver adds no error of its own and repairs nothing.
+2. If `filepath.Clean(a) == filepath.Clean(b)` — every healthy single-workspace layout, every AC 1
+   fixture, and every frozen golden — the winner is that path and the resolver probes **nothing**.
+   This is what keeps the frozen path free of any added read.
+3. Otherwise, if `<b>/stack.yaml` is readable (`internal.LoadStack(b)` returns a nil error), **B
+   wins — including when A also has a readable stack**. This preserves the documented `TWS_ROOT`
+   priority and today's execution root: the run keeps rebasing exactly the stack it rebases today,
+   and only the state/push/worktree halves are pulled onto the same root.
+4. Otherwise, if `<a>/stack.yaml` is readable, A wins.
+5. Otherwise B wins, so a feature with no readable stack under either root takes today's frozen
+   `syncFallback` path from **today's** root (a new-mode run refuses with I9 instead, D10).
+6. `WorktreesRoot = filepath.Join(<winner>, "worktrees")` **always**. A run can never load a stack
+   from one root and probe worktrees, state, or push targets under the other. There are no mixed
+   roots anywhere in the external path.
+
+The resolver issues **no Git command**, calls **no** workspace or root resolver of its own
+(`internal.TwsRoot`, `internal.FeaturePath`, `internal.WorktreePath`, `internal.RequireWorkspace`,
+`internal.RequireFeaturePath`, `internal.RequireWorktreePath`, and `internal.LoadConfig` appear
+nowhere in its body), touches **no runtime-state path**, and creates nothing. Its
+probes are at most two ordinary `<path>/stack.yaml` reads (`os.ReadFile` + `yaml.Unmarshal` through
+`internal.LoadStack`), and by rule 2 there are **zero** of them whenever the two candidates agree,
+so §4.4's declared runtime-state read set and §4.1 rule 6's closed argv carve-out are both
+unaffected. Unsafe or ambiguous layouts are refused by the **existing** guards, unchanged and in
+their existing positions: `GuardFeatureName` at step 5, `ws.ResolveFeaturePath`'s own
+`validateFeatureName` and `*ErrAmbiguousFeature`, and the I18 symlink refusals of §3.6 steps 7–8,
+which apply to the **winner's** three runtime-state paths only. The resolver introduces no new
+symlink policy, no new guard, and no new error string.
+
+**Workspace-root resolution happens once per external command (normative), and the resolver is
+Git-free.** A resolution is not free: it is a Git-visible event, and today the external sync path
+performs one for **every** re-derived path. This specification pins both the **unit** and the
+**budget**.
+
+**The unit — `workspaceRootResolutionEvent`.** One workspace-root resolution is one ordered **pair**
+of read-only Git records, in one of exactly two shapes. Both are read off the shipped tree and
+reproduced from the built binary through a `git` PATH wrapper:
+
+| Event | Caller chain | Ordered records |
+|---|---|---|
+| `RequireWorkspace` event | `internal.RequireWorkspace` → `LoadConfig` → `repoConfigPath` → `RepoRoot` (`internal/config.go:35-41`, `internal/exec.go:44-49`), **then** `MainRepoRoot` (`internal/exec.go:18-24,27-28`) | 1. `git rev-parse --show-toplevel` (process cwd, no `-C`) → 2. `git -C <cwd> rev-parse --git-common-dir` |
+| `TwsRoot` event | `internal.TwsRoot` → `MainRepoRoot` **first**, then `LoadConfig` → `repoConfigPath` → `RepoRoot` (`internal/paths.go:74-79`) | 1. `git -C <cwd> rev-parse --git-common-dir` → 2. `git rev-parse --show-toplevel` |
+
+The two shapes carry the **same two records in the opposite order**, because `RequireWorkspace`
+loads the config before resolving the repository while `TwsRoot` resolves the repository first.
+Verified end to end against the built binary: `tws push <f>` emits exactly
+`rev-parse --show-toplevel` then `-C <cwd> rev-parse --git-common-dir` (one `RequireWorkspace`
+event, from `RequireFeaturePath`); `tws sync <f> --abort` emits those two followed by
+`-C <cwd> rev-parse --git-common-dir` then `rev-parse --show-toplevel` (one `RequireWorkspace` event,
+then one `TwsRoot` event from the guard). Nothing else in either chain shells out:
+`ResolveCurrentWorkspaceE`, `resolveExternalRoot`, `resolveWorkspaceMetadataRoot`,
+`DetectWorkspaceRoot`, `canonicalize`, `stableID`, and `GuardFeatureName` are pure filesystem and
+string work. The one exception is `RequireWorkspace`'s **fallback** arm (`MainRepoRoot` failed, i.e.
+cwd outside any repository — every run from cwd cells 4, 5, and 6 of §12.11), where
+`inferExternalRepoRoot` probes **other** paths with `git -C <path> rev-parse --git-common-dir`
+(`internal/workspace.go:339-395`, through `MainRepoRootIn`, `internal/exec.go:27-28`). Those records
+are **not** part of any event and are **never** anchors: they are ordinary non-event records, ruled
+on normatively below.
+
+**Grouping rule — anchored on a *cwd-scoped* `--git-common-dir`, never on a bare
+`--show-toplevel` and never on a foreign-path `--git-common-dir` (normative).**
+The sidecar records `(verb, argv, cwd, exit-status class)` per invocation. Exactly two record shapes
+can belong to an event: a **bare** `git rev-parse --show-toplevel` — *no* `-C`, emitted by
+`RepoRoot` through `LoadConfig` → `repoConfigPath` (`internal/config.go:35-41`,
+`internal/exec.go:44-49`) — and `git -C <cwd> rev-parse --git-common-dir`, emitted by `MainRepoRoot`
+(`internal/exec.go:18-28`). `MainRepoRoot` passes the **process cwd** as its `-C` argument and the
+bare record inherits that same process cwd, so both records of one event carry the **same recorded
+cwd**. The `-C`-scoped `rev-parse --show-toplevel` of the checkout containment probe (§10.9) is a
+different shape and never participates.
+
+**An anchor is defined by its operand, not by its verb.** A `git -C <path> rev-parse
+--git-common-dir` record is an **anchor** if and only if `filepath.Clean(<path>)` equals the
+`filepath.Clean` of that record's **own recorded process cwd**. Only `MainRepoRoot` — and therefore
+only `RequireWorkspace` and `TwsRoot` — can produce such a record, because it is the only caller
+that passes `os.Getwd()` to `MainRepoRootIn` (`internal/exec.go:18-24`). Every other
+`--git-common-dir` record carries a `-C` operand that is *not* the process cwd; it comes from
+`inferExternalRepoRoot`'s `MainRepoRootIn(<sibling repo | configured repo | worktree>)` calls, it is
+**never** an anchor, is **never** grouped, and is ruled on separately below. Grouping visits the
+anchors in **reverse log order** (last anchor first), so that a show record can never be taken from
+an anchor that has no other partner. For each anchor:
+
+1. **Forward (`common → show`) — a `TwsRoot` event.** If the **immediately following** record is an
+   as-yet-**unconsumed** bare `rev-parse --show-toplevel` in the **same recorded cwd**, the two
+   records form a `TwsRoot` event and both are consumed.
+2. **Backward (`show → common`) — a `RequireWorkspace` event.** Otherwise the **immediately
+   preceding** record MUST be an as-yet-**unconsumed** bare `rev-parse --show-toplevel` in the same
+   recorded cwd; the two form a `RequireWorkspace` event and both are consumed.
+3. **Otherwise the grouping fails.** The comparator reports an error and the capture is **not**
+   compared. An **anchor** is never left ungrouped, never paired across an intervening record, and
+   never silently dropped. (Non-anchor `--git-common-dir` records are not subject to this rule at
+   all — they are never grouped in the first place.)
+
+Forward is preferred over backward, and the reverse-order walk is what makes that preference safe
+rather than greedy: `show common show common` (today's external push, `1 + N` consecutive
+`RequireWorkspace` events, §4.1 rule 6c) groups as `RequireWorkspace` events, because the rightmost
+anchor has no following show and claims the one before it, and so on leftwards. Every real shape in
+this tree groups correctly and uniquely:
+
+| Record run | Grouping | Where it occurs |
+|---|---|---|
+| `show common common show` | one `RequireWorkspace`, then one `TwsRoot` | today's external `syncCmd.RunE` (resolve, then guard) — and the whole post-change external budget, from cwd cells 1–3 |
+| `show common show common …` | `1 + N` `RequireWorkspace` events | today's external push (`RequireFeaturePath`, then `RequireWorktreePath` per entry), from cwd cells 1–3 |
+| `common show common show` | two `TwsRoot` events | consecutive `FeaturePath` / `WorktreePath` derivations |
+| `show common show` | one `TwsRoot`, leading show ungrouped | the measured standalone-probe adjacency below |
+| `show common` `foreign×(1+M)` `common show` | one `RequireWorkspace`, then one `TwsRoot`; the `foreign` records stay ungrouped | the **measured** cwd cells 4–6 shape — `RequireWorkspace`'s fallback arm, below |
+
+Here `foreign` is a `git -C <path> rev-parse --git-common-dir` record whose `-C` operand is **not**
+the process cwd. Under the operand test above it is not an anchor, so the last row groups exactly
+like the first: rule 1's forward test on the first anchor sees a `foreign` record rather than a bare
+show and correctly declines, and rule 2 pairs it backwards with the show that precedes it.
+
+The last row is the only genuinely ambiguous run — a lone `--git-common-dir` record between two bare
+show records can be read either way — and it is resolved by the forward preference of rule 1,
+because that is what the tree actually does (below).
+
+**Unpaired bare `rev-parse --show-toplevel` records are standalone `LoadConfig` probes, and they
+stay in the log exactly where they are.** `internal.LoadConfig` is called from many production sites
+outside `RequireWorkspace` and `TwsRoot`, and at least one of them is **on the external sync path
+itself**: `runValidation` (`internal/cli/sync_helpers.go:237-238`) calls `internal.LoadConfig()` for
+every validated entry, and each such call emits **one** bare `rev-parse --show-toplevel` and nothing
+else. Any bare `rev-parse --show-toplevel` record left unconsumed by the grouping above **is** such a
+probe. It is **not** a resolution event, **not** half of one, and **not** part of the §4.1 rule 6c
+carve-out: it remains in the ordered **non-event** record log and is compared **verbatim**, in
+position, between the pre-change and post-change captures. It may never be removed, merged into an
+event, reordered, or normalized away by a comparator, a test, or an implementation. This
+specification correspondingly does **not** claim — and no test, comparator, changelog entry, or doc
+may claim — that a bare `rev-parse --show-toplevel` record can only come from a resolution event, or
+that no other bare `rev-parse --show-toplevel` exists on these paths.
+
+**Why the anchor is required — the measured `standalone show → common → show` adjacency.** With a
+`test_command` configured, a pre-change external sync run emits, for each validated entry, exactly
+this window (measured with the logging `git` PATH wrapper around the built binary):
+
+```
+git rev-parse --show-toplevel              ← runValidation → internal.LoadConfig   (standalone probe)
+git -C <cwd> rev-parse --git-common-dir    ┐ the next entry's internal.WorktreePath
+git rev-parse --show-toplevel              ┘ → internal.TwsRoot                    (TwsRoot event)
+```
+
+A left-to-right greedy grouping anchored on the **show** record pairs the standalone probe with the
+following `--git-common-dir` record, invents a `RequireWorkspace` event that never happened, and
+orphans the trailing show record of the real `TwsRoot` event — corrupting both the event count and
+each event's shape, on both sides of the comparison, on every fixture that configures a test
+command. Anchoring on the `--git-common-dir` record and preferring the forward pair (rule 1) yields
+the correct reading: **one** `TwsRoot` event, and **one** ungrouped standalone probe that stays in
+the ordered non-event log. Because `runValidation` is called from the same place before and after this
+feature — it simply receives a `layout`-derived worktree path (§13.4 rule 2) — the standalone probes
+appear identically in the pre-change and post-change logs, and the verbatim non-event comparison
+above is what asserts that.
+
+**`inferExternalRepoRoot` probes are ordinary non-event records — never anchors, never grouped, and
+never removed by the layout refactor (normative).** `RequireWorkspace` calls `internal.LoadConfig()`
+and then `MainRepoRoot()`; when that `MainRepoRoot()` **fails** — cwd outside any repository, which
+is exactly cwd cells 4, 5, and 6 of §12.11 — it falls back to `DetectWorkspaceRoot` (Git-free) and
+then to `inferExternalRepoRoot(metadataRoot, cfg)` (`internal/workspace.go:339-395`), which calls
+`MainRepoRootIn(<path>)` once per **candidate** path and therefore emits one
+`git -C <path> rev-parse --git-common-dir` record per candidate. The candidates, in the order the
+code produces them:
+
+1. every **configured** workspace key whose configured root canonicalizes to the metadata root —
+   iterated over the `cfg.Workspaces` **map**, i.e. in **unspecified order**;
+2. the **sibling repo**, `strings.CutSuffix(metadataRoot, ".tws")`, when the metadata root ends in
+   `.tws` — one record;
+3. every **materialized** entry of **every** feature under the metadata root — `os.ReadDir` order
+   (lexical) across feature directories, `stack.Branches` order within each, skipping entries with
+   a non-empty `Repo`, archived entries, and entries whose `worktrees/<name>` directory is absent.
+
+Every one of these records carries a `-C` operand different from the process cwd (the fallback arm
+is only reached because the cwd is **not** a repository), so under the operand test none of them is
+an anchor. They are **ordinary non-event records**: they are never grouped, never counted as
+resolution events, never absorbed into one, never reordered, and never normalized away. They stay in
+the ordered **non-event** record log and are compared **verbatim and in position**, exactly like the
+standalone `LoadConfig` probes. No test, comparator, changelog entry, or doc may claim that a
+`--git-common-dir` record implies a resolution event, or that these records disappear.
+
+**Measured shapes (built binary, logging `git` PATH wrapper, external workspace `<root>/repo.tws`
+holding feature `myfeat` with three materialized entries, no configured workspaces).** From the
+**workspace root** (cell 4) and, identically, from the **feature directory** and a nested
+subdirectory of it (cells 5–6), `tws sync myfeat --abort` emits:
+
+```
+git rev-parse --show-toplevel                                          ┐ RequireWorkspace event
+git -C <cwd> rev-parse --git-common-dir                                ┘ (anchor; BOTH records exit 128)
+git -C <root>/repo                     rev-parse --git-common-dir      ← inferExternalRepoRoot: sibling repo
+git -C <ws>/myfeat/worktrees/feat-root rev-parse --git-common-dir      ← materialized entry 1
+git -C <ws>/myfeat/worktrees/feat-a    rev-parse --git-common-dir      ← materialized entry 2
+git -C <ws>/myfeat/worktrees/feat-b    rev-parse --git-common-dir      ← materialized entry 3
+git -C <cwd> rev-parse --git-common-dir                                ┐ TwsRoot event (guard)
+git rev-parse --show-toplevel                                          ┘ (anchor; BOTH records exit 128)
+```
+
+From the **repository root** or a **linked worktree** (cells 1–3) the same command emits only
+`show, common@cwd, common@cwd, show` — four records, two events, **zero** inference records, because
+`MainRepoRoot()` succeeds and the fallback arm is never entered. Three measured facts follow, all
+normative:
+
+- **The count scales with materialized entries, not with the run.** The block is
+  `C + S + M` records, where `C` is the number of configured workspaces mapping to this metadata
+  root, `S ∈ {0,1}` the sibling probe, and `M` the number of materialized entries across **all**
+  features in the workspace — measured `0 + 1 + 3 = 4` above, and `0 + 1 + 4 = 5` after adding a
+  second feature with one materialized entry (whose probe sorts **before** `myfeat`'s, `os.ReadDir`
+  order). A comparator, budget, or acceptance criterion MUST NOT pin this count as a constant, and
+  MUST NOT treat a change in `M` between two fixtures as a resolution-event difference.
+- **Order is deterministic only when `C ≤ 1`.** Candidate class 1 iterates a Go map: with four
+  configured workspaces mapping to one metadata root, three consecutive measured runs of the same
+  command emitted the four probes in three **different** orders. Therefore **no fixture with two or
+  more configured workspaces mapping to the metadata root may be byte-pinned or ordered-compared**;
+  frozen fixtures MUST have `C ≤ 1` (every fixture in §17.2 has `C = 0` or `C = 1`). Classes 2 and 3
+  are fully deterministic and may be pinned.
+- **The block is attached to the `RequireWorkspace` call that emitted it.** It always appears as a
+  contiguous run immediately **after** that call's completed `show → common@cwd` pair and before the
+  next event's first record; it never appears inside an event, because nothing between
+  `LoadConfig` and `MainRepoRoot` shells out, and `TwsRoot`'s failing `MainRepoRoot` triggers **no**
+  inference (`resolveTwsRoot` uses the Git-free `DetectWorkspaceRoot`). Consequently the adjacency
+  rules 1–2 above are never broken by an inference record: it can only sit where rule 1's forward
+  test correctly declines. When §4.1 rule 6c **removes** a `RequireWorkspace` event, the block
+  emitted inside that same call goes with it — this is the **only** licensed way an inference record
+  may disappear, and it happens on the **push** path only (measured: pre-change `tws push myfeat`
+  from cell 4 with `N = 3` emits `1 + N = 4` `RequireWorkspace` events, **each** followed by its own
+  four-record inference block; post-change there is one `RequireWorkspace` event and therefore one
+  block). External **sync** performs exactly one `RequireWorkspace` before and after this feature, so
+  its single block is invariant: same records, same order, same position, on both sides.
+
+**The layout refactor does not remove the inference, and no revision may claim it does.**
+`RequireWorkspace` still runs first on both external paths and still resolves the workspace
+**before** `internal.TwsRoot()` and before `resolveExternalSyncLayout`; `internal/workspace.go` is
+untouched (§13.5). From cwd cells 4–6 the surviving `RequireWorkspace` still takes its fallback arm
+and still emits the whole block. What the refactor removes is the *repeated* `RequireWorkspace` calls
+on the push path, and with them their duplicate blocks — nothing else.
+
+**Why no anchor is left ungrouped once the two record classes are distinguished.** After the operand
+test, every anchor in any capture is a `MainRepoRoot()` call from exactly one of two chains, and in
+both chains its `LoadConfig` partner is **adjacent** to it with nothing in between (verified on the
+built binary in all of cells 1–6, in both the success and the failure case): `RequireWorkspace`
+emits `show` then `common@cwd`, so rule 2 always finds the show immediately before; `TwsRoot` emits
+`common@cwd` then `show`, so rule 1 always finds the show immediately after. Rule 3 is therefore a
+fail-closed guard, not a reachable state on this tree. It stays in the specification for exactly two
+degenerate inputs, both of which MUST fail loudly rather than be guessed at: (i) a future caller that
+interleaves Git work between `LoadConfig` and `MainRepoRoot`, and (ii) a fixture in which the process
+cwd is *itself* a candidate of `inferExternalRepoRoot` — possible only if the cwd is a configured
+repo key, the `.tws`-stripped sibling, or a materialized worktree path **and** is not a repository —
+which would produce a second cwd-operand record with no unconsumed show beside it. No fixture in
+§17.2 has that shape (a workspace root is never its own sibling, and a feature directory is never one
+of its own `worktrees/<name>` paths), and no **frozen** capture may be built with it.
+
+**Which current derivations contribute an event.** Each of these contributes exactly one event of
+the shape named, on **every** call: `internal.RequireWorkspace` → a `RequireWorkspace` event;
+`internal.TwsRoot`, `internal.FeaturePath`, and `internal.WorktreePath` → a `TwsRoot` event each
+(`FeaturePath` calls `TwsRoot`; `WorktreePath` calls `FeaturePath`); `internal.RequireFeaturePath`
+and `internal.RequireWorktreePath` → a `RequireWorkspace` event each, because both re-enter
+`RequireWorkspace` (`internal/resolve.go:294-303,323-334`).
+
+**The budget after this feature**, binding per command:
+
+- **External `tws sync` (`syncCmd.RunE`)** — `internal.RequireTool("git")`, then
+  `ws, err := internal.RequireWorkspace()` (event 1, unchanged in position and shape), then the
+  checkout dispatch, then **exactly one** `twsRoot := internal.TwsRoot()` (event 2, at today's guard
+  position). That single value feeds **both** the existing guard
+  `internal.GuardFeatureName(twsRoot, feature)` — same root value, same argument, same position as
+  today's `internal.GuardFeatureName(internal.TwsRoot(), feature)` — **and**
+  `resolveExternalSyncLayout(ws, twsRoot, feature)`. Nothing later in the run derives a path again:
+  `syncFeature`'s `internal.FeaturePath`, every per-entry `internal.WorktreePath` in
+  `syncWithStackFiltered` (both passes), `staleStackEdges`, `branchContainsConfiguredParent`,
+  `handleSyncAbort`, and `handleSyncContinue` take the resolved layout instead, so every event they
+  emit today **disappears**. Post-change total: **two events, always** — one `RequireWorkspace`
+  event followed by one `TwsRoot` event.
+- **External `tws push` (`pushCmd.RunE`)** — `internal.RequireTool("git")`,
+  `ws, err := internal.RequireWorkspace()` (event 1),
+  `internal.GuardFeatureName(ws.MetadataRoot, feature)` in the position `RequireFeaturePath` gives it
+  today, then the mode branch; only **after** the branch has confirmed external mode does that arm
+  call `twsRoot := internal.TwsRoot()` **exactly once** (event 2) and pass it to
+  `resolveExternalSyncLayout(ws, twsRoot, feature)`. `pushFeature` and `pushSelected` resolve
+  nothing. Post-change total: **two events**.
+- **Checkout `tws push`** — the checkout arm **never** calls `internal.TwsRoot()`, never builds a
+  candidate B, and never sees an `externalSyncLayout`; `pushFeatureCheckout` keeps today's body
+  verbatim, so its `internal.RequireFeaturePath` event and its per-entry
+  `internal.RequireWorktreePath` events are exactly today's. Its only difference is the **one added**
+  `RequireWorkspace` event `pushCmd.RunE` now performs for the mode/guard decision.
+- **Completion (`syncEntryCompletion`, §3.8)** — resolves `internal.RequireWorkspace()` once and
+  `internal.TwsRoot()` once, passes the root to the resolver, and degrades every error to "no
+  candidates". Two events, never more.
+
+**The honest arithmetic, which MUST NOT be rounded down.** Today's external push path performs
+`1 + N` `RequireWorkspace` events for a stack of `N` entries (§4.1 rule 6c); the post-change path
+performs **two** events. The reduction is therefore **`1 + N` → 2, not `1 + N` → 1**, and for
+`N = 1` the event **count is unchanged** — only the second event's *shape* changes, from a
+`RequireWorkspace` event to a `TwsRoot` event, which reverses the order of its two records. Any
+claim that this feature leaves "exactly one workspace resolution" on any path, or that only
+`rev-parse --git-common-dir` records are affected, is **false** and MUST NOT appear in this
+document, in the tests, in the changelog, or in the docs: every event is a **pair of records**, and
+the post-change external sync and push paths each keep **two** events.
+
+**Single-layout obligation.** Every **external** helper that re-derives a path today MUST take the
+resolved values explicitly. This is not optional and is grep-asserted (AC 51): after this feature
+`internal/cli/sync.go` and `internal/cli/sync_helpers.go` contain **no** call to
+`internal.FeaturePath`, `internal.WorktreePath`, `internal.RequireFeaturePath`, or
+`internal.RequireWorktreePath`; and `internal/cli/push.go` contains **no** call to
+`internal.FeaturePath` or `internal.WorktreePath` at all, and **no**
+`internal.RequireFeaturePath` / `internal.RequireWorktreePath` call outside the one preserved
+checkout-mode helper `pushFeatureCheckout` — exactly one call to each, both inside that function,
+which never executes in external mode and never sees an `externalSyncLayout`. The obligation is
+"no mixed roots in any **external** path", not "no legacy resolver anywhere in the file": the
+checkout push path is deliberately kept byte-for-byte as it ships today (below).
+
+| Symbol | Today | After |
+|---|---|---|
+| `syncFeature` | `(feature string, verbose bool)`, re-derives via `internal.FeaturePath` | `(feature string, layout externalSyncLayout, …)` — no derivation |
+| `syncWithStackFiltered` | `(feature, featurePath, stack, sorted, done)`, worktrees via `internal.WorktreePath` | takes `layout`; worktree = `filepath.Join(layout.WorktreesRoot, entry.Name)` |
+| `staleStackEdges` / `staleStackEdgesFiltered` | `(feature, stack[, selected])`, `feature` used only to build worktree paths | `(worktreesRoot string, stack, selected)` — the `feature` parameter disappears |
+| `branchContainsConfiguredParent` | `(feature, stack, entry)` | `(worktreesRoot string, stack, entry)` |
+| `handleSyncAbort` | `(feature, featurePath)` + `internal.WorktreePath` | `(feature string, layout externalSyncLayout)` |
+| `handleSyncContinue` | `(feature, featurePath, push)` + `internal.WorktreePath` | `(feature string, layout externalSyncLayout, push bool)` |
+| `saveIncompleteSync`, `markUpdatedAncestors`, `syncFallback`, `runValidation` | already take a path | receive `layout.FeaturePath` / a `layout.WorktreesRoot`-derived worktree path |
+| `internal.ClassifyExternalSyncState`, `SyncRunStatePath`, `SyncRunGuardPath`, `SyncStatePath` | — | all rooted at `layout.FeaturePath` |
+| `pushFeature` | `(feature, dryRun)`, resolves candidate A internally (`internal.RequireFeaturePath` once, plus `internal.RequireWorktreePath` **per stack entry**, each re-entering `RequireWorkspace` — `1 + N` `RequireWorkspace` events per invocation) and serves **both** modes | `(feature string, layout externalSyncLayout, dryRun bool)`, **external mode only** — no derivation and **zero** resolution events of its own; `pushCmd`'s external arm resolves the same layout through `resolveExternalSyncLayout(ws, twsRoot, feature)` before calling it, so `tws push` and `tws sync --push` can never disagree and the whole external push path performs exactly **two** resolution events, one `RequireWorkspace` + one `TwsRoot` (`1 + N` → 2, §4.1 rule 6c) |
+| `pushFeatureCheckout` | — (it is the checkout half of today's `pushFeature`) | **new** unexported function carrying today's body **verbatim**, `internal.RequireFeaturePath` + `internal.RequireWorktreePath` and the `entry.Name` argv token included, so a checkout-mode `tws push` keeps exactly today's `ErrWorktreeUnsupported` failure and exit code |
+| `pushCmd` | `RunE` = `internal.RequireTool("git")` then `pushFeature(args[0], dryRun)` | `RequireTool`, `RequireWorkspace`, `internal.GuardFeatureName(ws.MetadataRoot, feature)`, then a **mode branch** — checkout → `pushFeatureCheckout` (no `internal.TwsRoot()` call at all), external → one `internal.TwsRoot()` call then `resolveExternalSyncLayout(ws, twsRoot, feature)` + `pushFeature` (binding order below) |
+| `pushSelected` | new (§7.6) | external mode only; takes the same `layout` |
+| `syncCmd.RunE` (external arm) | `internal.GuardFeatureName(internal.TwsRoot(), feature)` then `ws.ResolveFeaturePath`, with `syncFeature`/`WorktreePath` re-deriving the root repeatedly afterwards | one `twsRoot := internal.TwsRoot()` call feeding **both** `internal.GuardFeatureName(twsRoot, feature)` (same value, same position) and `resolveExternalSyncLayout(ws, twsRoot, feature)`; **no** later `FeaturePath`/`WorktreePath` derivation anywhere in the run |
+| `syncEntryCompletion` | — | resolves `RequireWorkspace` + `internal.TwsRoot()` once each and passes the root to `resolveExternalSyncLayout` (§3.8), so `--only <TAB>` offers exactly the entries the run can sync |
+
+**Standalone `tws push` — guard first, then mode branch (normative, binding order).** `pushCmd.RunE`
+runs exactly these steps, in exactly this order; no step may be reordered, merged, or moved into a
+callee:
+
+1. `internal.RequireTool("git")` — unchanged, first, `os.Exit(1)` behaviour untouched.
+2. `feature := args[0]`.
+3. `ws, err := internal.RequireWorkspace()` — the error is returned **verbatim**, at the same point
+   in the sequence where `internal.RequireFeaturePath` raises it today.
+4. `if err := internal.GuardFeatureName(ws.MetadataRoot, feature); err != nil { return err }` — the
+   sibling-space guard, with the **same root** (`ws.MetadataRoot`) and in the **same position
+   relative to workspace resolution** that `internal.RequireFeaturePath` gives it today
+   (`internal/resolve.go:294-303`). It runs **before** `resolveExternalSyncLayout` and before any
+   layout probe, so a feature name that collides with a registered space is refused with the
+   identical `*ErrSpaceNameConflict` message and exit code, having read no `stack.yaml`, touched no
+   worktree, and written nothing. This is precisely what keeps
+   `TestSpaceGuard_ExternalCommandMatrix/push` (`internal/cli/space_guard_test.go:270-276`) green
+   **unchanged**: same error text (`top-level directory of registered space`), same nonzero exit,
+   byte-identical tree snapshot, and the registered space directory untouched.
+5. Mode branch, the **only** branch in `RunE`:
+   - `ws.Mode == internal.ModeCheckout` → `return pushFeatureCheckout(feature, dryRun)` — today's
+     path, preserved verbatim (see below). This arm **never** calls `internal.TwsRoot()`, never
+     builds candidate B, and never constructs an `externalSyncLayout`;
+   - otherwise (external) → `twsRoot := internal.TwsRoot()` — **exactly one** call, made **after**
+     the branch has confirmed external mode, so no `TwsRoot` resolution event is ever added to the
+     checkout arm — then `layout, err := resolveExternalSyncLayout(ws, twsRoot, feature)`, error
+     returned **verbatim**, then `return pushFeature(feature, layout, dryRun)`.
+
+**The guard is a caller obligation and is never duplicated inside the resolver.**
+`resolveExternalSyncLayout` MUST NOT call `internal.GuardFeatureName`; it stays the pure,
+Git-free, probe-minimal function specified above, so that each command keeps its own guard root and
+guard position. `syncCmd` keeps its existing guard with the **same root value, the same argument,
+and the same position** at §3.6 step 5 — the only change is that the root is now the `twsRoot`
+variable the `RunE` resolved one line earlier through its single `internal.TwsRoot()` call, i.e.
+`internal.GuardFeatureName(twsRoot, feature)` where the shipped code writes
+`internal.GuardFeatureName(internal.TwsRoot(), feature)`. The value is identical (the call site is
+unmoved), the guard is not re-rooted, and no second guard is added; what disappears is the *second,
+third, …* `TwsRoot` resolution the run performed later through `FeaturePath`/`WorktreePath`. The two
+commands therefore still guard against **different
+roots** today (`TwsRoot()` for `tws sync`, `ws.MetadataRoot` for `tws push`), and this feature
+**preserves that difference verbatim** rather than harmonising it: harmonising would change refusal
+behaviour on exactly the divergent layouts C4 already touches, is not needed by any acceptance
+criterion, and is out of this boundary (recorded as follow-up §18 item 10).
+
+**Checkout-mode `tws push` is frozen, including its failure.** `pushFeatureCheckout` is today's
+`pushFeature` body moved unchanged: `internal.RequireFeaturePath(feature)` →
+`internal.LoadStack` → per entry `internal.RequireWorktreePath(feature, entry.Name)` → the same
+archived/dry-run/push branches with the same `entry.Name` argv token. In checkout mode
+`ws.WorktreePath` returns `""`, so `internal.RequireWorktreePath` returns
+`internal.ErrWorktreeUnsupported` (`internal/resolve.go:323-334`) on the **first** stack entry and
+the command exits nonzero with `linked worktrees are not supported in checkout mode`, exactly as it
+does today; an empty stack still returns nil, exactly as today. The external layout resolver, the
+C2 `GitBranch()` ref fix, and `pushSelected` are **not** applied there, because that loop can never
+reach a `git push` invocation — so no output line, exit code, ref, or **mutating** argv of a
+checkout push changes (its only argv difference is the one added read-only workspace-resolution
+**event** — both of its records — declared immediately below), and **no silent success is introduced**: `tws push` in checkout mode keeps failing loudly
+rather than quietly reporting nothing to do. Making checkout push actually work is out of scope and
+is recorded as follow-up §18 item 11. Regression: AC 59.
+
+The two declared consequences of the branch are internal and read-only, and they run in **opposite
+directions**:
+
+- **Checkout mode — one *added* resolution event.** `pushCmd` resolves the workspace once for the
+  mode/guard decision and `pushFeatureCheckout`'s `internal.RequireFeaturePath` resolves it once
+  more, so that path performs one additional **`RequireWorkspace` event** relative to today — i.e.
+  the ordered pair `git rev-parse --show-toplevel` **and** `git -C <cwd> rev-parse --git-common-dir`,
+  both records, not one — plus one additional `spaces.yaml` read. (Today's checkout `tws push`
+  already performs two such events on a non-empty stack — `RequireFeaturePath`, then the first
+  entry's `RequireWorktreePath` before it returns `ErrWorktreeUnsupported` — and one on an empty
+  stack; each side gains exactly one.) The checkout arm adds **no** `TwsRoot` event, because it never
+  calls `internal.TwsRoot()`. Nothing is written; stdout, stderr, exit code, files, modes, and refs
+  are identical, no golden covers `tws push` in checkout mode, and AC 59 asserts the identity
+  explicitly.
+- **External mode — `1 + N` resolution events collapse to *two*, so `N − 1` events are *removed*.**
+  This document previously claimed external `tws push` resolves the workspace once
+  today, and later that it resolves it exactly once after the change; **both claims are false** and
+  MUST NOT be restated. Today's `pushFeature` resolves the workspace
+  **once** through `internal.RequireFeaturePath` (`internal/cli/push.go:36`) and then **once per
+  stack entry** through `internal.RequireWorktreePath` (`internal/cli/push.go:47`), which re-enters
+  `internal.RequireWorkspace` on every iteration (`internal/resolve.go:323-334`). Over a stack of
+  `N` entries that is **`1 + N` `RequireWorkspace` events**, i.e. `1 + N` ordered pairs of
+  `rev-parse --show-toplevel` + `-C <cwd> rev-parse --git-common-dir` records — the per-entry
+  resolution happens **before** the
+  archived `os.Stat` skip, so archived entries are counted too, and the loop stops early only when a
+  resolution itself errors. After this feature the external push path performs **exactly two**
+  events per command invocation: one `RequireWorkspace` event in `pushCmd.RunE` (for `tws push`) or
+  in `syncCmd`'s `RunE` (for `tws sync --push`), and one `TwsRoot` event in the external arm that
+  produces the layout. `pushFeature` / `pushSelected` resolve **nothing** of their own, because they
+  receive the already-resolved `layout`. So the transformation is **`1 + N` → 2**: for `N ≥ 2`
+  events are removed, for `N = 1` the **count is unchanged** and only the second event's shape (and
+  therefore its two records' order) differs, and no event is ever added. When such a run is made
+  from a cwd outside any repository (cells 4–6), each of the `1 + N` `RequireWorkspace` calls also
+  emits its own `inferExternalRepoRoot` block, so `1 + N` blocks become one — the blocks travel with
+  the events that emitted them, and that is the only way a non-event record may disappear (§3.11).
+  This is part of the third
+  closed read-only argv carve-out of §4.1 rule 6 (rule 6c),
+  asserted by AC 2 and AC 59: it removes read-only probes only, and leaves the ordered mutating
+  `git push --force-with-lease origin <ref>` argv, stdout, exit code, and refs exactly as they are
+  (with the single declared C2 ref change on decoupled names, §4.5 C2, AC 33).
+
+`saveIncompleteSync` writing under `layout.FeaturePath` is what closes today's split-brain: a failed
+run's state is written where the **same run's** next plain invocation, `--continue`, and `--abort`
+look. (`tws status` is deliberately not re-rooted — see "Out of scope" below — so on a divergent
+layout it keeps reporting the workspace-rooted directory, which is a pre-existing gap this feature
+neither widens nor closes.)
+
+**Declared consequence.** On a layout where the two candidates disagree the external run changes
+observably — **in no-flag runs too** — in both disagreement directions and for **every** external
+cwd cell (1–6), because the divergence is driven by `TWS_ROOT` / workspace detection and not by cwd.
+This is declared behavioural exception 2 (§4.1 rule 5, §4.5 C4) and is asserted by AC 46 and AC 58.
+Where the two agree — every healthy layout and every AC 1 fixture — the resolver is a provable
+no-op: same path, no probe, same bytes.
+
+**Out of scope, stated so it is not assumed.** `tws status` keeps resolving the feature path through
+its existing workspace rule (`internal/agent_status.go`); this feature does not re-root it, so on a
+divergent layout status still reports the workspace-rooted directory. `internal/workspace.go`,
+`internal/resolve.go`, and `internal/paths.go` stay **untouched** (§13.5): `internal.TwsRoot`,
+`internal.FeaturePath`, and `internal.WorktreePath` keep their current bodies and signatures
+verbatim — this feature only changes **how often and from where** `TwsRoot` is called, never what it
+does — and making `ResolveCurrentWorkspaceE` honour `TWS_ROOT`
+would change every command's metadata root, is far outside this boundary, and would pull a
+workspace-resolution parent into the hard-dependency set (§15). No new dependency edge follows from
+the resolver: it lives in package `cli`, is pure filesystem probing, and consumes only values its
+callers already hold. Aligning the remaining
+workspace-rooted readers is recorded as a follow-up (§18 item 10).
 
 ---
 
@@ -528,15 +1102,21 @@ criteria, in §4.5:
 
 1. **C1 — corrupt external state.** An **unreadable** `.sync-state.yaml` (rule 4): all three verbs
    change.
-2. **C2 — decoupled-name push.** A no-flag `--push` (and `tws push`) over an entry whose logical
+2. **C2 — decoupled-name push.** A no-flag **external** `--push` (and **external** `tws push`) over
+   an entry whose logical
    `Name` and Git `Branch` are **decoupled** (rule 7): the `push` argv, the per-entry stdout line,
-   the exit code, and the resulting remote ref move from broken to correct.
+   the exit code, and the resulting remote ref move from broken to correct. Checkout mode is
+   untouched: `tws push` there still fails on `ErrWorktreeUnsupported` before any push argv exists,
+   and checkout `tws sync --push` uses `internal/checkout_sync.go`'s own loop (§3.11, §7.6).
 3. **C3 + C5 — duplicate-`GitBranch()` checkout metadata.** A no-flag checkout run over a stack
    containing two entries that share one `GitBranch()` (rule 7) writes the **correct** entry's
    `last_base_sha`, so its `stack.yaml` deliberately differs from the pre-change tree; and, on
    **every** checkout run, each persisted plan entry gains the additive `name:` key (rule 3).
-4. **C4 — cwd resolution.** The two broken cwd cells (rule 5), plus the two closed read-only Git
-   probe carve-outs of rule 6.
+4. **C4 — cwd and layout resolution.** Every external run whose two feature-path derivations
+   disagree, in both directions and from any external cwd, plus checkout cwd cell 9 (rule 5), plus
+   the three closed read-only Git argv carve-outs of rule 6 (the added checkout containment probe,
+   the repo-scoped default-base event, and the **removal** of the repeated workspace-root resolution
+   events on the external sync path plus the `1 + N` → 2 reduction on the external push path).
 
 Everything outside those four categories is frozen. File **content** is frozen at the level defined
 below, because two independently created state files can never be raw-byte equal:
@@ -559,8 +1139,8 @@ below, because two independently created state files can never be raw-byte equal
       | `ws.RepoRoot` and the fixture's repository root | `<REPO>` |
       | each additional repository of a multi-repo fixture, in fixture declaration order | `<REPO2>`, `<REPO3>`, … |
       | `ws.MetadataRoot` and the fixture's metadata root | `<META>` |
-      | the resolved feature path (`ws.ResolveFeaturePath(feature)`) | `<FEATURE>` |
-      | the worktrees root | `<WORKTREES>` |
+      | the run's resolved feature path (`layout.FeaturePath`, §3.11 — identical to `ws.ResolveFeaturePath(feature)` and `internal.FeaturePath(feature)` in every frozen capture, since those agree there) | `<FEATURE>` |
+      | the worktrees root (`layout.WorktreesRoot`) | `<WORKTREES>` |
       | each bare remote directory, in fixture declaration order | `<REMOTE>`, `<REMOTE2>`, … |
       | the fixture root | `<ROOT>` |
       | `HOME`, `XDG_DATA_HOME` | `<HOME>`, `<XDG_DATA>` |
@@ -721,21 +1301,35 @@ below, because two independently created state files can never be raw-byte equal
    all three verbs change, deliberately and by declaration, under C1 (§4.5, §8.6 row 10, §8.7).
    The change is stated in full there and is covered by AC 40; it MUST NOT be described anywhere as
    frozen, and the AC 1 goldens MUST NOT contain a corrupt-state capture as if it were.
-5. **Declared behavioural exception 2 — the two C4 cwd cells (5, with its nested form 6, and 9)**:
-   an invocation whose **cwd** falls in matrix cell 5, 6, or 9 (§12.11) is **outside** this freeze,
-   in no-flag runs
-   too, because in exactly those cells today's behaviour is provably wrong and C4 fixes it
-   (§13.4, §10.9). Precisely, and exhaustively:
-   - **Cell 5 (external, cwd = the feature directory) and its nested form, cell 6 (a nested
-     `docs/`/`inject/` subdirectory of it)** — *only where the two path derivations disagree*.
-     Today `syncFeature` re-derives the feature path through `internal.FeaturePath(feature)`
-     (`internal/cli/sync.go:173-174`) instead of using the path `ws.ResolveFeaturePath` already
-     resolved; when the two disagree (`TWS_ROOT` / workspace-detection edge cases) the run loads
-     **no** stack and falls into `syncFallback`'s hard-coded `origin/main` rebase over every
-     worktree, with its `internal.Must`/`os.Exit(1)` failure mode. After C4 the run **loads the
-     resolved feature's `stack.yaml` and performs the ordinary stack sync**: different stdout,
-     different Git commands, different refs. Where the two derivations agree — every healthy
-     single-workspace layout, and every fixture behind the AC 1 goldens — nothing changes at all.
+5. **Declared behavioural exception 2 — divergent external layouts (any external cwd, cells 1–6)
+   and checkout cwd cell 9**: an external invocation whose two feature-path derivations **disagree**
+   (§3.11), and any checkout invocation from matrix cell 9 (§12.11), is **outside** this freeze, in
+   no-flag runs
+   too, because in exactly those inputs today's behaviour is provably wrong and C4 fixes it
+   (§3.11, §13.4, §10.9). Precisely, and exhaustively:
+   - **External, wherever `internal.FeaturePath(feature)` and `ws.ResolveFeaturePath(feature)`
+     disagree.** The trigger is `TWS_ROOT` / workspace detection, **not** cwd: `TwsRoot()` honours
+     `TWS_ROOT` and `ws.MetadataRoot` does not (§3.11), so the disagreement can occur from **every**
+     external cwd cell — 1 (repository root), 2, 3, 4, and 5 with its nested form 6 — and the
+     declared exception covers all of them. It is scoped by *layout*, not by cwd; where the two
+     agree — every healthy single-workspace layout, and every fixture behind the AC 1 goldens —
+     nothing changes at all, in any cell.
+     **Both disagreement directions are declared**, because today's run is split-brain (it rebases
+     under `internal.FeaturePath` while reading and writing state under `ws.ResolveFeaturePath`,
+     §3.11):
+     - *Stack under `internal.FeaturePath` only* (the shipped `TWS_ROOT`-divergent case): today the
+       rebase half works while `.sync-state.yaml`, `--continue`, `--abort`, `tws sync --push`, and
+       `tws push` operate on the empty workspace-rooted directory — so a failed run's state is
+       written where the next run does not look, and `--push` fails with
+       `no stack.yaml found for feature: <f>`. After C4 all of them use the same root and the run is
+       coherent: state written and found in one place, push pushing the real stack.
+     - *Stack under `ws.ResolveFeaturePath` only*: today the run loads **no** stack and falls into
+       `syncFallback`'s hard-coded `origin/main` rebase over whatever `worktrees/` it finds under
+       the other root, with its `internal.Must`/`os.Exit(1)` failure mode. After C4 the run **loads
+       that feature's `stack.yaml` and performs the ordinary stack sync**: different stdout,
+       different Git commands, different refs.
+     Naming only one direction would leave the other silently broken, so both are declared and both
+     are asserted (AC 46, AC 58).
    - **Cell 9 (checkout, cwd = a linked worktree of the checkout repository)** — today the run
      takes `os.Getwd()` as `RepoDir` and silently mutates the **wrong** working tree. After C4 it is
      **refused** with the exact I19 message and exit 1, before any lock, transaction, or Git
@@ -751,17 +1345,29 @@ below, because two independently created state files can never be raw-byte equal
    unreachable through the shipped CLI dispatch and carries no shipped-behaviour-change claim, no
    matrix cell, and no declared-change evidence directory.
 
-   These two cells are covered by AC 46, are declared in §4.5 (C4) and in the changelog (§14), and
-   MUST NOT be described anywhere as frozen. No AC 1 golden may be captured from cell 5, 6, or 9:
-   every frozen capture is taken from a supported, agreeing cwd (cells 1–4, 7–8).
-6. **Declared read-only Git argv changes — the two C4 probe carve-outs, and nothing else.** C4 is a
-   cwd *resolution* fix, and resolving cwd correctly means asking Git where it is. Rules 1–5 freeze
-   observable behaviour; this rule states the **exactly two read-only argv carve-outs** in which an
-   otherwise frozen no-flag run — in a **frozen** cwd cell, on an input outside the declared C2/C3
+   These inputs are covered by AC 46 and AC 58, are declared in §4.5 (C4) and in the changelog
+   (§14), and MUST NOT be described anywhere as frozen. No AC 1 golden may be captured from a
+   divergent external layout or from cell 9: every frozen capture is taken from a supported cwd
+   (cells 1–4, 7–8) **and** from a layout where the two external derivations agree.
+6. **Declared read-only Git argv changes — the three C4 probe carve-outs, and nothing else.** C4 is a
+   cwd and layout *resolution* fix, and resolving cwd and layout correctly means asking Git where it
+   is — and asking it **once**.
+   Rules 1–5 freeze
+   observable behaviour; this rule states the **exactly three read-only argv carve-outs** in which an
+   otherwise frozen no-flag run — in a **frozen** cwd cell and an agreeing layout, on an input
+   outside the declared C2/C3
    defect fixtures of rule 7, producing frozen stdout, stderr, exit code, files, and modes — may
-   differ from the pre-change tree. Both are read-only: neither writes an object, a ref, an index, a
-   working tree, or a file; neither changes stdout, stderr, the exit code, the set of files written,
-   or any file mode. There is no third. This rule does **not** touch the mutating verbs (`fetch`,
+   differ from the pre-change tree. All three are read-only: none writes an object, a ref, an index, a
+   working tree, or a file; none changes stdout, stderr, the exit code, the set of files written,
+   or any file mode. Two **add** records; the third **removes** them, and — unlike every earlier
+   revision of this document claimed — it **does** reach the frozen external no-flag captures,
+   because external `tws sync` re-derives its feature and worktree paths repeatedly today and each
+   re-derivation is a full workspace-root resolution event (§3.11). There is no fourth; in
+   particular the layout resolver of §3.11 adds **no** Git
+   invocation at all — it takes the already-resolved `twsRoot` from its caller and never calls
+   `internal.TwsRoot`, `internal.FeaturePath`, `internal.WorktreePath`, or `RequireWorkspace` — and
+   adds no filesystem probe whatsoever when the two candidates agree, which
+   is the case in every frozen capture. This rule does **not** touch the mutating verbs (`fetch`,
    `push`, `rebase`, `checkout`) at all: their one declared no-flag change is C2's push ref on a
    decoupled-name fixture (rule 7), and on every input outside the rule-7 fixtures no mutating verb
    differs.
@@ -771,8 +1377,13 @@ below, because two independently created state files can never be raw-byte equal
       (`internal.GitRepoRootIn(cwd)`, §10.9) **before the operation** — before the lock, before the
       transaction, and before any Git mutation. Its position in the argv log is **not** "before
       every pre-change record": it runs *after* `RequireWorkspace`/`RequireFeaturePath` have already
-      completed, so every Git record those helpers emit (`rev-parse --git-common-dir` and any other
-      workspace-resolution read) still precedes it, unchanged, on both sides. The probe sits
+      completed, so every Git record those helpers emit — on a checkout sync run **two** complete
+      `RequireWorkspace` events, `RunE`'s and `runCheckoutSync`'s unchanged
+      `internal.RequireFeaturePath` call (§10.1), each being both
+      `rev-parse --show-toplevel` and `-C <cwd> rev-parse --git-common-dir`, §3.11 —
+      still precedes it, unchanged and in the same order, on both sides. No resolution event is
+      added or removed on the checkout path: carve-out (c) is external-only, and this feature
+      deliberately does not collapse `RequireFeaturePath` into the outer `ws`. The probe sits
       **immediately before the first `RunCheckoutSync` preflight record** — the
       `rev-parse --git-path rebase-merge` of `gitOperationInProgress` (§10.3 step 2) — and the
       remaining pre-change checkout-sync records follow it in their original order. In frozen
@@ -823,19 +1434,96 @@ below, because two independently created state files can never be raw-byte equal
       (AC 46, AC 53). Where no repo context is available the call is byte-for-byte today's argv
       (§13.4 rule 3) and no carve-out is applied at all.
 
+   c. **External workspace-root resolution compression — *removed* events on the external sync and
+      external push paths, and nothing added.** The unit of this carve-out is the
+      `workspaceRootResolutionEvent` defined normatively in §3.11: one **ordered pair** of read-only
+      records, either `git rev-parse --show-toplevel` then `git -C <cwd> rev-parse --git-common-dir`
+      (a `RequireWorkspace` event) or those two in the reverse order (a `TwsRoot` event, because
+      `internal.TwsRoot` resolves `MainRepoRoot` before `LoadConfig`), **as grouped by §3.11's
+      anchor rule** — anchored on each `--git-common-dir` record whose `-C` operand **is the record's
+      own process cwd**, never on a bare `rev-parse --show-toplevel` record and never on a
+      `--git-common-dir` record scoped to some other path. Comparing single records here
+      would be wrong: `internal.FeaturePath` and `internal.WorktreePath` each emit a whole `TwsRoot`
+      event, not one `--git-common-dir` record, so a comparator that counts only
+      `--git-common-dir` records would silently ignore half the change. A bare
+      `rev-parse --show-toplevel` record that the grouping leaves unconsumed is a **standalone
+      `internal.LoadConfig` probe** (§3.11) — `runValidation` emits one per validated entry — and is
+      **outside this carve-out entirely**: it is neither added nor removed by this feature, it stays
+      in the ordered non-event log, and it MUST match the pre-change log verbatim and in position.
+      A `git -C <path> rev-parse --git-common-dir` record whose `-C` operand is **not** the process
+      cwd is an **`inferExternalRepoRoot` probe** (§3.11), emitted only inside `RequireWorkspace`'s
+      fallback arm from cwd cells 4–6, one per configured/sibling/materialized candidate. It is
+      likewise **not** an event, **not** an anchor, and **not** compressed by this carve-out: it
+      stays in the ordered non-event log and MUST match verbatim and in position. Its count scales
+      with the workspace's materialized entries and MUST NOT be pinned as a constant, and a fixture
+      with two or more configured workspaces mapping to one metadata root emits those probes in
+      **unspecified** order and MUST NOT be byte-pinned at all. The single exception, stated once
+      here and nowhere widened: the block emitted **inside** a `RequireWorkspace` call that this
+      carve-out removes is removed **with** that event, which can happen on the **push** path only
+      (`1 + N` → 2 `RequireWorkspace` calls, hence `1 + N` → 1 inference blocks when run from cells
+      4–6); external **sync** keeps its one `RequireWorkspace` call and therefore its one block,
+      unchanged, on both sides.
+      The carve-out covers exactly
+      two paths:
+
+      - **External `tws sync` (every verb, no-flag included — this reaches the AC 1 external
+        goldens).** Today one external run emits, in order: one `RequireWorkspace` event
+        (`RunE` step 2); one `TwsRoot` event for `internal.GuardFeatureName(internal.TwsRoot(), …)`
+        (step 5); then one **further** `TwsRoot` event for **every** later re-derivation —
+        `syncFeature`'s `internal.FeaturePath` (`internal/cli/sync.go:174`), each
+        `internal.WorktreePath` in `syncWithStackFiltered`'s two passes
+        (`internal/cli/sync_helpers.go:32,79`), each `internal.WorktreePath` in `staleStackEdges`
+        (`:164`), and the `internal.WorktreePath` calls of `handleSyncAbort` / `handleSyncContinue` /
+        `branchContainsConfiguredParent` (`internal/cli/sync.go:92,107,158`). A clean plain run over
+        `N` materialized entries with `E` stale-edge child probes therefore emits
+        **`3 + N + E`** events. After this feature the run emits **exactly two** — the same
+        `RequireWorkspace` event in the same position, then the same single `TwsRoot` event in the
+        same position — and every later event is **removed**. Nothing is added, no event changes
+        position, and no event changes shape.
+      - **External `tws push` and the `--push` half of `tws sync`.** Today's helper emits `1 + N`
+        `RequireWorkspace` events for a stack of `N` entries: one from
+        `internal.RequireFeaturePath` (`internal/cli/push.go:36`) and one per entry from
+        `internal.RequireWorktreePath` (`internal/cli/push.go:47`), emitted **before** the archived
+        `os.Stat` skip so archived entries count. After this feature the path emits **exactly two**
+        events — one `RequireWorkspace` event and one `TwsRoot` event — so the transformation is
+        **`1 + N` → 2**, not `1 + N` → 1. For `N ≥ 2` events are removed; for **`N = 1` the count is
+        unchanged** and the only difference is that the second event is now a `TwsRoot` event, whose
+        two records appear in the reverse order; for `N = 0` (empty stack) one event is **added**,
+        which is the one case where this carve-out permits an addition and it is declared here
+        explicitly.
+
+      Both paths are read-only end to end. The ordered **mutating**
+      `git push --force-with-lease origin <GitBranch>` records — one per non-archived entry, in
+      stack order — MUST match the pre-change log's ordered
+      `git push --force-with-lease origin <ref>` records position for position, together with
+      identical stdout, exit code, and resulting refs; the rebase, fetch, checkout, and every other
+      read-only record outside the resolution events MUST match verbatim in argv, relative order,
+      and exit-status class. Those comparisons are made **separately** from the event comparison:
+      full-log identity is impossible on either path and MUST NOT be asserted anywhere. On a
+      **coupled-name** entry (`GitBranch() == Name`) the push operand is identical too, so the run's
+      only difference from the pre-change tree is the removed read-only events; on a **decoupled**
+      entry the operand, line, exit code, and ref are the declared C2 change of rule 7, captured as
+      declared-change evidence rather than compared here. Checkout mode is outside this carve-out
+      entirely — `pushFeatureCheckout` keeps today's `RequireWorktreePath` per-entry resolution
+      verbatim and the checkout arm never calls `internal.TwsRoot()`; checkout `tws push` gains
+      **one** `RequireWorkspace` event instead (§3.11), which is declared there and asserted by
+      AC 59. The layout resolver contributes **no** event on any path, and this carve-out never
+      licenses a Git call added by it.
+
    Every other Git invocation of a no-flag run — every verb, every flag, every operand, in the same
    order, with the same exit-status class — MUST be identical to the pre-change tree on every input
    **outside** the declared C2/C3 defect fixtures of rule 7. AC 2 and §17.1 implement this as a
-   **closed** argv comparison carve-out; any argv difference outside (a), (b), and rule 7 is a
-   regression, not a declared change. These probes are declared as part of C4 in §4.5, in the
-   changelog, and in the docs (§14).
+   **closed** argv comparison carve-out; any argv difference outside (a), (b), (c), and rule 7 is a
+   regression, not a declared change. These probes and the one probe **removal** are declared as part
+   of C4 in §4.5, in the changelog, and in the docs (§14).
 7. **Declared behavioural exception 3 — the two defect fixtures of C2 and C3.** C2 and C3 fix two
    metadata-identity defects in code the no-flag path also executes. Both are inert on ordinary
    inputs and both are observable on exactly one fixture shape each, which is declared here,
    captured as declared-change evidence rather than as a frozen golden, and asserted as a
    before/after **diff** (AC 33, AC 34):
 
-   - **C2 — decoupled `Name` / `Branch`, `--push` only.** A no-flag `tws sync <feature> --push` (and
+   - **C2 — decoupled `Name` / `Branch`, external `--push` only.** A no-flag external
+     `tws sync <feature> --push` (and external
      `tws push <feature>`) over an entry whose `Branch` differs from its `Name` changes, by
      declaration: the `push` **argv** (`git push --force-with-lease origin <gitbranch>` instead of
      `… origin <name>`), the per-entry **stdout** line (`  [+] NAME (pushed)` where today's run
@@ -843,8 +1531,13 @@ below, because two independently created state files can never be raw-byte equal
      code** where that failure was the only one, and the **remote ref** actually updated
      (`refs/heads/user/work` instead of a stray `refs/heads/work`, which is no longer created). This
      is a broken→correct change, not a regression. Fixtures whose names are **coupled**
-     (`GitBranch() == Name`) are unaffected and remain fully frozen, argv included — which is every
-     AC 1 golden fixture.
+     (`GitBranch() == Name`) are unaffected and remain fully frozen in stdout, exit code, refs, and
+     **mutating** argv — the ordered `git push --force-with-lease origin <name>` records are
+     unchanged — their only difference from the pre-change tree being the read-only
+     workspace-root resolution events removed by rule 6c (`1 + N` → 2 on the push path).
+     **Checkout mode is outside this exception entirely**:
+     `tws push` there refuses with `ErrWorktreeUnsupported` before any push argv is built, unchanged
+     by this feature (§3.11, AC 59).
    - **C3 — duplicate `GitBranch()`, checkout finalization.** A no-flag checkout sync over a stack
      in which two logical entries share one `GitBranch()` updates the **correct** entry's
      `last_base_sha` instead of the first `GitBranch()` match, so the post-change `stack.yaml`
@@ -875,9 +1568,17 @@ four declared categories enumerated above.
 1. `RequireTool("git")` → `os.Exit(1)` when git is missing (`internal/exec.go:11-16`). Unchanged.
 2. `RequireWorkspace()` including the external fallback via `DetectWorkspaceRoot` +
    `inferExternalRepoRoot` (`internal/workspace.go:440-470`). Unchanged.
-3. `GuardFeatureName` then `ws.ResolveFeaturePath`. Unchanged.
+3. One `internal.TwsRoot()` call, then `GuardFeatureName(twsRoot, feature)` — same root value, same
+   position — then `ws.ResolveFeaturePath`. Unchanged in behaviour, and immediately followed by the
+   layout resolution of §3.11, which is a provable no-op whenever the two derivations agree — every
+   frozen capture — because it then probes nothing, issues no Git command, and returns that same
+   path. The run performs no further workspace-root resolution afterwards; the repeated `TwsRoot`
+   events today's `internal.FeaturePath` / `internal.WorktreePath` calls emit are removed (§4.1
+   rule 6c).
 4. `--abort`: **absent** state → `Nothing to abort — no sync in progress.`, exit 0. Present,
-   **decodable** state → abort a rebase in `internal.WorktreePath(feature, state.FailedBranch)` if
+   **decodable** state → abort a rebase in the failed entry's worktree
+   (`filepath.Join(layout.WorktreesRoot, state.FailedBranch)`, which equals today's
+   `internal.WorktreePath(feature, state.FailedBranch)` on every agreeing layout, §3.11) if
    one is in progress, delete `.sync-state.yaml`, print `Sync state cleared.`, exit 0. **No branch
    rollback** (M10). Both are unchanged. Present but **unreadable** state is the declared C1
    change: it no longer takes the "absent" arm — see C1, §4.1 rule 4, §8.6 row 10, §8.7, AC 40.
@@ -899,14 +1600,18 @@ four declared categories enumerated above.
    rebases every worktree directory onto the hard-coded literal `origin/main` through
    `internal.Must` (`os.Exit(1)` on failure) and returns `Complete: true` unconditionally.
    The fallback **mechanics** — the fetch, the hard-coded ref, the `internal.Must`/`os.Exit`, and
-   the unconditional `Complete: true` — are unchanged, but they are frozen **only for the input
-   they are meant for**: a run whose *resolved* feature genuinely has no readable `stack.yaml`.
-   What is **not** frozen is *reaching* this path because `syncFeature` re-derived a different
-   feature path than the one already resolved: that mis-routing is the C4 defect, is fixed by
-   §13.4 rule 2, and is the declared cwd-cell-5/6 exception of §4.1 rule 5 (AC 46). A feature that
-   does have a `stack.yaml` at its resolved path therefore stops falling into the fallback, in
+   the unconditional `Complete: true` — are unchanged, and so is the **root** it walks: when
+   neither candidate holds a readable `stack.yaml` the layout resolver returns candidate B,
+   `filepath.Join(twsRoot, feature)` — the same value today's `internal.FeaturePath(feature)`
+   produces — which is exactly the directory `syncFallback` walks today
+   (§3.11 rule 5). They are frozen **only for the input they are meant for**: a run whose feature
+   genuinely has no readable `stack.yaml` under **either** derivation.
+   What is **not** frozen is *reaching* this path because the run derived one path for the stack and
+   another for everything else: that split-brain is the C4 defect, is fixed by §3.11 / §13.4 rule 2,
+   and is the declared divergent-layout exception of §4.1 rule 5 (AC 46, AC 58). A feature that
+   does have a `stack.yaml` under either derivation therefore stops falling into the fallback, in
    no-flag runs too. Only new-mode runs refuse the fallback path outright (I9, D10).
-8. **Fetch**: once per unique repo from `internal.UniqueRepos(stack, featurePath)`; `Fetching
+8. **Fetch**: once per unique repo from `internal.UniqueRepos(stack, layout.FeaturePath)`; `Fetching
    <label>... ` + `done`/`failed`, or `Fetching <label>...` + streamed output under `--verbose`.
    **Fetch failure remains non-fatal** and the run proceeds against existing remote-tracking refs
    (§6.4). The map-iteration order of `Fetching …` lines with multiple repos remains
@@ -917,33 +1622,51 @@ four declared categories enumerated above.
     `git rebase --update-refs --onto <base> <LastBaseSHA>`; archived (non-materialized) pass uses
     `git rebase <base> <gitbranch>` without `--update-refs`; `markUpdatedAncestors` still short
     circuits ancestors moved by `--update-refs`. Unchanged.
-11. **Completion gate**: unfiltered `staleStackEdges(feature, stack)`;
+11. **Completion gate**: unfiltered stale-edge scan (`staleStackEdgesFiltered(layout.WorktreesRoot,
+    stack, nil)`, the `nil` wrapper for today's `staleStackEdges`, §7.5);
     `Sync incomplete; stale stack edges remain:` + `  [!] <edge>`; state persisted with an **empty**
     `FailedBranch`; exit 1. On success `.sync-state.yaml` is deleted and `Sync complete.` printed.
     Unchanged.
-12. **Push**: `\nPushing...` then `pushFeature(feature, false)` over **every** stack entry, skipping
+12. **Push**: `\nPushing...` then `pushFeature(feature, layout, false)` over **every** stack entry,
+    skipping
     entries with no worktree directory. The ref used changes from `entry.Name` to
-    `entry.GitBranch()` (D13, M14). For **coupled** names this is inert — same argv, same output,
-    same refs. For a **decoupled** entry it is the declared C2 change of §4.1 rule 7: the `push`
+    `entry.GitBranch()` (D13, M14). For **coupled** names this is inert — same mutating push argv,
+    same output, same refs (the push half performs **zero** resolution events of its own, and the
+    whole `--push` run keeps the two events its `RunE` already made, §4.1 rule 6c). For a **decoupled** entry it is the declared C2 change of §4.1 rule 7: the `push`
     argv, the per-entry line, the exit code, and the updated remote ref all change from broken to
-    correct, on the no-flag path too — see §4.5 (C2) and AC 33.
+    correct, on the no-flag path too — see §4.5 (C2) and AC 33. The push half now runs under the
+    **same** root as the rebase half (§3.11), which on a divergent layout is the declared C4 change
+    of §4.1 rule 5: today `tws sync --push` and `tws push` fail there with
+    `no stack.yaml found for feature: <f>`, and on an agreeing layout — every frozen capture —
+    nothing changes.
 13. **State**: `SyncState{StartedAt, FailedBranch, Pending, Completed, Skipped}` at
     `<featurePath>/.sync-state.yaml`, mode `0644`, written **only on failure**
     (`saveIncompleteSync`), never before the run. `Skipped` stays declared and never written. No
     lock is taken and none is checked. Unchanged except that the write becomes atomic and its
     readers gain explicit decode-error branches, whose one observable consequence is the declared
-    cell-10 change of items 4–6 (C1, §4.5).
+    cell-10 change of items 4–6 (C1, §4.5) — and that `<featurePath>` is now the run's **single**
+    resolved root (§3.11), so on a divergent layout the file is written where the same run's stack
+    lives and where the next run reads it. On an agreeing layout the path is byte-identical to
+    today's.
 
 ### 4.3 Checkout mode, no flags — pinned behaviour
 
-1. Dispatch to `runCheckoutSync` before the external guard/resolution block. Unchanged. `RepoDir`
+1. Dispatch to `runCheckoutSync` before the external guard/resolution block, now carrying the
+   resolved `ws` (§10.1) purely so `RepoDir` can be `ws.RepoRoot` without a third resolver. The
+   wrapper's own `internal.RequireFeaturePath(feature)` call is **unchanged**, so the run performs
+   exactly the two workspace resolutions it performs today — `RunE`'s `RequireWorkspace` event and
+   `RequireFeaturePath`'s — in exactly today's order. Unchanged. `RepoDir`
    becomes `ws.RepoRoot` with the I19 containment refusal (§10.9) on **every** checkout run,
    no-flag included: for the supported cwds (cells 7–8) the resolved toplevel is `ws.RepoRoot` and
    nothing changes except the one added read-only `git -C <cwd> rev-parse --show-toplevel` probe
    declared in §4.1 rule 6a — which runs after workspace and feature-path resolution and
    immediately before the first `RunCheckoutSync` preflight Git call — and cell 9 is the declared
    exception of §4.1 rule 5 (AC 46).
-2. `RequireFeaturePath` legacy/new layout resolution. Unchanged.
+2. Legacy/new layout resolution for the feature directory. Unchanged in **code, rules, and
+   result** — `internal.RequireFeaturePath(feature)` keeps applying `RequireWorkspace` +
+   `GuardFeatureName(ws.MetadataRoot, feature)` + `ws.ResolveFeaturePath(feature)`, with today's
+   error semantics (ambiguity, invalid `workspace_mode`, space-name conflict) propagated verbatim
+   (§10.1). It is **not** replaced by `internal.ResolveFeaturePathFor`.
 3. Pre-flight order and exact messages: existing transaction →
    `previous checkout-sync incomplete; use --continue or --abort` (CLI) /
    `checkout sync transaction already exists; use --continue or --abort` (library);
@@ -1003,15 +1726,16 @@ On **every** external run — no-flag included — the state discrimination of s
 one additional `os.Lstat` of `<featurePath>/.sync-state.v2.yaml`, before any Git command. This is
 the single, deliberate, declared addition to the no-flag **runtime-state read set**, and it is the
 only added ordinary no-flag **runtime-state-path** read. It is deliberately **not** a claim that no
-added read of any other kind exists: the two **read-only Git argv changes** of C4 — the checkout
-containment probe and the repo-scoped default-base probe — are declared separately and exhaustively
+added read of any other kind exists: the three **read-only Git argv changes** of C4 — the checkout
+containment probe, the repo-scoped default-base probe, and the **removed** workspace-root resolution
+events on the external sync and external push paths — are declared separately and exhaustively
 in §4.1 rule 6, and this section neither covers nor contradicts them. (The declared **behavioural**
 exceptions are the four categories of §4.1 — C1, rule 4; C2 and C3, rule 7; C4, rules 5 and 6 — and
 the one unconditional persisted-byte exception is C5, §4.1 rule 3.) Its exact scope:
 
 - When the payload is **absent**, nothing changes on an input outside those declared categories:
   same stdout, same stderr, same exit code, same
-  files, and the same Git commands apart from the two declared read-only C4 argv carve-outs of §4.1
+  files, and the same Git commands apart from the three declared read-only C4 argv carve-outs of §4.1
   rule 6 (and, on the declared C2/C3 defect fixtures only, the changes of §4.1 rule 7). The guard is
   not read — an unreadable guard beside such a run changes nothing, which is how AC 38 proves it —
   the legacy path is read exactly as today, and no
@@ -1039,11 +1763,13 @@ observable no-flag change**, each bounded to a declared input class — the same
 1. **C1 — corrupt external state**, on exactly one input: an **unreadable** `.sync-state.yaml`.
    Declared behavioural exception 1 (§4.1 rule 4), spelled out per verb in §8.6 row 10 and §8.7,
    asserted by AC 40. All three verbs change: stdout/stderr, exit code, and what is deleted.
-2. **C2 — decoupled-name push**, on exactly one input class: a `--push` run (and `tws push`) over an
+2. **C2 — decoupled-name push**, on exactly one input class: an **external-mode** `--push` run (and
+   external `tws push`) over an
    entry whose `Name` and `Branch` are **decoupled**. Declared behavioural exception 3 (§4.1
    rule 7), asserted by AC 33. The `push` **argv**, the per-entry **stdout** line, the **exit code**
    where that push was the only failure, and the **remote ref** updated all move from broken to
-   correct. **Coupled-name fixtures remain fully frozen**, argv included.
+   correct. **Coupled-name fixtures remain fully frozen**, argv included, and **checkout mode is
+   not touched at all** — its `tws push` still fails on `ErrWorktreeUnsupported` (§3.11, AC 59).
 3. **C3 + C5 — duplicate-`GitBranch()` metadata attribution, and the additive plan name.** On
    exactly one input class — a checkout run over a stack containing two entries that share one
    `GitBranch()` — finalization updates the **correct** entry's `last_base_sha` instead of the first
@@ -1052,12 +1778,22 @@ observable no-flag change**, each bounded to a declared input class — the same
    `stack.yaml` included. Independently of the fixture shape, **C5 persists the logical `name` key**
    on every checkout plan entry, including no-flag transactions — the already-declared additive
    persisted-byte change of §4.1 rule 3 (AC 6, AC 54).
-4. **C4 — cwd resolution**, on exactly two cwd cells: external cell 5 (and its nested form,
-   cell 6) where the two feature-path derivations disagree, and checkout cell 9. Declared
-   behavioural exception 2 (§4.1 rule 5), spelled out in §13.4 and §10.9, asserted by AC 46.
-   Separately, C4 carries the **two read-only Git argv carve-outs** of §4.1 rule 6 — the checkout
-   containment probe and the repo-scoped `DefaultBranchIn` event — which are visible only in the
-   argv log and never in stdout, stderr, exit code, files, or modes.
+4. **C4 — cwd and layout resolution**, on exactly two input classes: **every external**
+   invocation whose two feature-path derivations disagree (§3.11) — which can happen from any
+   external cwd cell 1–6, in **both** disagreement directions, because the trigger is `TWS_ROOT` /
+   workspace detection rather than cwd — and checkout cwd cell 9. The layout resolver is reached
+   **only** from external-mode code paths (`tws sync`'s external arm, `syncEntryCompletion`, and
+   the external arm of `tws push`); checkout-mode `tws push` never resolves a layout and is
+   unchanged (§3.11, AC 59). Declared
+   behavioural exception 2 (§4.1 rule 5), spelled out in §3.11, §13.4 and §10.9, asserted by AC 46
+   and AC 58.
+   Separately, C4 carries the **three read-only Git argv carve-outs** of §4.1 rule 6 — the checkout
+   containment probe, the repo-scoped `DefaultBranchIn` event, and the **workspace-root resolution
+   compression** of the external paths (external sync: `3 + N + E` events → 2, which **does** reach
+   the frozen external no-flag captures; external push: `1 + N` → 2, §3.11) — which are visible
+   only in the argv log and never in stdout, stderr, exit code, files, or modes. The layout resolver
+   itself adds **no** Git command, performs **no** resolution of its own, and, on an agreeing
+   layout, no filesystem probe either.
 
 No other no-flag fixture moves: every no-flag capture outside those four declared categories, in
 both modes, stays frozen under §4.1's comparison rules, including its mutating-verb argv and its
@@ -1066,14 +1802,15 @@ persisted bytes.
 | # | Change | Why it is not a compatibility break | AC |
 |---|---|---|---|
 | C1 | `SaveSyncState` becomes atomic (temp + `Sync` + rename) and every reader of `.sync-state.yaml` gains an explicit decode-error branch, **keeping mode `0644` and an identical key set, key order, and values** (D15). **Declared behaviour change on unreadable legacy state (external cell 10, §8.6 row 10), on all three verbs**: plain stops panicking, `--continue` stops failing opaquely, and `--abort` **fails closed with exit 1 instead of silently treating corrupt state as absent** | A truncated `.sync-state.yaml` today makes the plain path dereference a nil `*SyncState` and panic (`internal/cli/sync.go:56-58`); `--continue` reports `nothing to continue — no sync in progress` although the file exists (`internal/cli/sync.go:102-105`); and `--abort` prints `Nothing to abort — no sync in progress.` with exit 0 while leaving the file and any real mid-rebase worktree untouched (`internal/cli/sync.go:85-89`). All three are the *same* defect — an ignored decode error — and they are **directly coupled** to this change: adding the decode-error branch is what removes the panic, and an abort that keeps calling corrupt state "no sync in progress" would keep the operator's only recovery verb lying about the file the hardening exists to protect. Silently deleting a file whose contents are unknown is refused by §8.6's fail-closed rule, so the honest outcome is a clean exit-1 error naming the file and deleting nothing. Atomicity itself changes only the crash window; the resulting file stays mode-identical and content-identical up to the per-run `started_at` timestamp, which is dynamic in the pre-change tree too (§4.1 rule 2) | AC 40 |
-| C2 | `pushFeature` pushes `entry.GitBranch()` instead of `entry.Name` (D13, M14). **Declared observable no-flag change on exactly one input class** (§4.1 rule 7): for an entry whose `Name` and `Branch` are **decoupled**, a no-flag `tws sync <feature> --push` (and `tws push <feature>`) changes the `push` **argv** (`git push --force-with-lease origin <gitbranch>`), the per-entry **stdout** line (`  [+] NAME (pushed)` where today prints `  [x] NAME (push failed)`), the **exit code** where that push was the run's only failure, and the **remote ref** updated (`refs/heads/user/work`; the stray `refs/heads/work` is no longer created) | For coupled names `GitBranch() == Name`, so argv, output, exit code, and refs are identical and every coupled fixture stays frozen. For decoupled names today's code pushes a ref that is not the branch: the push fails, or worse creates a ref nobody uses, while the real branch is never published — a defect, and the change is broken→correct. Selected push cannot share the helper otherwise. Because the observable difference is declared, the decoupled fixture is captured as **declared-change evidence**, not as a frozen golden (§4.1 rule 7) | AC 33 |
+| C2 | `pushFeature` pushes `entry.GitBranch()` instead of `entry.Name` (D13, M14), **in external mode only** — the preserved checkout helper `pushFeatureCheckout` keeps `entry.Name` and never reaches a push (§3.11). **Declared observable no-flag change on exactly one input class** (§4.1 rule 7): for an entry whose `Name` and `Branch` are **decoupled**, a no-flag external `tws sync <feature> --push` (and external `tws push <feature>`) changes the `push` **argv** (`git push --force-with-lease origin <gitbranch>`), the per-entry **stdout** line (`  [+] NAME (pushed)` where today prints `  [x] NAME (push failed)`), the **exit code** where that push was the run's only failure, and the **remote ref** updated (`refs/heads/user/work`; the stray `refs/heads/work` is no longer created) | For coupled names `GitBranch() == Name`, so the ordered mutating push argv, output, exit code, and refs are identical and every coupled fixture stays frozen — its only difference from the pre-change tree being the read-only workspace-root resolution **events** removed by §4.1 rule 6c (`1 + N` → 2 on the push path, so for `N = 1` even the count is unchanged). For decoupled names today's code pushes a ref that is not the branch: the push fails, or worse creates a ref nobody uses, while the real branch is never published — a defect, and the change is broken→correct. Selected push cannot share the helper otherwise. Because the observable difference is declared, the decoupled fixture is captured as **declared-change evidence**, not as a frozen golden (§4.1 rule 7) | AC 33 |
 | C3 | `finalizeTransaction` attributes `LastBaseSHA` by logical `Name` instead of first-match `GitBranch()` (M4). **Declared observable no-flag change on exactly one input class** (§4.1 rule 7): a no-flag checkout run over a stack with two entries sharing one `GitBranch()` updates the **correct** entry's `last_base_sha`, so that fixture's `stack.yaml` deliberately differs from the pre-change tree. Git argv, stdout, exit code, file set, and modes are unchanged even there | Identical for unique branches, so every unique-branch fixture stays frozen, `stack.yaml` included. With duplicate `GitBranch()` values today's `break`-on-first-match writes the wrong entry's `last_base_sha` — silent metadata corruption on the frozen path, and the change is broken→correct. Requires C5, because attribution by `Name` needs the plan to carry `Name`. The duplicate-branch fixture is captured as **declared-change evidence**, not as a frozen golden (§4.1 rule 7) | AC 34 |
-| C4 | cwd resolution fixes: checkout `RepoDir`, external `syncFeature` feature-path re-derivation, and `resolveBase`'s **repo-scoped** default branch (D9 escape clause, §10.9, §13.4). **Declared observable no-flag change in exactly two cwd cells** (§4.1 rule 5): external cell 5/6 runs whose resolved and re-derived feature paths disagree now load the resolved feature's `stack.yaml` and sync the stack instead of falling into `syncFallback`'s hard-coded `origin/main` rebase; checkout cell 9 (a linked worktree of the checkout repository) now refuses with I19 and exit 1 instead of mutating the wrong working tree. No checkout-from-outside-any-repository change is claimed: `RequireWorkspace` resolves external mode or errors before checkout dispatch, so the probe's `err != nil` arm is defensive only. **Declared read-only Git argv change on otherwise frozen no-flag runs** (§4.1 rule 6), in exactly two carve-outs and no others: (a) every checkout run adds one containment probe `git -C <cwd> rev-parse --show-toplevel` after workspace/feature-path resolution and immediately before the first `RunCheckoutSync` preflight Git call; (b) whenever a materialized/repo context is available, external default-base resolution replaces today's cwd-scoped `internal.DefaultBranch()` with `internal.DefaultBranchIn(repoCtx)` — compared as the **whole closed `DefaultBranchIn` logical event** (successful `rev-parse --abbrev-ref origin/HEAD`; or failed `rev-parse` then `symbolic-ref --short HEAD`; or both failing then the hard-coded `main` fallback), whose command **count and exit-status classes may differ** between the two sides because the pre-change call runs in the process cwd and the post-change call runs in the repository | Each changes behaviour only where the current code is provably wrong: cells 5 and 9 of the §12.11 matrix fail today, which is D9's own escape clause. Supported cwds are untouched — cells 1–4 and 7–8 resolve to the same feature path and the same toplevel as today, so every frozen no-flag golden lives there. The two argv carve-outs are **read-only**: they write no object, ref, index, or file, and leave stdout, stderr, exit code, files, and modes untouched; asking Git where the cwd is, and asking the right repository for its default branch, is precisely the fix. Carve-out (b) is validated by **resolved value**, not by argv shape: for a frozen fixture the pre-change and post-change events MUST resolve to the same fixture-pinned default branch and every command in the window MUST belong to that one closed event; fixtures declared to **disagree** on the resolved value are C4 declared-change evidence, reviewed rather than required to be equivalent. The `resolveBase` change is deliberately narrow: a repo context is used **only when one exists** (`entry.Repo`, else the entry's materialized worktree path); when no repo context is available the call is exactly today's `internal.DefaultBranch()` with byte-for-byte today's argv, so healthy no-flag single-repo runs keep their default-base semantics unchanged (§13.4) | AC 2, AC 46, AC 53 |
+| C4 | cwd and layout resolution fixes: checkout `RepoDir`, the **single external sync layout resolver** of §3.11 replacing both of today's feature-path derivations on the **external** path (checkout-mode `tws push` keeps today's `RequireFeaturePath`/`RequireWorktreePath` refusal, AC 59), and `resolveBase`'s **repo-scoped** default branch (D9 escape clause, §3.11, §10.9, §13.4). **Declared observable no-flag change on exactly two input classes** (§4.1 rule 5): every external run whose two derivations disagree — any cwd cell 1–6, **both** directions — now resolves one root for the stack, the worktrees, the state files, the completion gate, and the push, so a divergent layout stops rebasing under one root while reading/writing state and pushing under the other, and stops falling into `syncFallback`'s hard-coded `origin/main` rebase when only the workspace-rooted directory holds the stack; checkout cell 9 (a linked worktree of the checkout repository) now refuses with I19 and exit 1 instead of mutating the wrong working tree. No checkout-from-outside-any-repository change is claimed: `RequireWorkspace` resolves external mode or errors before checkout dispatch, so the probe's `err != nil` arm is defensive only. **Declared read-only Git argv change on otherwise frozen no-flag runs** (§4.1 rule 6), in exactly three carve-outs and no others: (a) every checkout run adds one containment probe `git -C <cwd> rev-parse --show-toplevel` after workspace/feature-path resolution and immediately before the first `RunCheckoutSync` preflight Git call; (b) whenever a materialized/repo context is available, external default-base resolution replaces today's cwd-scoped `internal.DefaultBranch()` with `internal.DefaultBranchIn(repoCtx)` — compared as the **whole closed `DefaultBranchIn` logical event** (successful `rev-parse --abbrev-ref origin/HEAD`; or failed `rev-parse` then `symbolic-ref --short HEAD`; or both failing then the hard-coded `main` fallback), whose command **count and exit-status classes may differ** between the two sides because the pre-change call runs in the process cwd and the post-change call runs in the repository; (c) the external paths stop re-resolving the workspace root per derived path — the carve-out unit is the `workspaceRootResolutionEvent` of §3.11, an ordered **pair** of records (`rev-parse --show-toplevel` + `-C <cwd> rev-parse --git-common-dir` for a `RequireWorkspace` event; the same two reversed for a `TwsRoot` event, since `internal.TwsRoot` resolves `MainRepoRoot` first), grouped by anchoring **only** on `--git-common-dir` records whose `-C` operand is the record's own process cwd — the `inferExternalRepoRoot` probes `RequireWorkspace`'s fallback arm emits from cwd cells 4–6 are ordinary non-event records, never grouped and never compressed, except that a block emitted inside a `RequireWorkspace` call this carve-out removes goes with it (push path only, §3.11). Today an external `tws sync` emits `3 + N + E` events (one `RequireWorkspace`, one `TwsRoot` for the guard, then one `TwsRoot` for `syncFeature`'s `internal.FeaturePath`, for each per-entry `internal.WorktreePath` in both passes, and for each stale-edge child probe) and today's `pushFeature` emits `1 + N` `RequireWorkspace` events (one `internal.RequireFeaturePath` plus one `internal.RequireWorktreePath` per entry, archived entries included, each re-entering `RequireWorkspace`); after this feature **each** external path emits **exactly two** events — one `RequireWorkspace` event and one `TwsRoot` event, both at today's positions — so external sync loses `1 + N + E` events (this **does** reach the frozen AC 1 external captures) and external push goes `1 + N` → 2, which for `N = 1` leaves the count unchanged and for an empty stack adds one; the ordered mutating `push --force-with-lease origin <GitBranch>` argv, stdout, exit code, and refs are compared separately and are unchanged (checkout push is outside it: it never calls `internal.TwsRoot()` and gains one `RequireWorkspace` event instead, §3.11) | Each changes behaviour only where the current code is provably wrong: a divergent layout runs split-brain today and cell 9 of the §12.11 matrix mutates the wrong tree, which is D9's own escape clause. Agreeing layouts and supported cwds are untouched — the layout resolver returns the same path without probing anything, and cells 1–4 and 7–8 resolve to the same toplevel as today, so every frozen no-flag golden lives there. The three argv carve-outs are **read-only**: they write no object, ref, index, or file, and leave stdout, stderr, exit code, files, and modes untouched; asking Git where the cwd is, asking the right repository for its default branch, and asking either question only once, is precisely the fix. Carve-out (c) removes read-only **events** on both external paths and is asserted twice: on the frozen external sync captures by AC 2 (which is where external sync's `3 + N + E` → 2 reduction lands — no frozen golden invokes `--push` or `tws push`, so the push half is asserted by AC 59 and appears inside the AC 33 declared-change diff for the decoupled fixture). It never adds an event on a non-empty stack, and no record it touches is mutating. Carve-out (b) is validated by **resolved value**, not by argv shape: for a frozen fixture the pre-change and post-change events MUST resolve to the same fixture-pinned default branch and every command in the window MUST belong to that one closed event; fixtures declared to **disagree** on the resolved value are C4 declared-change evidence, reviewed rather than required to be equivalent. The `resolveBase` change is deliberately narrow: a repo context is used **only when one exists** (`entry.Repo`, else the entry's materialized worktree path); when no repo context is available the call is exactly today's `internal.DefaultBranch()` with byte-for-byte today's argv, so healthy no-flag single-repo runs keep their default-base semantics unchanged (§13.4) | AC 2, AC 46, AC 53, AC 58, AC 59 |
 | C5 | every **newly written** checkout plan entry records `name:` — in no-flag transactions too | This is the shared-path half of C3: without `name` on disk, `finalizeTransaction` cannot attribute by logical `Name`, and duplicate-`GitBranch()` metadata stays corrupt on exactly the frozen path where the defect bites. The key is additive and `omitempty`; every existing key keeps its value, type, and position; old binaries decode the transaction and silently drop the unknown key, and their `GitBranch()` first-match attribution keeps working. Declared consequence: a no-flag checkout transaction is **semantically equivalent but not byte-identical** to the pre-change tree in this one field | AC 6, AC 34, AC 54 |
 
 Everything else on the no-flag path — every input outside the four declared categories above — is
 byte-, exit-, and state-identical under §4.1's comparison rules and its declared exceptions (rule 3,
-C5's additive plan key; rule 4, C1; rule 5, C4's two cwd cells; rule 6, C4's two read-only Git
+C5's additive plan key; rule 4, C1; rule 5, C4's divergent external layouts and checkout cell 9;
+rule 6, C4's three read-only Git
 argv carve-outs; rule 7, the C2 decoupled-name and C3 duplicate-`GitBranch()` defect fixtures).
 
 ---
@@ -1130,7 +1867,8 @@ const (
     SyncRolePropagated SyncSelectionRole = "propagated"
 )
 
-// SyncSelectedEntry is one resolved member of the selection, in topological order.
+// SyncSelectedEntry is one resolved member of the selection, in the order
+// TopoSort returned (parent before child; sibling order unspecified, §3.7).
 type SyncSelectedEntry struct {
     Name      string            // StackEntry.Name — the tws identity
     GitBranch string            // StackEntry.GitBranch() — the Git identity
@@ -1144,7 +1882,7 @@ type SyncSelectedEntry struct {
 // SyncSelection is the whole resolved plan-independent selection.
 type SyncSelection struct {
     Policy   SyncRunPolicy
-    Entries  []SyncSelectedEntry // topological order, filtered
+    Entries  []SyncSelectedEntry // TopoSort order, filtered; parent before child only
     Names    map[string]bool     // membership set over Entries
     Repos    []string            // unique Repo values across Entries, sorted; "" allowed
 }
@@ -1205,7 +1943,13 @@ is never refused — it is an anchor (§5.6, §6.6).
 Binding algorithm:
 
 1. `sorted, err := TopoSort(stack)`. On error return it verbatim. **This is the only ordering
-   truth**; the selection is a filter over `sorted` and never re-derives order.
+   truth**; the selection is a filter over `sorted` and never re-derives, re-sorts, or tie-breaks
+   it. `ResolveSyncSelection` MUST NOT add a second sort, and `TopoSort` MUST NOT be modified
+   (§13.5): its Kahn queue is seeded from a Go map, so entries that are mutually unordered —
+   siblings and independent anchors — come back in an unspecified, run-varying order, and the
+   selection propagates exactly that order to output, to the plan, and to the persisted `selected`
+   list. The **only** guaranteed property is parent-before-child; every multi-anchor assertion
+   compares sets, not sequences (§3.7).
 2. Compute the member name set by scope:
    - `SyncScopeAll`: every `sorted` entry.
    - `SyncScopeOne`: `{Selector}`. If `!HasBranch(stack, Selector)` → I10 (formatted with
@@ -1217,7 +1961,8 @@ Binding algorithm:
    (formatted with `opts.Feature`, above).
    Closure members and `all` members are **not** filtered on `Archived` here (§5.5).
 4. Build `Entries` by walking `sorted` in order and keeping members. Order is therefore
-   parent-before-child by construction.
+   parent-before-child by construction, and nothing stronger: the relative order of two members
+   `TopoSort` left mutually unordered is not defined by this specification.
 5. Classify each entry:
    - `parent := GetBranch(stack, entry.Base)`;
    - if `parent.Name != "" && SameStackRepo(parent.Repo, entry.Repo)` → `SyncRolePropagated`,
@@ -1294,6 +2039,16 @@ Rationale: an equivalent-by-inspection refactor of the frozen path is a compatib
 user-visible benefit, and the goldens can only prove equivalence for the fixtures they cover.
 `SyncScopeAll` *with* a trigger flag (e.g. `--local-only` alone) does use the model, and therefore
 does get I12/I13.
+
+**Membership and role only — the executors keep real `StackEntry` values.** `SyncSelectedEntry`
+deliberately carries no `LastBaseSHA`, so **no** executor may reconstruct `StackEntry` values from
+the selection. Both executors keep iterating the real entries — external over the `sorted
+[]internal.StackEntry` slice it iterates today, checkout over `TopoSort(stack)` inside
+`BuildCheckoutPlan` — and consult the selection **only** through `Names` (membership) and `Role`
+(anchor vs propagated). Rebuilding entries from `SyncSelectedEntry` would silently drop
+`LastBaseSHA` and turn every scoped rebase into a plain rebase, destroying the amend-aware
+`--onto <base> <LastBaseSHA>` replay that `amend-aware-rebase` owns (§7.1) — a silent regression no
+message would report. This is binding, not advisory.
 
 ### 5.6 Anchors, propagation edges, and the no-op rule (D3, D4)
 
@@ -1422,11 +2177,13 @@ follow-up (§18), not a redefinition of the default.
 External fetch MUST be restricted to the repos actually represented in the **selected** plan:
 
 ```go
-sub := Stack{Branches: <selected entries as StackEntry values, in selection order>}
-repos := internal.UniqueRepos(sub, featurePath)
+sub := Stack{Branches: <the selected real StackEntry values, in selection order>}
+repos := internal.UniqueRepos(sub, layout.FeaturePath)
 ```
 
 `UniqueRepos` is reused verbatim with a stack **subset** input; no second per-repo walker is added.
+The subset is built from the **real** `StackEntry` values the executor is already iterating (§5.5),
+never rebuilt from `SyncSelectedEntry`.
 Fetching a repo no selected entry touches is precisely the hidden work this feature removes.
 Fetch remains **once per unique repo**, and the `Fetching …` line order across multiple repos
 remains non-deterministic and MUST NOT be pinned.
@@ -1546,12 +2303,18 @@ type CheckoutPlanEntry struct {
 External gains one function beside the existing one:
 
 ```go
-func staleStackEdgesFiltered(feature string, stack internal.Stack, selected map[string]bool) []string
+func staleStackEdgesFiltered(worktreesRoot string, stack internal.Stack, selected map[string]bool) []string
 ```
 
-It is `staleStackEdges` with one additional guard — `if selected != nil && !selected[child.Name] { continue }`
-— and MUST otherwise be byte-identical in predicate and message. `staleStackEdges(feature, stack)`
-becomes `staleStackEdgesFiltered(feature, stack, nil)`, so there is exactly one predicate.
+It is `staleStackEdges` with two changes and no others: the `feature` parameter — used today only to
+build `internal.WorktreePath(feature, child.Name)` — is replaced by the explicit
+`worktreesRoot` of §3.11 (`childPath := filepath.Join(worktreesRoot, child.Name)`), and one
+additional guard `if selected != nil && !selected[child.Name] { continue }` becomes the **first**
+statement of the loop body. The predicate and the message
+`fmt.Sprintf("%s does not contain parent %s", child.Name, parent.Name)` MUST stay byte-identical.
+`staleStackEdges(feature, stack)` disappears; today's call site becomes
+`staleStackEdgesFiltered(layout.WorktreesRoot, stack, nil)`, so there is exactly one predicate and
+exactly one root.
 
 Binding rules:
 
@@ -1567,8 +2330,10 @@ Binding rules:
    cross-repo edges and never probes `origin/<default>`. AC 22 proves this by leaving the root
    behind `origin/<default>` and asserting exit 0.
 
-`branchContainsConfiguredParent` (`internal/cli/sync.go:153-160`) is reused unchanged for the
-`--continue` precondition on the failed entry. No third ancestry classifier is introduced, and the
+`branchContainsConfiguredParent` (`internal/cli/sync.go:153-160`) is reused unchanged in predicate
+and message for the `--continue` precondition on the failed entry; its only edit is the §3.11
+single-layout obligation — it takes the resolved `worktreesRoot` instead of re-deriving through
+`internal.WorktreePath`. No third ancestry classifier is introduced, and the
 shipped `StackEdge` evaluator is **not** collapsed into these two (D6, §18).
 
 ### 7.6 Selected push
@@ -1576,27 +2341,53 @@ shipped `StackEdge` evaluator is **not** collapsed into these two (D6, §18).
 New helper in `internal/cli/push.go`:
 
 ```go
-func pushSelected(feature string, stack internal.Stack, names []string) error
+func pushSelected(feature string, layout externalSyncLayout, stack internal.Stack, names []string) error
 ```
 
 - Pushes **only** the entries named in `names`, which the caller populates with the selected
-  entries that were **successfully** rebased in this run (`completed`), in topological order.
+  entries that were **successfully** rebased in this run (`completed`), in the selection's order —
+  parent before child, sibling order unspecified (§3.7), so no test pins the sequence of two
+  independent pushes.
 - Uses `entry.GitBranch()` as the ref (never `entry.Name`).
 - Uses `git push --force-with-lease origin <gitbranch>` through `internal.RunDirClean` in the same
-  repo context `pushFeature` computes (`entry.Repo` when set, else the worktree path).
+  repo context `pushFeature` computes (`entry.Repo` when set, else the worktree path derived from
+  `layout.WorktreesRoot`).
 - Emits the same per-entry lines `pushFeature` emits (`  [+] NAME (pushed)`,
   `  [x] NAME (push failed)`), keyed by logical `Name`.
 - Skips entries with no worktree directory with `  [-] NAME (archived, skipped)`.
 
-`pushFeature` itself is changed only by C2 (`GitBranch()` ref). The **full legacy push ref defect
-(M14) is fixed** in this feature, and the fix applies to `tws push` as well as to no-flag
-`tws sync --push`. Documented behaviour after the fix: for coupled names nothing changes — same
-argv, same output, same exit code, same refs — and for a
+`pushFeature` is changed by C2 (`GitBranch()` ref) and by the §3.11 single-layout obligation: it
+takes the resolved `layout` from its caller instead of calling `internal.RequireFeaturePath` /
+`internal.RequireWorktreePath` itself, so the push half of a run can never target a different root
+than the rebase half. That also removes today's per-entry workspace resolution: `pushFeature`
+performs `1 + N` `RequireWorkspace` events over a stack of `N` entries today (one
+`RequireFeaturePath`, plus one `RequireWorktreePath` per entry, each re-entering `RequireWorkspace`)
+and **zero** events after the change, so the external push path performs exactly **two**
+workspace-root resolution events per command invocation — one `RequireWorkspace` event in `RunE`
+plus the one `TwsRoot` event its external arm makes to build the layout. The reduction is
+`1 + N` → 2 (unchanged in count for `N = 1`, one event **added** for an empty stack), and each event
+is an ordered **pair** of records, never a single `--git-common-dir` record — the read-only
+carve-out of §4.1 rule 6c, asserted by AC 59. Both `pushFeature` and `pushSelected` are **external-mode only**.
+`pushCmd` (`tws push <feature>`) guards the feature name with
+`internal.GuardFeatureName(ws.MetadataRoot, feature)` and then branches on `ws.Mode`: in external
+mode it makes its one `internal.TwsRoot()` call and resolves the identical layout through
+`resolveExternalSyncLayout(ws, twsRoot, feature)` before calling
+`pushFeature`, and in checkout mode it calls `pushFeatureCheckout` — which never calls
+`internal.TwsRoot()` — today's body verbatim, whose
+`internal.RequireWorktreePath` still fails with `ErrWorktreeUnsupported` and a nonzero exit
+(§3.11, AC 59). The **full legacy push ref defect
+(M14) is fixed** in this feature, and the fix applies to **external** `tws push` as well as to
+no-flag external `tws sync --push`. It does **not** reach checkout mode: a checkout `tws push`
+still fails before any `git push` argv is built (§3.11), and checkout `tws sync --push` pushes
+through `internal/checkout_sync.go`'s own loop, which this feature leaves alone. Documented
+behaviour after the fix: for coupled names nothing observable changes — same
+mutating push argv, same output, same exit code, same refs, with only the read-only
+workspace-root resolution events of §4.1 rule 6c compressed to two — and for a
 decoupled entry (`name: work`, `branch: user/work`) the pushed ref becomes `user/work`, which is the
 branch that actually exists, so the push argv, the per-entry line, the exit code, and the updated
 remote ref all change on the **no-flag** path too. That is the declared C2 exception of §4.1 rule 7
 (§4.5 C2, AC 33), not a frozen behaviour. The CHANGELOG entry MUST call this out as a fix with a
-behaviour note.
+behaviour note, scoped to external mode.
 
 New-mode runs with `scope=all` use `pushFeature` (whole stack) so the semantics of "`--push` pushes
 the feature" are unchanged when nothing was scoped; scoped runs use `pushSelected`.
@@ -1630,6 +2421,11 @@ This section is binding in full. Every filename, mode, field, order, and message
 | `<featurePath>/.sync-state.yaml` | no-flag failures (`saveIncompleteSync`) **and** the new-mode sentinel, never both in one run | `0644` | yes (C1) | new binary, old binary, `BuildAgentStatus`, filtered by `isRuntimeState` |
 | `<featurePath>/.sync-state.v2.yaml` | new-mode runs only | `0600` | yes | new binary, `BuildAgentStatus` (marker-aware projection), filtered by `isRuntimeState` |
 | `<featurePath>/.sync-run.lock` | new-mode runs only | `0600` (`O_EXCL`) | n/a (single exclusive create) | new binary, `BuildAgentStatus` (read-only), filtered by `isRuntimeState` |
+
+Throughout §8, `<featurePath>` is **`layout.FeaturePath`** — the single root the run resolved at
+§3.6 step 6 through §3.11 — and never a path re-derived through `internal.FeaturePath` or
+`ws.ResolveFeaturePath`. The same root owns `stack.yaml`, `worktrees/`, and the push context, so a
+run's state can never be written beside a stack it did not read.
 
 - The sentinel keeps mode `0644` **deliberately**: it lives at the legacy path, must be
   indistinguishable in shape from a legacy state file to an old binary, and carries only a nonce.
@@ -1775,7 +2571,8 @@ fetch_policy: fetch              # SyncFetchPolicy
 propagation_policy: local-only   # SyncPropagationPolicy
 scope_kind: subtree              # SyncScopeKind
 scope_selector: parent           # logical StackEntry.Name, "" for scope_kind: all
-selected:                        # resolved selection, topological order, logical Names
+selected:                        # resolved selection, TopoSort order (parent before child;
+                                 # sibling order unspecified, §3.7), logical Names
   - parent
   - child
 push: true                       # frozen --push decision
@@ -1970,7 +2767,8 @@ behaviour change (§4.1 rule 4, §4.5), and its abort no longer takes the "nothi
 
 Placeholders bind positionally, in the order they appear in each message; the values used are the
 feature name, the real failed logical entry (`payload.FailedBranch`), its worktree path
-(`internal.WorktreePath(feature, payload.FailedBranch)`), a runtime file path, a PID, an RFC3339
+(`filepath.Join(layout.WorktreesRoot, payload.FailedBranch)`, §3.11), a runtime file path, a PID, an
+RFC3339
 timestamp, and a `state_version` value. In the cell-11 messages specifically the bindings are, in
 order: the corrupt legacy path `<featurePath>/.sync-state.yaml`, the payload's real failed entry,
 that entry's worktree path, and the payload path `<featurePath>/.sync-state.v2.yaml` — so a corrupt
@@ -2057,7 +2855,7 @@ absent guard:
 
 1. never resume, and never infer scope from the payload as if the run were still owned;
 2. never surface the marker; read the payload and name the **real** failed logical entry and its
-   worktree path (`internal.WorktreePath(feature, payload.FailedBranch)`);
+   worktree path (`filepath.Join(layout.WorktreesRoot, payload.FailedBranch)`, §3.11);
 3. tell the operator to abort or resolve **that actual rebase** (`git rebase --abort` in the named
    worktree, or resolve and stage there), because no tws command has done it for them;
 4. state that `tws sync <f> --abort` on the new binary then cleans up safely: it aborts the real
@@ -2169,8 +2967,30 @@ type CheckoutSyncOpts struct {
 }
 ```
 
-`runCheckoutSync` (`internal/cli/checkout_sync.go:10-56`) takes the options struct instead of its
-current positional parameters; its behaviour for a zero `Policy` and `NewMode == false` is
+`runCheckoutSync` (`internal/cli/checkout_sync.go:10-56`) takes the resolved workspace
+plus the options struct instead of its current positional parameters — `runCheckoutSync(ws
+internal.Workspace, opts internal.CheckoutSyncOpts)`, with `RunE` passing the `ws` it resolved at
+§3.6 step 2 and the argument position of `<feature>` unchanged. It **MUST still call
+`internal.RequireFeaturePath(feature)`, exactly as it does today and as its first statement**
+(`internal/cli/checkout_sync.go:11-14`), and MUST NOT replace it with
+`internal.ResolveFeaturePathFor` or with any other resolver. That call keeps:
+
+- its **second `RequireWorkspace` event** (§3.11) — the run performs two resolution events, exactly
+  as the shipped tree does, so the checkout argv log's resolution prefix is unchanged and the added
+  containment probe of §10.9 remains the **only** argv difference on this path (§4.1 rule 6a,
+  AC 2, AC 46);
+- its `GuardFeatureName(ws.MetadataRoot, feature)` sibling-space guard, at today's position;
+- its legacy/new layout resolution through `ws.ResolveFeaturePath`;
+- its error semantics verbatim — the same `*ErrSpaceNameConflict`, `*ErrAmbiguousFeature`, invalid
+  `workspace_mode`, and `not inside a git repository or tws workspace` errors, raised at the same
+  point and returned unwrapped.
+
+The `ws` parameter therefore exists for exactly one reason: to supply `ws.RepoRoot` (and the mode
+decision `RunE` already made) **without adding a third resolver call**. It is not an optimisation of
+the feature-path resolution, and no claim that this feature avoids a second `RequireWorkspace` on
+the checkout path may appear in this document, in the tests, in the changelog, or in the docs —
+avoiding it would *remove* a pre-change resolution event, which is not a declared change.
+`runCheckoutSync`'s behaviour for a zero `Policy` and `NewMode == false` is
 unchanged.
 
 ### 10.2 Additive transaction fields and state version
@@ -2209,13 +3029,20 @@ type CheckoutTransaction struct {
 
 **Binding order inside `RunCheckoutSync(opts)`.** Steps 1–8 mutate nothing at all; step 9 is the
 first side effect of any checkout run. Before step 1, and outside this function, the CLI wrapper
-`runCheckoutSync` has already resolved the workspace and the feature path and has then issued the
+`runCheckoutSync` has resolved the feature path with its **unchanged**
+`internal.RequireFeaturePath(feature)` call — its own `RequireWorkspace` event, guard, and error
+semantics preserved exactly as today (§10.1) — and has
+then issued the
 single read-only containment probe `git -C <cwd> rev-parse --show-toplevel`, resolving
-`opts.RepoDir = ws.RepoRoot` (§10.9); that probe is the one added read-only argv record declared in
+`opts.RepoDir = ws.RepoRoot` from the `ws` `RunE` handed it (§10.9); that probe is the one added read-only argv record declared in
 §4.1 rule 6a and is the only Git invocation of a checkout run that did not exist before this
-feature. It is emitted **after** every workspace/feature-resolution Git read (`RequireWorkspace`'s
-`rev-parse --git-common-dir` and anything `RequireFeaturePath` reads) and **immediately before**
-step 2's `rev-parse --git-path rebase-merge`, which is the first Git record of this function.
+feature. It is emitted **after** every workspace/feature-resolution Git read — `RunE`'s
+`RequireWorkspace` event **and** `RequireFeaturePath`'s, each a complete
+`RequireWorkspace` event of §3.11, i.e. **both** `rev-parse --show-toplevel` and
+`-C <cwd> rev-parse --git-common-dir`, plus anything else `RequireFeaturePath` reads — and **immediately before**
+step 2's `rev-parse --git-path rebase-merge`, which is the first Git record of this function. The
+whole pre-change resolution prefix therefore survives **verbatim**, in order, and the probe is the
+single added record.
 
 1. `HasCheckoutTransaction(opts.FeaturePath)` → `checkout sync transaction already exists; use --continue or --abort`.
 2. `gitOperationInProgress(opts.RepoDir)` → `another Git operation is in progress; complete or abort it before checkout sync`.
@@ -2243,7 +3070,10 @@ step 2's `rev-parse --git-path rebase-merge`, which is the first Git record of t
    run `internal.VerifyGitRef` (`git rev-parse --verify <ref>^{commit}`) in `opts.RepoDir`. The
    first failure returns exactly
    `base %q for stack entry %q does not resolve locally; drop --no-fetch or fetch manually first`
-   (§3.5), verbatim and unwrapped, in selection order so the message is deterministic. Under
+   (§3.5), verbatim and unwrapped, reported for the **first** failing entry in selection order.
+   Which entry that is, when two independent entries both fail, follows `TopoSort`'s unspecified
+   sibling order (§3.7), so a test constructing more than one failing base MUST accept either
+   message; single-failure fixtures are pinned exactly. Under
    `--fetch` this preflight is **skipped**, because the fetch may create the ref; an unresolvable
    base then remains today's `BuildCheckoutPlan` failure (`build plan: %w`) after the fetch.
 
@@ -2264,7 +3094,9 @@ step 2's `rev-parse --git-path rebase-merge`, which is the first Git record of t
     (`internal/checkout_sync.go:528-540`) — frozen.
 12b. **New-mode `local-only` only:** `printLocalOnlyNoOp(sel, plan)` — the third and last print path
     package `internal` gains (§3.10). One `  [-] NAME (no in-stack parent edge to propagate)` line
-    per selected anchor in topological order, then `Nothing to propagate.` **only** when the plan is
+    per selected anchor, in the selection's `TopoSort` order (parent before child; sibling and
+    independent-anchor order unspecified and never asserted as a sequence, §3.7), then
+    `Nothing to propagate.` **only** when the plan is
     empty. It is owned by `RunCheckoutSync`, never by the CLI and never by a callback.
 13. Empty plan → release the lock and return nil.
 14. Create and persist the transaction (`state_version: 2` plus the policy keys on new-mode runs).
@@ -2427,7 +3259,12 @@ cwd outside any repository `RequireWorkspace` resolves an **external** workspace
 before checkout dispatch. That arm therefore has no matrix cell, no golden, and no declared-change
 evidence; it exists so the containment check is total rather than partial.
 The refusal applies to **every** checkout run, no-flag included; cell 9 is therefore declared
-behavioural exception 2 (§4.1 rule 5, §4.3 item 1, §4.5 C4), covered by AC 46. The probe itself is
+behavioural exception 2 (§4.1 rule 5, §4.3 item 1, §4.5 C4), covered by AC 46. `ws` is the workspace
+`RunE` already resolved and passed in (§10.1), used **only** to supply `ws.RepoRoot` for the
+comparison and the assignment; `runCheckoutSync`'s own `internal.RequireFeaturePath(feature)` call
+is unchanged and still resolves before this probe, so the probe **adds** a record, **removes**
+none, and its pinned position holds. The probe
+itself is
 one **added read-only** Git invocation on every checkout run, frozen cells included, issued after
 workspace and feature-path resolution and immediately before `RunCheckoutSync`'s first preflight
 Git call (§10.3); it is declared
@@ -2461,20 +3298,39 @@ type SyncExternalState struct {
     Payload    *SyncRunState // decoded v2 payload; nil when absent or unreadable
     PayloadErr error         // decode error / unsupported version for the payload
     Guard      *SyncRunGuard // decoded guard; nil when absent or unreadable
-    GuardLive  bool          // syncProcessAlive(Guard.PID) && token matches the payload when both exist
+    GuardLive  bool          // opts.Alive(Guard.PID) && token matches the payload when both exist
     GuardErr   error
+
+    // Symlink facts, recorded from the single os.Lstat this classifier performs
+    // per consulted path. They are facts, not policy: the classifier never
+    // refuses, and package cli applies I18 from these fields *without*
+    // re-Lstat-ing anything (§3.6 steps 7-8).
+    LegacyPath    string // <featurePath>/.sync-state.yaml
+    PayloadPath   string // <featurePath>/.sync-state.v2.yaml
+    GuardPath     string // <featurePath>/.sync-run.lock
+    LegacySymlink bool   // legacy path is a symlink (still followed on a no-flag read, §12 item 7)
+    PayloadSymlink bool  // payload path is a symlink: never followed, never read, never trusted
+    GuardSymlink  bool   // guard path is a symlink: never followed, never read, never trusted
 }
 
-// SyncClassifyOpts controls only *when the guard file is opened*. It never
-// changes the returned cell: the guard is precedence and context, not an axis.
+// SyncClassifyOpts controls only *when the guard file is opened* and *how
+// liveness is decided*. Neither changes the returned cell: the guard is
+// precedence and context, not an axis.
 type SyncClassifyOpts struct {
     // AlwaysReadGuard opens .sync-run.lock unconditionally. tws status and
     // new-mode sync runs pass true. A no-flag sync run passes false, so the
     // guard is opened only when the legacy file decoded to a sentinel or a
     // payload was found — exactly §3.6 step 8c, which keeps the payload Lstat
     // the only added runtime-state-path read on an ordinary no-flag run.
-    // (C4's two read-only Git probes are declared separately, §4.1 rule 6.)
+    // (C4's three read-only Git argv carve-outs are declared separately, §4.1 rule 6.)
     AlwaysReadGuard bool
+
+    // Alive decides guard liveness. When nil the package default
+    // syncProcessAlive is used (§17.4). tws status passes the prober it has
+    // already been given — proberAsChecker{opts.Proc}.Alive — so status tests
+    // stay parallel-safe and never mutate a process global; internal/cli
+    // passes nil.
+    Alive func(pid int) bool
 }
 
 // ClassifyExternalSyncState reads the legacy path, the payload, and (per opts)
@@ -2484,20 +3340,39 @@ type SyncClassifyOpts struct {
 func ClassifyExternalSyncState(featurePath string, opts SyncClassifyOpts) SyncExternalState
 ```
 
+**Reading discipline, binding.** For each of the three paths the classifier performs **exactly one
+`os.Lstat`**, records the symlink fact, and then performs only the follow/read that classification
+requires:
+
+- **legacy**: read (following the link) exactly as today, because a no-flag run's legacy read is
+  frozen (§4.1, §12 item 7). The recorded `LegacySymlink` is what lets package `cli` refuse on a
+  new-mode run without a second `Lstat`.
+- **payload** and **guard**: a symlink is **never** opened, read, followed, or treated as
+  authoritative content. `Payload`/`Guard` stay nil, `GuardLive` stays false, `PayloadErr`/`GuardErr`
+  name the path, and the cell is computed as if the byte content were unavailable — the classifier
+  does not invent a cell from a link target. Package `cli` turns the recorded fact into the I18
+  refusal.
+
+`featurePath` is always `layout.FeaturePath` (§3.11); the classifier derives its three paths with
+`filepath.Join` from that one root and from nothing else.
+
 Both consumers use it and neither re-implements it:
 
 - `internal/cli/sync_modes.go`'s `classifySyncState(featurePath string, newMode bool)` is a thin
-  wrapper over it, passing `AlwaysReadGuard: newMode`, applying the symlink scoping of §3.6 step 8,
-  the deferred I7 of step 8e, the I20 refusal of step 9, and the message table of §8.7;
+  wrapper over it, passing `AlwaysReadGuard: newMode` and `Alive: nil` (the package default), and
+  applying the I18 refusals of §3.6 steps 7–8 **from the returned symlink facts, without a second
+  `Lstat`**, plus the deferred I7 of step 8e, the I20 refusal of step 9, and the message table of
+  §8.7;
 - `buildFeatureSync` (`internal/agent_status.go:1354,1408-1440`) calls it with
-  `AlwaysReadGuard: true` as its **first** external action, because status must be able to report
-  guard-only residue.
+  `AlwaysReadGuard: true` and `Alive: proberAsChecker{b.opts.Proc}.Alive` as its **first** external
+  action, because status must be able to report guard-only residue and must decide liveness through
+  the prober it was already given, never through a process global.
 
 **Call ordering in `buildFeatureSync`, binding.** After the checkout branch returns, and **before**
 the `os.Stat(statePath)` early return and the `LoadSyncState` legacy block
 (`internal/agent_status.go:1408-1412`), `buildFeatureSync` MUST call
-`internal.ClassifyExternalSyncState(featurePath, SyncClassifyOpts{AlwaysReadGuard: true})` and
-dispatch on the returned cell. Today's
+`internal.ClassifyExternalSyncState(featurePath, SyncClassifyOpts{AlwaysReadGuard: true, Alive: proberAsChecker{b.opts.Proc}.Alive})`
+and dispatch on the returned cell. Today's
 `if _, err := os.Stat(statePath); err != nil { return nil, nil }` short-circuits on the legacy path
 alone, which would make `{absent, valid}` (cell 2), `{absent, unreadable}` (cell 3), guard-only
 residue, and every marker cell invisible to status. Dispatch:
@@ -2530,9 +3405,13 @@ Binding rules:
 2. **The marker is never exposed.** It MUST NOT appear in `failed_branch`, in any issue detail or
    hint, in rendered output, or in JSON — and MUST NOT be attributed to any entry as a branch.
 3. **Liveness from the guard.** Use the classifier's `Guard`/`GuardLive` (never a second read of
-   `.sync-run.lock`) and set `Liveness` to `live` / `stale` /
-   `invalid` and `LockPID` / `LockLive` accordingly, using the same live/stale discrimination the
-   rest of the feature uses. These are **existing nullable keys** on `AgentStatusFeatureSync`
+   `.sync-run.lock`, and never a second liveness call) and set `Liveness` to `live` / `stale` /
+   `invalid` and `LockPID` / `LockLive` accordingly. The live/stale decision is made **inside** the
+   classifier through `SyncClassifyOpts.Alive`, which status populates from its own
+   `AgentStatusOpts.Proc` prober (`proberAsChecker{b.opts.Proc}.Alive`,
+   `internal/checkout_health.go`), i.e. the same injected seam the checkout half of
+   `buildFeatureSync` already uses at `internal/agent_status.go:1363`. These are **existing nullable
+   keys** on `AgentStatusFeatureSync`
    (`internal/agent_status.go:294-306`) that are simply populated for external state for the first
    time.
 4. **Live-guard precedence.** A live owning guard **dominates** transient sentinel/payload presence.
@@ -2568,11 +3447,17 @@ Binding rules:
 7. **Status remains strictly read-only.** `ClassifyExternalSyncState` opens files read-only and
    returns decoded values; neither it nor `buildFeatureSync` deletes, rewrites, reclaims, or repairs
    the sentinel, the payload, or the guard, and neither ever takes the guard, refuses on a symlink,
-   or writes anything. Exactly one mutating authority — the sync command — is preserved. AC 44
+   or writes anything. The classifier **records** symlink facts; only package `cli` turns them into
+   the I18 refusal, and status simply reports what it found (a symlinked payload or guard is
+   projected as unreadable, never followed). Exactly one mutating authority — the sync command — is
+   preserved. AC 44
    asserts the bytes of all three files are unchanged across a status run.
 8. **Test determinism.** Live/stale MUST come from a controlled seam — a guard file written with the
-   test's own PID for `live` and with a PID asserted dead for `stale`, plus a substitutable liveness
-   predicate — never from sleeping, racing a real sync, or hard-killing a process.
+   test's own PID for `live` and with a PID asserted dead for `stale`, plus the injected
+   `SyncClassifyOpts.Alive` predicate — never from sleeping, racing a real sync, or hard-killing a
+   process. **Status tests inject through `AgentStatusOpts.Proc`** (the existing `ProcessProber`
+   seam every status test already uses) and MUST NOT mutate the package-level `syncProcessAlive`
+   variable of §17.4, so they stay parallel-safe; the package-level seam is for the sync path only.
 
 ### 11.2 `tws import` — runtime-state filtering (D20)
 
@@ -2638,14 +3523,24 @@ that allow-list regressing (AC 45).
 6. **Ownership token.** The guard carries 16 random bytes echoed in the payload; a mismatch is
    reported and never silently reclaimed (§8.3 rule 5), so a planted or foreign guard is diagnosable
    rather than authoritative.
-7. **Symlink refusal, scoped to new-mode state paths.** Before writing or trusting
-   `.sync-state.v2.yaml` or `.sync-run.lock`, and before writing or trusting `.sync-state.yaml` on a
-   new-mode run or on any run handling a sentinel/payload/guard, `os.Lstat` the path; a symlink is
-   refused (I18). This prevents a planted symlink from redirecting a `0600` write outside the
-   feature directory. **Declared legacy limitation:** an ordinary legacy `.sync-state.yaml` that is
-   a symlink, with no payload beside it, on a run with no trigger flag, is still **followed**,
-   exactly as today. Refusing it would change frozen no-flag behaviour (§4.1) and is therefore not
-   done here; it is recorded as a known legacy safety limitation (§18 item 9), not as a fix.
+7. **Symlink refusal, scoped to new-mode state paths, decided from one `Lstat` per path.** The
+   shared classifier `Lstat`s each runtime-state path it consults **exactly once** and records
+   `LegacySymlink` / `PayloadSymlink` / `GuardSymlink` (§11.1); package `cli` refuses (I18) from
+   those facts without re-`Lstat`ing, before writing or trusting `.sync-state.v2.yaml` or
+   `.sync-run.lock`, and before writing or trusting `.sync-state.yaml` on a
+   new-mode run or on any run handling a sentinel/payload/guard. A symlinked payload or guard is
+   **never opened, never followed, and never authoritative content** — not even for classification.
+   This prevents a planted symlink from redirecting a `0600` write outside the
+   feature directory and from feeding forged state into the cell computation.
+   **Declared legacy limitation, stated precisely:** an ordinary legacy `.sync-state.yaml` that is
+   a symlink is **followed and read exactly as today** when *all* of the following hold — the run
+   carries **no** trigger flag (§3.3), no `.sync-state.v2.yaml` exists beside it, and the followed
+   content does **not** decode to a sentinel marker. Its classification, its message, its exit code,
+   and its `--abort` deletion target are byte-identical to today's. As soon as any of those three
+   conditions fails — a trigger flag, a payload beside it, or a sentinel inside it — the path is a
+   new-mode state path and I18 applies. Refusing the frozen case would change frozen no-flag
+   behaviour (§4.1) and is therefore not done here; it is recorded as a known legacy safety
+   limitation (§18 item 9), not as a fix.
 8. **No auto-stash, no reset, no destructive cleanup.** Checkout keeps rejecting dirty and detached
    states; external keeps *not* rejecting them (M15) — adding those guards to external would be a
    breaking change for no-flag runs, and adding them only for scoped runs would make the modes
@@ -2669,22 +3564,39 @@ that allow-list regressing (AC 45).
     | 2 | linked worktree root | external | works |
     | 3 | nested subdirectory of a linked worktree | external | works |
     | 4 | external workspace root | external | works |
-    | 5 | external feature directory | external | works (requires the C4 `syncFeature` path fix; **declared no-flag change** where the derivations disagree, §4.1 rule 5) |
-    | 6 | nested `docs/`/`inject/` subdirectory of a feature directory | external | works (same fix, same declared no-flag change as cell 5) |
+    | 5 | external feature directory | external | works (requires the §3.11 layout resolver) |
+    | 6 | nested `docs/`/`inject/` subdirectory of a feature directory | external | works (same resolver) |
     | 7 | checkout repository root | checkout | works |
     | 8 | nested subdirectory of the checkout repository | checkout | works |
     | 9 | linked worktree of the checkout repository | checkout | **refused** with the I19 message (today: silently mutates the wrong tree); **declared no-flag change**, §4.1 rule 5 |
+
+    **The external declaration is layout-scoped, not cwd-scoped.** Every external cell 1–6 works
+    today *and* after the fix on an **agreeing** layout, and every external cell 1–6 is a declared
+    change on a **divergent** one (§3.11, §4.1 rule 5, AC 46, AC 58), because the divergence is
+    produced by `TWS_ROOT` / workspace detection rather than by the current directory. No cell of
+    this matrix is by itself the declared C4 exception on the external side; cell 9 is, on the
+    checkout side.
 
     There is deliberately **no** "outside any repository, checkout" cell: checkout mode is
     dispatched only after `RequireWorkspace` has returned `ModeCheckout`, and outside any repository
     that call resolves external mode or errors first (§10.9), so the cell is unreachable.
 
-    Cells 1–4 and 7–8 are frozen: they resolve to the same feature path and the same repository
+    Cells 1–4 and 7–8 **on an agreeing layout** are frozen: they resolve to the same feature path
+    and the same repository
     toplevel as today, and every AC 1 golden is captured from one of them. "Frozen" here means
     frozen in stdout, stderr, exit code, files, and modes, and frozen in Git commands **except**
     for the closed, read-only argv carve-out of §4.1 rule 6 — the one added checkout containment
-    probe (cells 7–8) and the repo-scoped default-branch probe (cells 1–4) — which AC 2 asserts
-    exactly and which changes nothing observable.
+    probe (cells 7–8), the repo-scoped default-branch probe (cells 1–4), and the workspace-root
+    resolution compression of the external paths (cells 1–6: every external sync run drops from
+    `3 + N + E` resolution events to two, and an external push (`tws push` / `--push`, which no
+    frozen golden invokes) drops from `1 + N` to two) — which AC 2 and AC 59 assert exactly and
+    which changes nothing observable. In cell 4 (and in cells 5–6, which are frozen only on an
+    agreeing layout) the cwd is outside any repository, so `RequireWorkspace`'s fallback arm also
+    emits its `inferExternalRepoRoot` block of foreign-operand
+    `git -C <path> rev-parse --git-common-dir` records (§3.11). Those are **not** resolution events,
+    are **not** part of any carve-out, and — because external sync performs exactly one
+    `RequireWorkspace` on both sides — appear verbatim, in order, and in position in the frozen
+    capture.
 
 ---
 
@@ -2717,7 +3629,8 @@ shapes `rev-parse --show-toplevel`, `rev-parse --abbrev-ref origin/HEAD`, and
 `symbolic-ref --short HEAD`, so AC 2 can assert the C4 containment probe resolves to `ws.RepoRoot`
 and that both sides of the `DefaultBranchIn` event resolve to the same fixture-pinned default
 branch.
-Captures are taken only from the frozen cwd cells (1–4, 7–8) and only on inputs outside the declared
+Captures are taken only from the frozen cwd cells (1–4, 7–8), only on a layout where the two
+external feature-path derivations **agree** (§3.11), and only on inputs outside the declared
 C2/C3 defect fixtures; the declared C1, C2, C3, and C4 evidence
 directories are captured in the same run and are explicitly not goldens (AC 1, AC 33, AC 34, AC 40,
 AC 46).
@@ -2730,19 +3643,20 @@ field, ordering, or mode, is the regression (AC 1).
 |---|---|---|
 | `internal/sync_selection.go` | `internal` | `SyncFetchPolicy`, `SyncPropagationPolicy`, `SyncScopeKind`, `SyncRunPolicy`, `SyncSelectionRole`, `SyncSelectedEntry`, `SyncSelection`, `SyncSelectionOpts`, `ResolveSyncSelection`, `SameStackRepo` |
 | `internal/sync_run_state.go` | `internal` | `SyncRunStateVersion`, `CheckoutTransactionVersion`, `SyncRunStage`, `SyncRunState`, `SyncRunGuard`, `SyncStateCell`, `SyncExternalState`, `SyncClassifyOpts`, `ClassifyExternalSyncState`, `SyncRunStatePath`, `SyncRunGuardPath`, `LoadSyncRunState`, `SaveSyncRunState`, `DeleteSyncRunState`, `HasSyncRunState`, `ClaimSyncRunGuard`, `ReclaimSyncRunGuard`, `ReadSyncRunGuard`, `ReleaseSyncRunGuard`, `isSyncMarker` (classification only; sole caller `ClassifyExternalSyncState`), `SyncStepHook`, `syncProcessAlive` (seam) |
-| `internal/cli/sync_modes.go` | `cli` | flag wiring helpers, `syncEntryCompletion`, `resolveSyncPolicy(cmd) (SyncRunPolicy, bool, map[string]bool, error)` (I1–I6, then I7 when a trigger flag is present, then I8 — skipped when I7 fired, §3.5), `newSyncMarker` and the unexported test seam `var syncMarkerFn = newSyncMarker` (§8.2), `classifySyncState(featurePath string, newMode bool)` — a thin wrapper over `internal.ClassifyExternalSyncState` passing `AlwaysReadGuard: newMode` and adding the §3.6 step-8 symlink scoping, the deferred I7 and the I20 refusal — the message table of §8.7, and `saveScopedSyncFailure` |
+| `internal/cli/sync_modes.go` | `cli` | flag wiring helpers, `syncEntryCompletion`, `externalSyncLayout` + `resolveExternalSyncLayout(ws, twsRoot, feature)` (§3.11 — the single external layout resolver, used by `RunE`, `--continue`, `--abort`, push, and completion; it takes the caller's already-resolved `twsRoot`, builds candidate B as `filepath.Join(twsRoot, feature)`, and calls no Git, no `internal.TwsRoot`, no `internal.FeaturePath`/`WorktreePath`, and no `RequireWorkspace`), `resolveSyncPolicy(cmd) (SyncRunPolicy, bool, map[string]bool, error)` (I1–I6, then I7 when a trigger flag is present, then I8 — skipped when I7 fired, §3.5), `newSyncMarker` and the unexported test seam `var syncMarkerFn = newSyncMarker` (§8.2), `classifySyncState(featurePath string, newMode bool)` — a thin wrapper over `internal.ClassifyExternalSyncState` passing `AlwaysReadGuard: newMode` and `Alive: nil`, and applying I18 from the returned symlink facts without a second `Lstat`, plus the deferred I7 and the I20 refusal — the single I20 constant `errSyncModeFlagsNeedV2` (§3.5, shared with `internal/cli/checkout_sync.go` so the literal exists exactly once in package `cli`), the message table of §8.7, and `saveScopedSyncFailure` |
 
 ### 13.3 Step 3 — changed files and symbols
 
 | File | Symbols | Change |
 |---|---|---|
-| `internal/cli/sync.go` | `syncCmd` | six flags registered in the §3.1 source order with `SortFlags` left at its default `true` (help renders alphabetically, §3.9), two flag completions, `resolveSyncPolicy` call, validation order §3.6 (including scoped I18 and deferred I7), state-cell dispatch via `classifySyncState`, header |
-| | `handleSyncAbort` | cell-aware abort (§8.6 abort column), guard reclaim, reverse teardown |
-| | `handleSyncContinue` | payload-driven scoped resume, I20 refusal in cells 1 and 7 (§3.5, §3.6 step 9), `Changed` mismatch rules (§10.5), `pending` from `selected` |
-| | `syncFeature` | takes the already-resolved `featurePath` (C4); selection-aware fetch loop (§6.5); scoped `TopoSort` filter; passes `SyncSelectionOpts{Mode: ModeExternal, NewMode: true, Feature: <feature>}` on new-mode runs |
+| `internal/cli/sync.go` | `syncCmd` | six flags registered in the §3.1 source order with `SortFlags` left at its default `true` (help renders alphabetically, §3.9), two flag completions, `resolveSyncPolicy` call, validation order §3.6 (including the single `twsRoot := internal.TwsRoot()` call at step 5 that feeds both `internal.GuardFeatureName(twsRoot, feature)` and the §3.11 layout resolution at step 6, I18 applied from the classifier's symlink facts, and deferred I7), state-cell dispatch via `classifySyncState`, header |
+| | `handleSyncAbort` | `(feature, layout)` (§3.11); cell-aware abort (§8.6 abort column), guard reclaim, reverse teardown |
+| | `handleSyncContinue` | `(feature, layout, push)` (§3.11); payload-driven scoped resume, I20 refusal in cells 1 and 7 (§3.5, §3.6 step 9), `Changed` mismatch rules (§10.5), `pending` from `selected` |
+| | `branchContainsConfiguredParent` | takes `layout.WorktreesRoot` instead of re-deriving through `internal.WorktreePath`; predicate and message unchanged (§3.11, §7.5) |
+| | `syncFeature` | takes the resolved `externalSyncLayout` and stops calling `internal.FeaturePath`, so its `TwsRoot` resolution event disappears (C4, §3.11, §4.1 rule 6c); selection-aware fetch loop (§6.5); scoped `TopoSort` filter; passes `SyncSelectionOpts{Mode: ModeExternal, NewMode: true, Feature: <feature>}` on new-mode runs |
 | | `fetchQuiet` | unchanged bytes; called per **selected** repo |
-| `internal/cli/sync_helpers.go` | `syncWithStackFiltered` | scoped iteration over `SyncSelection.Entries`, anchor skip under `local-only`, scoped rebase args (§7.1), no `markUpdatedAncestors` when scoped, new-mode failure → payload |
-| | `staleStackEdges` | becomes `staleStackEdgesFiltered(feature, stack, selected)`; old signature is a `nil` wrapper |
+| `internal/cli/sync_helpers.go` | `syncWithStackFiltered` | takes the `layout` and derives every worktree from `layout.WorktreesRoot` (§3.11); scoped iteration over the real `StackEntry` values filtered by `SyncSelection.Names`/`Role` (§5.5), anchor skip under `local-only`, scoped rebase args (§7.1), no `markUpdatedAncestors` when scoped, new-mode failure → payload |
+| | `staleStackEdges` | becomes `staleStackEdgesFiltered(worktreesRoot, stack, selected)` — the `feature` parameter disappears with the re-derivation; today's call site is the `nil` wrapper (§7.5) |
 | | `resolveEntryBase` / `resolveBase` | `resolveBase(base, repoCtx)` with the narrow repo-scoped `DefaultBranchIn` rule and the `repoCtx == ""` → today's `DefaultBranch()` fallback (C4, §13.4); untouched for the parent-entry branch |
 | | `saveIncompleteSync` | unchanged; **never** called by new-mode runs |
 | `internal/syncstate.go` | `SaveSyncState` | atomic write, mode `0644` preserved (C1) |
@@ -2756,11 +3670,13 @@ field, ordering, or mode, is the regression (AC 1).
 | | `ContinueCheckoutSync` | version refusal, symmetric push rule for v2, legacy rule preserved, header on a `state_version >= 2` resume via `printSyncModeHeader` (§3.7, §3.10) |
 | | `finalizeTransaction` | `Name`-keyed `LastBaseSHA` attribution (C3), fed by C5 |
 | | `AbortCheckoutSync` | deferred I7 refusal for `StateVersion >= 2` transactions only (§10.5 rule 8); otherwise unchanged |
-| `internal/cli/checkout_sync.go` | `runCheckoutSync` | options struct, `RepoDir = ws.RepoRoot` + I19 containment (§10.9), I20 refusal on `--continue` with a trigger flag against an absent or legacy transaction (§10.5 rule 0), passes `cont` into the abort options for the deferred I7 check; it does **not** print the header and does **not** load the stack — both belong to `internal.RunCheckoutSync` (§3.7, §10.3) |
-| `internal/cli/push.go` | `pushFeature` | `entry.GitBranch()` ref (C2) |
-| | `pushSelected` | new (§7.6) |
+| `internal/cli/checkout_sync.go` | `runCheckoutSync` | takes the resolved `ws` from `RunE` plus the options struct, **keeping its existing `internal.RequireFeaturePath(feature)` call verbatim** (second `RequireWorkspace` event, guard, layout resolution, and error semantics all preserved — `internal.ResolveFeaturePathFor` is explicitly **not** used, §10.1); `ws` supplies `RepoRoot` only: `RepoDir = ws.RepoRoot` + I19 containment (§10.9), I20 refusal on `--continue` with a trigger flag against an absent or legacy transaction (§10.5 rule 0) using the shared `errSyncModeFlagsNeedV2` constant, passes `cont` into the abort options for the deferred I7 check; it does **not** print the header and does **not** load the stack — both belong to `internal.RunCheckoutSync` (§3.7, §10.3) |
+| `internal/cli/push.go` | `pushFeature` | `entry.GitBranch()` ref (C2); takes the resolved `externalSyncLayout` instead of calling `internal.RequireFeaturePath`/`internal.RequireWorktreePath` (§3.11), which drops today's `1 + N` `RequireWorkspace` events (one per stack entry via `RequireWorktreePath`) to **zero** inside the helper and to exactly **two** per command invocation overall (one `RequireWorkspace` event + one `TwsRoot` event, `1 + N` → 2) — the read-only carve-out of §4.1 rule 6c; **external mode only** |
+| | `pushCmd` | `internal.RequireTool("git")`, `internal.RequireWorkspace()`, `internal.GuardFeatureName(ws.MetadataRoot, feature)` — the sibling-space guard, before any layout work, preserving `TestSpaceGuard_ExternalCommandMatrix/push` exactly — then a mode branch: checkout → `pushFeatureCheckout` (no `internal.TwsRoot()` call on that arm), external → one `internal.TwsRoot()` call, then `resolveExternalSyncLayout(ws, twsRoot, feature)` + `pushFeature`, so `tws push` and `tws sync --push` share one root (§3.11, binding order there) |
+| | `pushFeatureCheckout` | new unexported helper holding today's `pushFeature` body **verbatim** (`internal.RequireFeaturePath`, `internal.RequireWorktreePath`, `entry.Name` argv), so checkout-mode `tws push` keeps its `ErrWorktreeUnsupported` failure and nonzero exit unchanged (§3.11, AC 59) |
+| | `pushSelected` | new (§7.6), external mode only |
 | `internal/cli/new.go` | `sameStackRepo` | delegates to `internal.SameStackRepo` |
-| `internal/agent_status.go` | `buildFeatureSync` | calls `internal.ClassifyExternalSyncState` (with `AlwaysReadGuard: true`) **before** the `os.Stat(statePath)` early return, then dispatches on the cell: marker-aware projection, guard liveness, degenerate-cell issues, cell 7 delegated to today's projection (§11.1) |
+| `internal/agent_status.go` | `buildFeatureSync` | calls `internal.ClassifyExternalSyncState` (with `AlwaysReadGuard: true` and `Alive: proberAsChecker{b.opts.Proc}.Alive`) **before** the `os.Stat(statePath)` early return, then dispatches on the cell: marker-aware projection, guard liveness from the injected prober, degenerate-cell issues, cell 7 delegated to today's projection (§11.1). Its feature-path resolution is **unchanged** — status is not re-rooted by §3.11 |
 | `internal/cli/importcmd.go` | `isRuntimeState` | two additional exact names (§11.2) |
 
 **Identifier spelling and package ownership.** The marker predicate is spelled `isSyncMarker`
@@ -2779,22 +3695,62 @@ contract shared across the boundary, and it is asserted from both sides (AC 29).
 the predicate or the generator — or making the seam an exported mutable variable — is a separate,
 declared decision, not an incidental spelling drift.
 
-### 13.4 The three C4 cwd code fixes, precisely (two declared matrix cells)
+### 13.4 The three C4 code fixes, precisely (two declared input classes)
 
-1. `runCheckoutSync`: `RepoDir = ws.RepoRoot` + containment refusal (§10.9). Its one read-only
+1. `runCheckoutSync`: `RepoDir = ws.RepoRoot` + containment refusal (§10.9). It receives the
+   resolved `ws` from `RunE` **only** to obtain `ws.RepoRoot` without a third resolver, and it
+   **keeps its existing `internal.RequireFeaturePath(feature)` call exactly as today** — same
+   position (first statement), same second `RequireWorkspace` event, same `GuardFeatureName` guard,
+   same layout resolution, same errors. It MUST NOT be swapped for
+   `internal.ResolveFeaturePathFor`: that would *remove* a pre-change resolution event, which is not
+   a declared change and would break the verbatim resolution prefix AC 2 pins around the probe. Its one read-only
    `git -C <cwd> rev-parse --show-toplevel` probe is the added argv record declared in §4.1
-   rule 6a and asserted by AC 2; it is issued after `RequireWorkspace`/`RequireFeaturePath` and
-   immediately before `RunCheckoutSync`'s first preflight Git call. The observable cwd change is
+   rule 6a and asserted by AC 2; it is issued after that unchanged workspace/feature-path resolution
+   and
+   immediately before `RunCheckoutSync`'s first preflight Git call, so the only argv difference on
+   the whole checkout path is that one added probe. The observable cwd change is
    cell 9 (linked worktree) only; the probe's `err != nil` arm is defensive and unreachable through
    CLI dispatch (§10.9).
-2. `syncFeature`: accept the `featurePath` already resolved by `ws.ResolveFeaturePath` instead of
-   re-deriving it through `internal.FeaturePath(feature)` (`internal/cli/sync.go:173-174`). The two
-   disagree only under `TWS_ROOT` / workspace-detection edge cases, and when they disagree today's
-   code loads no stack and silently falls into `syncFallback`'s hard-coded `origin/main` rebase.
-   Where they agree — every healthy layout, and every AC 1 fixture — the fix is a no-op. Where they
-   disagree, the run changes observably **including on the no-flag path** (cwd matrix cells 5 and
-   6): this is declared behavioural exception 2 (§4.1 rule 5, §4.2 item 7, §4.5 C4) and is asserted
-   by AC 46.
+2. **One external sync layout resolver replaces both derivations, and one root resolution replaces
+   all of them** — the normative rule is §3.11.
+   `syncFeature` stops calling `internal.FeaturePath(feature)` (`internal/cli/sync.go:173-174`) and
+   `syncWithStackFiltered`, `staleStackEdgesFiltered`, `branchContainsConfiguredParent`,
+   `handleSyncAbort`, `handleSyncContinue`, `saveIncompleteSync`, `markUpdatedAncestors`,
+   `syncFallback`, `runValidation`, the three runtime-state paths, `pushFeature`/`pushSelected`, and
+   `syncEntryCompletion` all take the resolved `featurePath` / worktrees root explicitly, so the run
+   has exactly one root **and** exactly two workspace-root resolution events. `syncCmd.RunE` calls
+   `twsRoot := internal.TwsRoot()` **exactly once**, at today's guard position, and uses that one
+   value for both `internal.GuardFeatureName(twsRoot, feature)` (identical root value, identical
+   position) and `resolveExternalSyncLayout(ws, twsRoot, feature)`; the resolver itself performs
+   **no** Git command and **no** root or workspace resolution, so no resolution can hide inside it.
+   `pushCmd` keeps the sibling-space guard as its **own** step —
+   `internal.RequireWorkspace()` then `internal.GuardFeatureName(ws.MetadataRoot, feature)`, before
+   any layout work — because the guard used to arrive through
+   `internal.RequireFeaturePath`, and it then branches on `ws.Mode`: only the **external** arm calls
+   `internal.TwsRoot()` (once, after the branch) and uses the resolver, while checkout keeps today's
+   `internal.RequireFeaturePath` +
+   `internal.RequireWorktreePath` helper (`pushFeatureCheckout`) and therefore today's
+   `ErrWorktreeUnsupported` refusal, with no `TwsRoot` event added to it (§3.11, AC 59). Because the
+   external helper no longer calls
+   `internal.RequireWorktreePath` per entry, the external push path drops from `1 + N`
+   `RequireWorkspace` events to **two** events (`1 + N` → 2, unchanged in count at `N = 1`), and the
+   external sync path drops from `3 + N + E` events to the same two, removing whole ordered
+   **pairs** of `rev-parse --show-toplevel` / `-C <cwd> rev-parse --git-common-dir` records — and,
+   on the push path only, the `inferExternalRepoRoot` block each removed `RequireWorkspace` call
+   emits when the cwd is outside any repository (§3.11) — and
+   changing no mutating argv (§4.1 rule 6c, AC 2, AC 59). Resolution rule (§3.11): candidate **B** = `filepath.Join(twsRoot, feature)`
+   (today's `internal.FeaturePath(feature)` value, computed from the already-resolved root)
+   wins whenever it holds a readable `stack.yaml` — including when candidate **A** =
+   `ws.ResolveFeaturePath(feature)` does too — which preserves the documented `TWS_ROOT` priority
+   and today's execution root; otherwise A wins when **it** holds one; otherwise B wins, which keeps
+   today's frozen `syncFallback` root for a feature with no stack anywhere. Where the two agree —
+   every healthy layout, every AC 1 fixture — the resolver probes nothing and the fix is a provable
+   no-op. Where they disagree, the run changes observably **including on the no-flag path**, in
+   **both** directions and in **any** external cwd cell (1–6), because the divergence is driven by
+   `TWS_ROOT` / workspace detection and not by cwd: this is declared behavioural exception 2 (§4.1
+   rule 5, §4.2 items 4/7/11/12, §4.5 C4) and is asserted by AC 46 and AC 58. Resolving only the
+   `syncFeature` half onto candidate A is explicitly **rejected**: on the shipped divergent layout
+   it would load no stack, walk an empty `worktrees/`, and exit 0 having synced nothing.
 3. `resolveBase` gains a repo-context parameter: `resolveBase(base, repoCtx string) string`, where
    `repoCtx` is the entry's `Repo` when set, otherwise the entry's **materialized** worktree path
    when that directory exists, otherwise `""`. Precise, deliberately narrow semantics:
@@ -2803,8 +3759,12 @@ declared decision, not an incidental spelling drift.
      where cwd
      resolution already yields the right answer, keep their default-base semantics **unchanged**;
      this change MUST NOT silently alter them.
-   - `repoCtx != ""` → `internal.DefaultBranchIn(repoCtx)`; on error, fall back to today's
-     `internal.DefaultBranch()` value so no entry loses its `origin/<default>` rewrite. On the wire
+   - `repoCtx != ""` → `branch, _ := internal.DefaultBranchIn(repoCtx)`. The error is ignored **by
+     construction**: `DefaultBranchIn` ends in `return "main", nil` (`internal/exec.go:67-90`), so
+     both probe failures already fall through to the hard-coded value and the function never returns
+     a non-nil error today. An `err != nil` fallback to `internal.DefaultBranch()` MAY be written as
+     defensive depth, but this specification declares it **unreachable in the shipped tree** and no
+     test may claim to exercise it. On the wire
      this replaces today's cwd-scoped default-branch resolution with the same resolution run in
      `repoCtx`: `git -C <repoCtx> rev-parse --abbrev-ref origin/HEAD`, its `-C`-scoped
      `symbolic-ref --short HEAD` fallback, and the hard-coded `main` fallback behind both. Because
@@ -2818,8 +3778,8 @@ declared decision, not an incidental spelling drift.
    The fix therefore applies only where cwd-based resolution is unavailable or provably wrong: a
    multi-repo entry whose repository has a different default branch, and an invocation from a cwd
    that is not inside the entry's repository. `DefaultBranchIn` is a local ref read and is legal
-   under `no-fetch`. Regression coverage: AC 2 (closed argv carve-out), AC 46 (cwd matrix), and AC 53 (multi-repo **no-flag**
-   default-base regression).
+   under `no-fetch`. Regression coverage: AC 2 (closed argv carve-out), AC 46 (cwd matrix), AC 53
+   (multi-repo **no-flag** default-base regression), and AC 58 (divergent-layout regression).
 
 ### 13.5 Explicitly untouched
 
@@ -2827,7 +3787,15 @@ declared decision, not an incidental spelling drift.
 `internal/cli/stack_status.go`, `internal/cli/doctor.go`, `internal/checkout_health.go`,
 `internal/cli/list.go`, `internal/cli/archive.go`, `internal/cli/new.go` (beyond the one-line
 delegation), `internal/health.go`, `internal/stack.go` (`TopoSort`, `Descendants`, `GetBranch`,
-`UpdateBaseSHA`, `UniqueRepos`, `PrintTree` all unchanged), and every `tws space`, `tws registry`,
+`UpdateBaseSHA`, `UniqueRepos`, `PrintTree` all unchanged — in particular **no second sort and no
+tie-break** is added there or anywhere else, §3.7), `internal/workspace.go`, `internal/resolve.go`,
+and `internal/paths.go` — the last three are **binding**: `internal.TwsRoot`,
+`internal.FeaturePath`, `internal.WorktreePath`, `RequireWorkspace`, `RequireFeaturePath`, and
+`RequireWorktreePath` keep their current bodies, signatures, and Git behaviour **verbatim**. This
+feature changes only **how many times and from where** `internal.TwsRoot` is called (once per
+external command, from package `cli`), never what it does; the §3.11 resolver lives in package `cli`,
+takes the resolved root as a parameter, and does pure filesystem probing, so no new dependency edge
+on a workspace-resolution parent arises (§15). Also untouched: every `tws space`, `tws registry`,
 `tws session`, and `tws template` file.
 
 No feature other than `sync-modes` is modified. `PrintTree`'s ad-hoc `children`/`roots` maps
@@ -2835,9 +3803,34 @@ No feature other than `sync-modes` is modified. `PrintTree`'s ad-hoc `children`/
 
 ### 13.6 Minimality statement
 
-The changeset is: two new `internal` files, one new `cli` file, eleven changed files, and the test
-and documentation files of §13.1/§14. No new command, no new package, no new dependency, and no
-change to `go.mod`.
+The changeset is: two new `internal` files, one new `cli` file, **nine** changed production files
+(the nine rows of §13.3: `internal/cli/sync.go`, `internal/cli/sync_helpers.go`,
+`internal/syncstate.go`, `internal/checkout_sync.go`, `internal/cli/checkout_sync.go`,
+`internal/cli/push.go`, `internal/cli/new.go`, `internal/agent_status.go`,
+`internal/cli/importcmd.go`), **seven** documentation files (§14), and the test files of
+§13.1/§17 — the new `*_test.go` files plus exactly **three** edited existing test files, and no
+others:
+
+1. `internal/cli/checkout_lifecycle_test.go` — two additive rows in `TestExport_RuntimeStateExcluded`
+   (AC 45);
+2. `internal/cli/sync_continue_integration_test.go` — the two direct
+   `handleSyncContinue("feature", featurePath, false)` calls (lines 34 and 64) must pass the
+   `externalSyncLayout` the helper now takes (§3.11);
+3. `internal/cli/checkout_sync_test.go` — the one direct `syncFeature("external-feature", false)`
+   call in `TestCheckoutSync_ExternalSyncUnchanged` (line 1187) must pass the layout `syncFeature`
+   now takes (§3.11).
+
+All three are **mechanical call-site updates with no assertion change**: each fixture's two
+derivations agree, so the constructed layout is the path the test already derives —
+`externalSyncLayout{FeaturePath: p, WorktreesRoot: filepath.Join(p, "worktrees")}`, where `p` is
+`internal.FeaturePath(<feature>)` (the same directory `internal.WorktreePath` already gave those
+tests their worktree paths under). No other existing test file is edited; in particular
+`internal/cli/space_guard_test.go` MUST stay unchanged, which is exactly why `pushCmd` keeps the
+guard before the layout resolver (§3.11), and
+`internal/cli/stack_status_test.go` is **not** one of them: its golden helpers are reused by call
+and MUST NOT be parameterized (§17.1).
+No new command, no new package, no new dependency, and no
+change to `go.mod` (`crypto/rand`, `encoding/hex`, and `regexp` are stdlib).
 
 ---
 
@@ -2849,22 +3842,34 @@ User-facing behaviour changes, so agent skills and documentation MUST be updated
 | File | Change |
 |---|---|
 | `README.md` | the `tws sync` example block (lines ~64-67) and the command table row (~127) gain the six flags; a short "sync modes" paragraph states the four fetch × propagation cells, the three scopes, that `no-fetch` means no automatic network **input** (not offline) and composes with `--push`, that concurrent syncs of one feature remain unsafe, and that the sync-mode flags can be repeated on `--continue` only for a run that was started with them |
-| `docs/cheatsheet.md` | the sync section (~148-150) gains `--only`, `--from`, `--local-only`, `--no-fetch`, `--fetch`, `--full` one-liners, including the note that checkout `--fetch` refreshes remote-tracking refs before planning and that an interrupted refresh simply re-runs, plus one line on where a checkout sync may be run from (the repository checkout or any subdirectory of it; a linked worktree of that repository is refused, C4, which is why every checkout sync runs one read-only `git rev-parse --show-toplevel` containment check just before its pre-flight checks) |
+| `docs/cheatsheet.md` | the sync section (~148-150) gains `--only`, `--from`, `--local-only`, `--no-fetch`, `--fetch`, `--full` one-liners, including the note that checkout `--fetch` refreshes remote-tracking refs before planning and that an interrupted refresh simply re-runs, plus one line on where a checkout sync may be run from (the repository checkout or any subdirectory of it; a linked worktree of that repository is refused, C4, which is why every checkout sync runs one read-only `git rev-parse --show-toplevel` containment check just before its pre-flight checks), and one line stating that `tws push` is an **external-mode** command: in a checkout workspace it still refuses with `linked worktrees are not supported in checkout mode` (§3.11), and checkout branches are pushed with `tws sync --push`; external `tws push` is otherwise unchanged apart from the C2 ref fix and now inspecting the workspace twice per run (once to resolve the workspace, once to resolve the workspace root) rather than once per branch |
 | `assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md` | the sync command list (~52-54) gains the scoped/local-only/no-fetch forms and one guidance line: prefer `--from <entry>` after resolving a conflict in a subtree rather than a full-stack sync |
 | `assets/skills/copilot/tws.prompt.md` | the `tws sync` signature line (~18) and the checkout paragraph (~80) gain the new flags and the scoped-recovery note |
 | `.github/skills/tessera-patch/SKILL.md`, `.claude/skills/tessera-patch/SKILL.md` | **unchanged** — tpatch skills are not tws documentation |
-| `CHANGELOG.md` | one `## Unreleased` block covering: the three axes and three scopes; the two mode defaults; scoped completion; scoped push; frozen no-flag behaviour with its **four** declared categories of observable change (C1 corrupt state; C2 decoupled-name push; C3+C5 duplicate-branch metadata attribution plus the additive plan `name:` key; C4 cwd resolution) and the single declared payload-`Lstat` runtime-state-path read; the fail-closed downgrade mechanism **with its stated boundary** (holds while the sentinel exists; unsupported after an old `--abort`); C1–C5 as declared fixes, with the `pushFeature` ref fix called out explicitly for decoupled names **as a behaviour change on flag-free `tws sync --push` and `tws push` too** (the pushed ref becomes the entry's real branch, so the push now succeeds and updates `refs/heads/<branch>` instead of failing on a ref named after the logical entry), the duplicate-branch `last_base_sha` attribution fix called out as a behaviour change on flag-free checkout syncs (the correct entry's metadata is updated, so `stack.yaml` differs from previous releases on such a stack), the checkout plan's additive `name:` key called out as a persisted-format change that is semantically equivalent, not byte-identical, for no-flag transactions and is ignored by older binaries, **C1's unreadable-state behaviour change called out per verb** (a corrupt `.sync-state.yaml` now yields a clean error naming the file instead of a panic on a plain run and instead of `nothing to continue — no sync in progress` on `--continue`, and `--abort` now fails closed with exit 1 and deletes nothing instead of reporting `Nothing to abort — no sync in progress.` with exit 0), and **C4's cwd behaviour change called out per cell** (running `tws sync` from an external feature directory or a nested subdirectory of one now syncs the resolved feature's stack instead of silently rebasing every worktree onto `origin/main`; running a checkout sync from a linked worktree of the checkout repository is now refused with a clear error instead of mutating the wrong working tree — in ordinary flag-free invocations too), and **C4's two declared read-only Git probes called out as part of C4** (a checkout sync now runs one extra read-only containment check, `git -C <cwd> rev-parse --show-toplevel`, immediately before its pre-flight checks and before anything is locked, written, or mutated, and external default-branch resolution now asks the entry's own repository, `git -C <repo> rev-parse --abbrev-ref origin/HEAD` with its usual `symbolic-ref` and `main` fallbacks, instead of whatever repository the current directory happens to be in — which is a different *question*, so it may take a different fallback arm and may resolve to a different, correct branch; both are read-only, write nothing, and change no output, exit code, file, mode, or ref by themselves); checkout's explicit `--fetch` described as a best-effort pre-plan remote-ref refresh that runs before the transaction exists and is deliberately not resumable; the `tws status` marker-aware projection with no schema change; the `tws import` filter extension; the new refusal of sync-mode flags on `--continue` without v2 state (trigger-free `--continue` is unchanged); and the documented concurrency and legacy-symlink limitations |
+| `CHANGELOG.md` | one `## Unreleased` block covering: the three axes and three scopes; the two mode defaults; scoped completion; scoped push; frozen no-flag behaviour with its **four** declared categories of observable change (C1 corrupt state; C2 decoupled-name push; C3+C5 duplicate-branch metadata attribution plus the additive plan `name:` key; C4 cwd resolution) and the single declared payload-`Lstat` runtime-state-path read; the fail-closed downgrade mechanism **with its stated boundary** (holds while the sentinel exists; unsupported after an old `--abort`); C1–C5 as declared fixes, with the `pushFeature` ref fix called out explicitly for decoupled names **as a behaviour change on flag-free `tws sync --push` and `tws push` too, in external workspaces** (the pushed ref becomes the entry's real branch, so the push now succeeds and updates `refs/heads/<branch>` instead of failing on a ref named after the logical entry), together with the explicit statement that **`tws push` in a checkout workspace is unchanged and still reports `linked worktrees are not supported in checkout mode` and exits nonzero**, the duplicate-branch `last_base_sha` attribution fix called out as a behaviour change on flag-free checkout syncs (the correct entry's metadata is updated, so `stack.yaml` differs from previous releases on such a stack), the checkout plan's additive `name:` key called out as a persisted-format change that is semantically equivalent, not byte-identical, for no-flag transactions and is ignored by older binaries, **C1's unreadable-state behaviour change called out per verb** (a corrupt `.sync-state.yaml` now yields a clean error naming the file instead of a panic on a plain run and instead of `nothing to continue — no sync in progress` on `--continue`, and `--abort` now fails closed with exit 1 and deletes nothing instead of reporting `Nothing to abort — no sync in progress.` with exit 0), and **C4's behaviour change called out per input class** (on an **external** workspace whose `TWS_ROOT` and workspace-detected metadata root disagree, `tws sync`, `tws sync --continue`, `tws sync --abort`, `tws sync --push`, and `tws push` now all use **one** feature directory — the one holding `stack.yaml` — instead of rebasing under one root while reading and writing sync state and pushing under another, so a divergent workspace stops writing recovery state where the next run cannot see it, stops failing `--push` with `no stack.yaml found for feature`, and stops silently rebasing every worktree onto `origin/main`; this affects ordinary flag-free invocations from **any** directory, not only from a feature directory; running a checkout sync from a linked worktree of the checkout repository is now refused with a clear error instead of mutating the wrong working tree — in ordinary flag-free invocations too), and **C4's three declared read-only Git probe changes called out as part of C4** (a checkout sync now runs one extra read-only containment check, `git -C <cwd> rev-parse --show-toplevel`, immediately before its pre-flight checks and before anything is locked, written, or mutated; external default-branch resolution now asks the entry's own repository, `git -C <repo> rev-parse --abbrev-ref origin/HEAD` with its usual `symbolic-ref` and `main` fallbacks, instead of whatever repository the current directory happens to be in — which is a different *question*, so it may take a different fallback arm and may resolve to a different, correct branch; and an **external** `tws sync` / `tws push` / `tws sync --push` now resolves the workspace root **twice** for the whole run — once when resolving the workspace and once when resolving the workspace root — instead of once per re-derived feature or worktree path (and, for push, once per stack entry), so it issues **fewer** read-only `git rev-parse --show-toplevel` / `git rev-parse --git-common-dir` calls; on a one-entry push the number of those calls is unchanged, and on a push over an empty stack it is two instead of one — the branches pushed, the push commands themselves, the output, the exit code, and the refs are unaffected; all three are read-only, write nothing, and change no output, exit code, file, mode, or ref by themselves); checkout's explicit `--fetch` described as a best-effort pre-plan remote-ref refresh that runs before the transaction exists and is deliberately not resumable; the `tws status` marker-aware projection with no schema change; the `tws import` filter extension; the new refusal of sync-mode flags on `--continue` without v2 state (trigger-free `--continue` is unchanged); and the documented concurrency and legacy-symlink limitations |
 | `docs/roadmap.md` | move **sync modes** from the P1 backlog into the shipped list, and update the "Current target" line to the next P1 item (`rebase plan guard`) |
 | `docs/engineering-workflow.md` | append sync modes as checkout slice/shipped item 11 and update the "Next roadmap feature" line |
 
 Documentation MUST NOT claim: general downgrade safety; that `no-fetch` is offline; that concurrent
-syncs are now safe; that no-flag behaviour is unchanged in **every** cwd (cells 5/6 and 9 change, C4,
-§4.1 rule 5) or on **every** input (a corrupt `.sync-state.yaml` changes, C1; a decoupled-name
+syncs are now safe; that `tws push` now works in checkout mode or that the push ref fix reaches it
+(it does not: checkout push still refuses with `linked worktrees are not supported in checkout mode`
+and exits nonzero, §3.11, AC 59); that no-flag behaviour is unchanged in **every** cwd or on **every** layout
+(checkout cell 9 changes, and every external run whose two feature-path derivations disagree changes
+— in both directions and from any external cwd — C4, §3.11, §4.1 rule 5) or on **every** input (a
+corrupt `.sync-state.yaml` changes, C1; a decoupled-name
 `--push` changes, C2; a duplicate-`GitBranch()` checkout stack's `stack.yaml` changes, C3 — §4.1
-rule 7); that a no-flag run
-issues exactly the same Git commands as before (it may differ by the two declared read-only C4
-probes, §4.1 rule 6, which MUST be described as read-only and as part of C4, and by C2's corrected
-`push` ref on a decoupled entry); that the two default-branch probes issue the same number of Git
+rule 7); that the `[-]` no-op block, the plan, or the persisted `selected` list has a deterministic
+sibling or anchor order (only parent-before-child is guaranteed, §3.7); that a no-flag run
+issues exactly the same Git commands as before (it may differ by the three declared read-only C4
+argv carve-outs, §4.1 rule 6 — two added probes and the **removed** workspace-root resolution
+events of the external sync and push paths — which MUST be described as read-only and as part of C4,
+and by C2's corrected `push` ref on a decoupled entry); that any path is left with "exactly one"
+workspace resolution (external sync and external push each keep **two** resolution events, each of
+which is an ordered **pair** of Git records, §3.11); that an external `tws push` / `--push` capture's
+**whole** argv log is identical across the change (it is not: `1 + N` resolution events become two,
+§4.1 rule 6c, AC 59); that an external `tws sync` capture's whole argv log is identical either (it
+is not: `3 + N + E` resolution events become two, and this **does** affect the frozen AC 1 external
+captures, §4.1 rule 6c, AC 2); that the two default-branch probes issue the same number of Git
 commands or fail and succeed in the same way (they ask different repositories, §4.1 rule 6b); that
 no **mutating** Git command changes on the no-flag path (C2's `push` ref does, on decoupled names);
 that no-flag checkout
@@ -2901,7 +3906,7 @@ removed, or re-kinded.
 | `fix-sync-continue-descendants` | `staleStackEdges` and `branchContainsConfiguredParent` are both modified/scoped (§7.5) |
 | `push-branches` | `pushFeature`'s ref changes and `pushSelected` filters its entry set (§7.6) |
 | `fix-checkout-feature-path-routing` | `runCheckoutSync`'s feature-path routing sits under the C4 `RepoDir` change and the invocation matrix (§10.9) |
-| `fix-external-feature-dir-resolution` | `RequireWorkspace`'s external fallback is what makes cells 5–6 of the cwd matrix work; C4 fixes the `syncFeature` half (§13.4) |
+| `fix-external-feature-dir-resolution` | `RequireWorkspace`'s external fallback is what makes cells 5–6 of the cwd matrix work; C4 replaces the two competing feature-path derivations with the single resolver of §3.11 (§13.4 rule 2) |
 | `agent-work-status-dashboard` | `buildFeatureSync`'s external projection semantics change (§11.1) |
 | `checkout-workspace-lifecycle` | `isRuntimeState`'s semantics change and its committed test gains cases (§11.2) |
 
@@ -2921,6 +3926,16 @@ completion is additive alongside `ValidArgsFunction`),
 
 **Candidates deliberately not registered**, with reasons:
 
+- `workspace-mode-foundation` / any workspace-resolution parent — **not** registered, and this is a
+  direct consequence of how §3.11 is settled. The layout resolver lives in package `cli`, calls
+  **none** of `internal.TwsRoot` / `internal.FeaturePath` / `internal.WorktreePath` /
+  `RequireWorkspace` itself, and consumes only the `ws` and `twsRoot` values its callers already
+  hold — the commands keep calling `internal.TwsRoot` and `ws.ResolveFeaturePath` exactly as they
+  are, just once each; `internal/workspace.go`, `internal/resolve.go`, and `internal/paths.go` are
+  untouched (§13.5), so nothing in the parent's surface is modified and no edge is added. The rejected alternative — teaching `ResolveCurrentWorkspaceE` to honour `TWS_ROOT` —
+  would change every command's metadata root and *would* make a workspace-resolution parent a
+  directly-modified hard parent; declining it keeps the DAG unchanged and is one of the reasons the
+  resolver is scoped to the sync path.
 - `workspace-sibling-links` (`GuardFeatureName` in `sync.go`) — consumed unchanged. It becomes hard
   only if the implementation modifies the guard or listing path, which this definition forbids.
 - `fix-checkout-lifecycle-layout`, `workspace-mode-foundation`, `delete-feature` — genuinely
@@ -2950,9 +3965,12 @@ cannot leak into a fixture or a permanent golden. All tests MUST pass on macOS a
    conflict run, external `--continue`, external `--abort` with and without state, external missing
    `stack.yaml` (`syncFallback`), external stale-edge failure block, checkout clean run
    (`Checkout sync complete.`), checkout conflict run, checkout `--continue`
-   (`Checkout sync completed.`), and checkout `--abort`. Every capture is taken from a **supported,
-   agreeing cwd** — matrix cells 1–4 for external and 7–8 for checkout (§12.11) — because cells
-   5, 6, and 9 are the declared C4 exception (§4.1 rule 5) and MUST NOT be frozen. Each capture is
+   (`Checkout sync completed.`), and checkout `--abort`. Every capture is taken from a **supported
+   cwd** — matrix cells 1–4 for external and 7–8 for checkout (§12.11) — **and from an agreeing
+   layout**, where `internal.FeaturePath` and `ws.ResolveFeaturePath` resolve to the same directory
+   (§3.11), because checkout cell 9 and every divergent external layout are the declared C4
+   exception (§4.1 rule 5) and MUST NOT be frozen. Each capture is also restricted to fixtures with
+   no mutually unordered output lines (§17.1): one repository, and at most one selected anchor. Each capture is
    stored **after** the closed
    path→token normalization of §4.1 rule 1a — stdout and stderr as separate goldens, with
    `goldenAssertNoResidual` asserting no temporary root and no stable ID survives — and is taken
@@ -3002,7 +4020,8 @@ cannot leak into a fixture or a permanent golden. All tests MUST pass on macOS a
    applies to the frozen captures only: the declared C2 decoupled-name `--push` fixture and the
    declared C3 duplicate-`GitBranch()` checkout fixture (§4.1 rule 7) are **not** in the AC 1
    golden set and are asserted as declared-change diffs by AC 33 and AC 34 instead.
-   The carve-out is asserted, not assumed — and both assertions below read the child's stdout from
+   The carve-out is asserted, not assumed — and the first two assertions below read the child's
+   stdout from
    the sidecar, which is possible because the wrapper **tees** the stdout of exactly three
    read-only shapes (`rev-parse --show-toplevel`, `rev-parse --abbrev-ref origin/HEAD`,
    `symbolic-ref --short HEAD`) **in both wrapper modes**, replaying the captured bytes verbatim to
@@ -3011,10 +4030,16 @@ cannot leak into a fixture or a permanent golden. All tests MUST pass on macOS a
    - **Checkout captures.** The post-change log carries **exactly one** record absent from the
      pre-change log, whose argv is exactly `git -C <cwd> rev-parse --show-toplevel`, with exit
      status zero, and whose **output is asserted equal to `ws.RepoRoot`** (both sides
-     `filepath.Clean`ed and `EvalSymlinks`ed). Its position is asserted **exactly** and is *not*
+     `filepath.Clean`ed and `EvalSymlinks`ed). No record is **removed** either: the pre-change
+     resolution prefix — `RunE`'s `RequireWorkspace` event **and** `runCheckoutSync`'s unchanged
+     `internal.RequireFeaturePath` event (§10.1) — appears in full on the post-change side, so a
+     post-change log carrying only one `RequireWorkspace` event on this path fails AC 2.
+     Its position is asserted **exactly** and is *not*
      "before every pre-change record": the post-change log MUST be the pre-change log's
-     workspace/feature-resolution prefix (`RequireWorkspace`'s `rev-parse --git-common-dir` and any
-     other resolution read) **verbatim, in order**, then the one added probe record, then the
+     workspace/feature-resolution prefix (both complete `RequireWorkspace` events of §3.11 — each the
+     ordered pair `rev-parse --show-toplevel`, `-C <cwd> rev-parse --git-common-dir` — plus any
+     other resolution read; the checkout path's events are **not** touched by carve-out (c), which
+     is external-only) **verbatim, in order**, then the one added probe record, then the
      remaining pre-change records — beginning, in a fresh-run capture, with `RunCheckoutSync`'s
      first preflight record, `rev-parse --git-path rebase-merge`, and in a `--continue`/`--abort`
      capture with that path's own first Git record — **verbatim, in order**. Every record other than the probe
@@ -3037,8 +4062,77 @@ cannot leak into a fixture or a permanent golden. All tests MUST pass on macOS a
      branches fails AC 2; a fixture **declared** to disagree is not frozen and is AC 46 / AC 53
      declared-change evidence instead. Where the entry has no repo context, both sides are `-C`-free
      and compare verbatim with no carve-out applied.
+   - **External sync captures — repeated workspace-root resolution *events* removed (§4.1
+     rule 6c). This carve-out DOES reach the frozen AC 1 external goldens**, and any revision of
+     this criterion that says otherwise is wrong. The comparison unit is the
+     `workspaceRootResolutionEvent` of §3.11: an ordered **pair** of records —
+     `rev-parse --show-toplevel` then `-C <cwd> rev-parse --git-common-dir` for a `RequireWorkspace`
+     event, the same two reversed for a `TwsRoot` event. The pre-change log of an external run
+     carries one `RequireWorkspace` event, one `TwsRoot` event for the guard, and one **further**
+     `TwsRoot` event for every `internal.FeaturePath` / `internal.WorktreePath` derivation the run
+     performs (`syncFeature`, both passes of `syncWithStackFiltered`, `staleStackEdges`,
+     `branchContainsConfiguredParent`, `handleSyncAbort`, `handleSyncContinue`) — `3 + N + E` events
+     for a clean plain run over `N` materialized entries with `E` stale-edge child probes. The
+     post-change log MUST carry **exactly two** events, in this order and at these positions: the
+     same `RequireWorkspace` event first, then the same single `TwsRoot` event; every other event
+     MUST be **absent**; **no** event and **no** record may be added; and every record outside the
+     resolution events MUST match the pre-change log verbatim in argv, relative order, and
+     exit-status class, subject only to carve-outs (a) and (b). The comparator groups records into
+     events before comparing, using the **anchored** rule of §3.11 — anchoring on each
+     `--git-common-dir` record whose `-C` operand is the record's own process cwd, never on a bare
+     `rev-parse --show-toplevel` and never on a `--git-common-dir` scoped elsewhere — and
+     MUST NOT count bare `--git-common-dir` records, because each
+     removed derivation takes **both** of its records with it. Every bare
+     `rev-parse --show-toplevel` record the grouping leaves unconsumed is a **standalone
+     `internal.LoadConfig` probe** (§3.11) — `runValidation` emits one per validated entry — and is
+     asserted as an ordinary non-event record: present, unchanged, and in the same position on both
+     sides. The same holds for every **`inferExternalRepoRoot` probe** — a
+     `git -C <path> rev-parse --git-common-dir` whose operand is not the cwd, emitted by
+     `RequireWorkspace`'s fallback arm from cwd cells 4–6 (§3.11), measured as `1 + M` records
+     (sibling plus one per materialized entry) on the cell-4/5/6 shapes. External sync performs
+     **one** `RequireWorkspace` before and after this feature, so AC 2 requires that whole block to
+     appear on the post-change side **verbatim, in order, in position**; its size is a property of
+     the fixture and MUST NOT be pinned as a constant, and a fixture with two or more configured
+     workspaces mapping to the metadata root (whose probe order is unspecified) MUST NOT be a frozen
+     golden. At least one frozen external fixture MUST configure a `test_command`, so the measured
+     `standalone show → common → show` adjacency is actually exercised and a show-anchored
+     comparator (which would invent a `RequireWorkspace` event there and orphan the real `TwsRoot`
+     event's second record) fails this criterion.
+   - **External push captures — `1 + N` resolution events become *two*, compared separately
+     from the mutating push argv (§4.1 rule 6c).** No AC 1 golden invokes `--push` or `tws push`, so
+     this half never applies to a frozen golden of AC 1; where a push capture is compared at
+     all (AC 59's external-push criterion, and the AC 33 declared-change diff), AC 2's rules for it
+     are these. The pre-change log of an external push over a stack of `N` entries carries `1 + N`
+     **`RequireWorkspace` events** — one from
+     `internal.RequireFeaturePath` and one per entry from `internal.RequireWorktreePath`, archived
+     entries included, each contributing **both** of its records. The post-change log MUST carry
+     **exactly two** events for the whole run — one `RequireWorkspace` event followed by one
+     `TwsRoot` event — and no record may be **added** beyond that second event. Both sides are
+     grouped with the anchored rule of §3.11, whose reverse-order walk is what reads the
+     pre-change `show → common` × `(1 + N)` log as `1 + N` `RequireWorkspace` events instead of
+     interior `TwsRoot` events. Where such a capture is taken from cwd cells 4–6, each of those
+     `1 + N` `RequireWorkspace` calls also emits its own `inferExternalRepoRoot` block (§3.11); the
+     blocks belonging to removed events are removed **with** them, and the block of the surviving
+     `RequireWorkspace` MUST appear verbatim, in order, in position. That is the **only** licensed
+     removal of a non-event record anywhere in this specification. The reduction MUST
+     be stated as `1 + N` → 2: for `N = 1` the event count is unchanged and only the second event's
+     shape (and therefore its two records' order) differs, and for an empty stack the post-change
+     log legitimately carries **one more** event than the pre-change log. A test or comparator that
+     asserts "exactly one workspace resolution" on this path is **wrong** and fails review.
+     Separately and independently, the ordered **mutating** records — one
+     `git push --force-with-lease origin <GitBranch>` per non-archived entry, in stack order — MUST
+     match the pre-change ordered `git push --force-with-lease origin <ref>` records position for
+     position, with identical cwd and exit-status class, alongside identical stdout, exit code, and
+     resulting refs (`git for-each-ref` on the bare remote). On a coupled-name fixture the operand
+     is identical too; on the decoupled C2 fixture the operand difference is the declared rule-7
+     change and belongs to AC 33's diff, never to a frozen comparison. Asserting **whole-log**
+     identity for an external push capture is **impossible** and MUST NOT appear in any test or in
+     this specification.
    No other argv difference — added, removed, reordered, or altered, in any verb — is allowed by
-   AC 2 in a frozen capture; every such difference is a regression.
+   AC 2 in a frozen capture; every such difference is a regression, and the only permitted
+   **removals** anywhere are the whole workspace-root resolution events of §4.1 rule 6c on the
+   external sync and external push paths, together with the `inferExternalRepoRoot` block emitted
+   **inside** a `RequireWorkspace` call that rule 6c removes (push path only, §3.11).
 
    **What the goldens deliberately do not cover, and how it is covered instead.** In divert mode
    `RunDirClean` receives an empty stderr stream for `rebase` and `push`, and the non-verbose
@@ -3056,8 +4150,9 @@ cannot leak into a fixture or a permanent golden. All tests MUST pass on macOS a
 
    A test asserting Git prose, a golden
    regenerated with any normalization beyond the closed table of §4.1 rule 1a, an argv comparison
-   widened beyond the two carve-out events, a claim that the two default-branch events have the same
-   count or exit class, a checkout capture
+   widened beyond the three carve-out events, a claim that the two default-branch events have the
+   same count or exit class, a claim that an external push capture's **whole** argv log is identical
+   across the change, a checkout capture
    taken in divert mode, or a wrapper that `exec`s (and so fails to record) any of the three teed
    read-only shapes in either mode — or that diverts them in either mode — is a specification
    violation, not a fix.
@@ -3157,6 +4252,10 @@ cannot leak into a fixture or a permanent golden. All tests MUST pass on macOS a
 18. With `origin/master` ahead: `--local-only` leaves the root SHA and **every** `origin/*` ref
     untouched while each selected child contains its local parent tip; `--full` advances the root.
     Repeated for a literal-ref root (`master`), an `origin/master` root, and a tag-based root.
+    The `literal-root` fixture has three independent anchors, so its `[-]` block is asserted as an
+    **unordered set** of lines plus the parent-before-child property (§3.7); no assertion and no
+    golden in this criterion pins the relative order of the three anchors, because `TopoSort` does
+    not define one.
 19. `--only` and `--from`: every **unselected** branch SHA and every unselected entry's serialized
     `stack.yaml` fields are byte-identical before and after; the selected entries' `last_base_sha`
     values are the only changes. Repeated on the `duplicate-branch` fixture, where "the selected
@@ -3176,9 +4275,14 @@ cannot leak into a fixture or a permanent golden. All tests MUST pass on macOS a
 24. `--local-only` naming an anchor prints the no-op block and exits 0, mutating nothing (D3); the
     same selection under `--full` performs real work. Asserted in **both** modes: in checkout mode
     the block is emitted by `internal.RunCheckoutSync` through `printLocalOnlyNoOp` (§3.10 path 3,
-    §10.3 step 12b) — one `[-]` line per selected anchor in topological order, with
+    §10.3 step 12b) — one `[-]` line per selected anchor, with
     `Nothing to propagate.` present only when the plan is empty and absent when some other selected
     entry was rebased — and `Checkout sync complete.` still comes from the CLI, after the block.
+    **Ordering assertions are set-based**: a multi-anchor block is compared as the unordered set of
+    its `[-]` lines (plus parent-before-child, and plus the fixed position of the trailing
+    `Nothing to propagate.` line when present), and only a **single-anchor** fixture may be pinned
+    byte for byte or captured as a byte-compared golden (§3.7, §5.2 step 1). No test asserts a
+    topological *sequence* of anchors, and no fix adds a sort to obtain one.
 25. Ancestors outside the selection are never rebased and are never required to be current (D4),
     asserted by leaving an ancestor deliberately stale and running `--only <descendant>` to exit 0.
 
@@ -3205,8 +4309,12 @@ cannot leak into a fixture or a permanent golden. All tests MUST pass on macOS a
     different ones (§8.2, §13.3):
     - package `cli`: `newSyncMarker()` returns a value matching the literal §8.2 grammar
       `^tws-scoped-sync-[0-9a-f]{32}\.lock$`, is a safe single path component, is **rejected** by
-      `git check-ref-format --branch`, and `git branch <marker>` fails; repeated calls never
-      collide;
+      `git check-ref-format --branch` and by `git branch <marker>`. Rejection is asserted as a
+      **non-zero** exit status, never as a specific code: measured with Git 2.55.0,
+      `git check-ref-format --branch <marker>` exits **128**, `git check-ref-format
+      refs/heads/<marker>` exits 1, and `git branch <marker>` exits 128 with `fatal: '…' is not a
+      valid branch name`. Asserting `== 1` would be platform- and version-fragile and is forbidden.
+      Repeated calls never collide;
     - package `internal`: an in-package unit test (the predicate is unexported) asserts
       `isSyncMarker` accepts values of that same literal grammar and rejects near-misses — wrong
       prefix, upper-case hex, wrong length, missing `.lock`, and any path separator;
@@ -3234,7 +4342,8 @@ cannot leak into a fixture or a permanent golden. All tests MUST pass on macOS a
 32. Mixed-state genesis: reproduce §9.3 sequence 1 end to end and assert the resulting cell is
     `{real legacy, valid}` and that the new binary refuses plain and `--continue` naming **both**
     failed entries, and refuses `--abort` rather than clearing either file.
-33. `pushFeature` pushes `GitBranch()` (C2, declared no-flag change, §4.1 rule 7): with a decoupled
+33. `pushFeature` pushes `GitBranch()` (C2, declared no-flag change, §4.1 rule 7): in an
+    **external** workspace with a decoupled
     entry (`name: work`, `branch: user/work`), the **no-flag** `tws sync <f> --push` and `tws push
     <f>` both update `refs/heads/user/work` on the bare remote and create no ref named `work`. This
     is asserted as a **declared-change diff** against
@@ -3243,8 +4352,11 @@ cannot leak into a fixture or a permanent golden. All tests MUST pass on macOS a
     its exit code, and the absent `refs/heads/user/work`; the post-change run shows
     `git push --force-with-lease origin user/work`, `  [+] NAME (pushed)`, its exit code, and the
     updated remote ref. The same criterion asserts the fix is **inert for coupled names**: on the
-    `linear` fixture the push argv, output bytes, exit code, and remote refs are identical to the
-    pre-change tree, so every coupled AC 1 golden stays frozen.
+    `linear` fixture the ordered mutating push argv, output bytes, exit code, and remote refs are
+    identical to the pre-change tree — the log's only difference being the whole workspace-root
+    resolution **events** compressed by §4.1 rule 6c (`1 + N` → 2 on the push path; for `N = 1` the
+    count is unchanged) — so every coupled AC 1 golden stays
+    frozen (none of them invokes a push at all).
 34. `finalizeTransaction` attributes `last_base_sha` by `Name` (C3, declared no-flag change, §4.1
     rule 7): with two entries sharing one
     `GitBranch()`, the correct entry's `last_base_sha` is updated and the other is untouched —
@@ -3329,8 +4441,14 @@ cannot leak into a fixture or a permanent golden. All tests MUST pass on macOS a
     golden: no AC 1 capture covers a corrupt state file, and the pre-change strings above MUST NOT
     be asserted as still-current behaviour anywhere. Separately, a normal (decodable) failure write
     is mode `0644` with content equivalent to the pre-change tree under §17.1 (only `started_at`
-    normalized), and an interrupted write never leaves a partial file, because the write is
-    temp + `Sync` + rename.
+    normalized), and an interrupted write never leaves a partial **`.sync-state.yaml`**, because the
+    write is temp + `Sync` + rename. The claim is deliberately scoped to that file: `atomicWriteFile`
+    creates its temporary through `os.CreateTemp(filepath.Dir(path), ".tws-state-*")`, so a crash
+    mid-write can leave a `.tws-state-XXXXXX` residue in the **feature directory** where today's
+    `os.WriteFile` leaves nothing, and a snapshot taken from a `SyncStepHook` can observe one. Every
+    file-set snapshot in this feature therefore ignores `.tws-state-*` explicitly (§17.3), and
+    `isRuntimeState` is **not** extended for it (import plants only what an archive contains, and
+    export is allow-listed).
 
 ### Status and import
 
@@ -3354,12 +4472,24 @@ cannot leak into a fixture or a permanent golden. All tests MUST pass on macOS a
     `{absent, valid}` under a live owning guard MUST NOT be projected as `IssueSyncInvalid`. An
     unreadable payload keeps
     its `IssueSyncStateInvalid` detail even under a live guard, worded as unreadable rather than
-    dead. Live/stale comes from the controlled PID seam; no sleeping, no racing, no process kills.
+    dead. Live/stale is injected through **`AgentStatusOpts.Proc`** — the prober
+    `buildFeatureSync` forwards as `SyncClassifyOpts.Alive` (§11.1 rule 3, §17.4) — so the status
+    tests mutate **no** package global and stay parallel-safe; no sleeping, no racing, no process
+    kills.
 44. Status mutates nothing: the bytes of `.sync-state.yaml`, `.sync-state.v2.yaml`, and
     `.sync-run.lock` are identical before and after a `tws status` run, and the committed
     legacy-state status goldens are unchanged.
-45. `TestExport_RuntimeStateExcluded` gains `.sync-state.v2.yaml` and `.sync-run.lock` (both
-    `true`), keeping every existing row unchanged. An end-to-end import of a tarball that
+45. `TestExport_RuntimeStateExcluded` (`internal/cli/checkout_lifecycle_test.go:617`) gains
+    `.sync-state.v2.yaml` and `.sync-run.lock` (both
+    `true`), keeping every existing row unchanged. That test is, despite its name, a **pure unit
+    table over `isRuntimeState`** — it builds no tarball — so this half of the criterion is a
+    two-row table edit; the
+    end-to-end assertions below are **new** tests, not an extension of it. It is one of the
+    **three** edited existing test files of §13.6, the other two being the mechanical
+    `handleSyncContinue` call-site update in `internal/cli/sync_continue_integration_test.go` and
+    the mechanical `syncFeature` call-site update in `TestCheckoutSync_ExternalSyncUnchanged`
+    (`internal/cli/checkout_sync_test.go:1187`). An end-to-end import of a
+    tarball that
     deliberately contains `.sync-state.yaml`, `.sync-state.v2.yaml`, and a guard file at the
     feature-directory root plants **none** of them, and a subsequent plain `tws sync <feature>` in
     the imported feature is **not** refused. A feature directory containing a payload and a guard
@@ -3368,30 +4498,60 @@ cannot leak into a fixture or a permanent golden. All tests MUST pass on macOS a
 ### Structure, invocation, and gates
 
 46. Every cell of the §12.11 cwd matrix is exercised, per mode, for at least one scoped and one
-    no-flag run. Frozen cells and declared cells are asserted differently, and both directions are
-    required:
-    - **Cells 1–4 and 7–8 (frozen).** On an input outside the declared C2/C3 defect fixtures of
+    no-flag run, and — for external mode — on an **agreeing** and on a **divergent** layout, since
+    the C4 declaration is layout-scoped rather than cwd-scoped (§3.11, §4.1 rule 5). Frozen inputs
+    and declared inputs are asserted differently, and both disagreement directions are required:
+    - **Cells 1–4 and 7–8, agreeing layout (frozen).** On an input outside the declared C2/C3 defect fixtures of
       §4.1 rule 7, the no-flag run reproduces the AC 1 output goldens byte for
       byte under the §4.1 rule 1 comparison, with identical exit code, identical state files under
       the §17.1 comparator, identical refs and `stack.yaml`, and an argv log that matches the
       pre-change log exactly under §17.1 comparison mode 3 — i.e. differing **only** by the closed
       C4 carve-out of §4.1 rule 6: the checkout containment probe, whose output is asserted equal to
       `ws.RepoRoot` and whose position is asserted to be directly before the first
-      `RunCheckoutSync` preflight record (`rev-parse --git-path rebase-merge`), with the
-      workspace-resolution records that precede it unchanged, and the repo-scoped default-branch
+      `RunCheckoutSync` preflight record (`rev-parse --git-path rebase-merge`), with **both**
+      workspace-resolution events that precede it — `RunE`'s `RequireWorkspace` and
+      `runCheckoutSync`'s unchanged `internal.RequireFeaturePath` (§10.1) — present and unchanged
+      on the post-change side (carve-out (c) is external-only, and no checkout resolution event is
+      removed); on the **external** cells, the repeated workspace-root resolution events of
+      carve-out (c) removed, leaving exactly two (one `RequireWorkspace` event, one `TwsRoot`
+      event); and the repo-scoped default-branch
       resolution compared as **one closed
       `DefaultBranchIn` logical event validated by resolved value** (same fixture-pinned default
       branch on both sides, every record in the window belonging to that event; **no** claim of
       equal invocation count or equal exit-status class).
-    - **Cells 5 and 6 (declared, §4.1 rule 5).** Two fixtures. In the **agreeing** fixture, where
+    - **Cells 1–6, agreeing layout (frozen half).** In the `cwd-agree` fixture, where
       `ws.ResolveFeaturePath` and `internal.FeaturePath` yield the same path, the no-flag run is
-      asserted to be **identical to the pre-change tree** — output, exit code, refs, `stack.yaml` —
-      proving the fix is inert on healthy layouts. In the **disagreeing** fixture (constructed
-      through `TWS_ROOT`/workspace-detection), the no-flag run is asserted as a **declared change**:
-      before the fix it fell into `syncFallback` and rebased every worktree onto the literal
-      `origin/main`; after the fix it loads the resolved feature's `stack.yaml`, syncs the stack,
-      and the §17.1 argv log shows the stack's real bases and **no** `origin/main` fallback rebase.
-      The pre-change behaviour for this fixture is captured once, in the AC 1 pre-change run, into
+      asserted to be **identical to the pre-change tree** — output, exit code, refs, `stack.yaml`,
+      state files — from the repository root, a linked worktree, a nested subdirectory, the
+      workspace root, the feature directory, and a nested subdirectory of the feature directory,
+      proving the layout resolver is inert on healthy layouts and probes nothing there. The argv
+      log's only permitted difference in those six cells is the §4.1 rule 6c event compression
+      (`3 + N + E` → 2) plus, where a repo context exists, the rule 6b default-branch event; the
+      resolver itself adds nothing. Cells **4, 5, and 6** additionally assert the
+      `inferExternalRepoRoot` block of §3.11: because the cwd is outside any repository there,
+      `RequireWorkspace`'s fallback arm emits `C + S + M` foreign-operand
+      `git -C <path> rev-parse --git-common-dir` records (measured `0 + 1 + 3` on a three-entry
+      feature, and `0 + 1 + 4` once a second feature is materialized), and since external sync
+      performs exactly **one** `RequireWorkspace` on both sides those records MUST appear on the
+      post-change side verbatim, in order, and in position — never grouped into an event, never
+      counted toward the two-event budget, and never removed by the layout refactor, which still
+      runs `RequireWorkspace` before any layout resolution. The fixture MUST have at most one
+      configured workspace mapping to the metadata root, because that candidate class is iterated in
+      **unspecified** map order and cannot be ordered-compared.
+    - **Divergent layouts (declared, §4.1 rule 5, §3.11).** Asserted in **both** directions, since
+      the trigger is `TWS_ROOT`/workspace detection and not cwd, and repeated from at least one
+      cwd cell in 1–4 **and** from the feature directory (cells 5–6) to show the declaration is
+      layout-scoped, not cwd-scoped:
+      - `cwd-disagree-b` — the stack lives under `internal.FeaturePath` only (the shipped
+        `TWS_ROOT`-divergent shape). Before the fix the rebase half worked while
+        `.sync-state.yaml`, `--continue`, `--abort`, and `--push` operated on the empty
+        workspace-rooted directory; after the fix all of them use candidate B and the run is
+        coherent. Detailed regression coverage is AC 58.
+      - `cwd-disagree-a` — the stack lives under `ws.ResolveFeaturePath` only. Before the fix the
+        run fell into `syncFallback` and rebased whatever it found onto the literal `origin/main`;
+        after the fix it loads that feature's `stack.yaml`, syncs the stack, and the §17.1 argv log
+        shows the stack's real bases and **no** `origin/main` fallback rebase.
+      The pre-change behaviour of both fixtures is captured once, in the AC 1 pre-change run, into
       `internal/cli/testdata/sync_noflag/declared_c4/` and labelled **declared-change evidence, not
       a golden**, exactly as AC 40 does for C1.
     - **Cell 9 (declared, §4.1 rule 5).** Asserted for a scoped **and** a no-flag checkout
@@ -3426,7 +4586,11 @@ cannot leak into a fixture or a permanent golden. All tests MUST pass on macOS a
     unknown selector (I10), archived selector (I11), checkout cross-repo refusal (I12) and its
     external non-refusal, duplicate-`GitBranch()` refusal (I13) under `NewMode: true` in both modes
     and its absence under `NewMode: false`, anchor vs propagated classification including the
-    cross-repo parent case, topological order preservation, and `Repos` computation — with **no**
+    cross-repo parent case, **parent-before-child order preservation** (asserted as that property
+    over the returned `Entries`, never as a fixed sequence of siblings or independent anchors —
+    §3.7, §5.2 step 1 — and with at least one case whose stack has three in-degree-0 entries, run
+    repeatedly, asserting the property holds while the sequence is allowed to vary), and `Repos`
+    computation — with **no**
     Git repository at all and no filesystem access, proving the function is pure over
     `(Stack, SyncRunPolicy, SyncSelectionOpts)`. The I10 and I11 cases additionally assert
     **`opts.Feature` interpolation** by exact string equality: with `Feature: "alpha"` and
@@ -3451,7 +4615,56 @@ cannot leak into a fixture or a permanent golden. All tests MUST pass on macOS a
     and `classifySyncState` call it;     `ResolveSyncSelection` is the only place I10–I13 are raised, and the I10 and I11 format strings
     are each spelled exactly once, in `internal/sync_selection.go` (no caller re-formats them and no
     call site interpolates a feature name into a selection error);
-    the exact I20 string of §3.5 appears exactly once per mode-owning call site and nowhere else;
+    the exact I20 string of §3.5 is declared **exactly once** in the whole repository, as the
+    unexported package-`cli` constant `errSyncModeFlagsNeedV2` (`internal/cli/sync_modes.go`),
+    referenced by both mode-owning call sites (`internal/cli/sync.go` and
+    `internal/cli/checkout_sync.go`) so the two can never drift — the grep asserts one literal, not
+    one per call site; the §3.11 single-layout obligation holds, with its one declared checkout carve-out:
+    `internal/cli/sync.go` and `internal/cli/sync_helpers.go` contain **no** occurrence of
+    `internal.FeaturePath`, `internal.WorktreePath`, `internal.RequireFeaturePath`, or
+    `internal.RequireWorktreePath`; `internal/cli/push.go` contains **no** occurrence of
+    `internal.FeaturePath` or `internal.WorktreePath` at all, and its **only**
+    `internal.RequireFeaturePath` and `internal.RequireWorktreePath` occurrences — exactly one
+    each — are inside the checkout-mode helper `pushFeatureCheckout`, which is asserted to be the
+    sole function in the file that mentions either symbol, to take no `externalSyncLayout`
+    parameter, and to be called from exactly one site, the `ws.Mode == internal.ModeCheckout` arm
+    of `pushCmd` (so the external push path is provably free of the legacy resolvers while the
+    frozen checkout path keeps them, §3.11, AC 59); `pushFeature` and `pushSelected` each take an
+    `externalSyncLayout` parameter and neither mentions any of the four legacy resolvers;
+    `pushCmd` contains exactly one `internal.GuardFeatureName(ws.MetadataRoot, …)` call, textually
+    **before** its `internal.TwsRoot()` call, before its `resolveExternalSyncLayout` call, and
+    before the mode branch;
+    `internal/cli/sync.go` contains **exactly one** `internal.TwsRoot()` call, whose value is bound
+    to a local `twsRoot` and passed to **both** the file's single `internal.GuardFeatureName(twsRoot,
+    …)` call and its single `resolveExternalSyncLayout(ws, twsRoot, …)` call (the two commands' guard
+    roots stay as they ship: `TwsRoot`-derived for `tws sync`, `ws.MetadataRoot` for `tws push`);
+    `internal/cli/push.go` contains **exactly one** `internal.TwsRoot()` call, textually inside the
+    external arm of `pushCmd`'s mode branch and **after** it, so `pushFeatureCheckout` and the
+    checkout arm contain none; `internal/cli/sync_modes.go` contains **exactly one**
+    `internal.TwsRoot()` call, inside `syncEntryCompletion` and outside
+    `resolveExternalSyncLayout`; `internal/cli/sync_helpers.go` contains **no** `internal.TwsRoot()`
+    call at all;
+    `resolveExternalSyncLayout` is declared exactly once, takes a `twsRoot` parameter, builds
+    candidate B with `filepath.Join(twsRoot, …)`, contains **no** `GuardFeatureName`, **no**
+    `internal.TwsRoot`, **no** `internal.FeaturePath`, **no** `internal.WorktreePath`, **no**
+    `internal.RequireWorkspace`, **no** `internal.LoadConfig`, and **no** `exec.Command` /
+    `internal.Run*` call of its own, and is the only producer of `externalSyncLayout` values;
+    `internal/paths.go`, `internal/workspace.go`, and `internal/resolve.go` are **byte-identical** to
+    the pre-change tree (`git diff --exit-code` on those three paths, §13.5); `internal/cli/checkout_sync.go` contains
+    **no** `internal.RequireWorkspace` call and **no** `internal.ResolveFeaturePathFor` call, and
+    **exactly one** `internal.RequireFeaturePath(feature)` call, textually unchanged from the
+    pre-change tree and still the first statement of `runCheckoutSync`, so the checkout path keeps
+    both of its pre-change resolution events (§10.1, §13.4 rule 1);
+    the sidecar's resolution-event grouping helper is declared **exactly once** in
+    `internal/cli/sync_golden_test.go`, anchors **only** on `--git-common-dir` records whose `-C`
+    operand equals that record's own recorded process cwd,
+    and no test file anchors a pairing on a bare `rev-parse --show-toplevel` record, anchors on a
+    foreign-operand `--git-common-dir` record, or asserts that
+    bare `rev-parse --show-toplevel` records are unique to resolution events (§3.11, §17.1
+    `c4ResolutionCompression`);
+    no second sort exists — `TopoSort` has exactly one production implementation and neither
+    `ResolveSyncSelection`, `printLocalOnlyNoOp`, nor any executor calls `sort.*` on selection
+    entries (§3.7, §5.2);
     `staleStackEdgesFiltered` is the only stale-edge predicate; `TopoSort` and `Descendants` each
     have exactly one production implementation; **no `SortFlags` assignment exists anywhere in
     `internal/cli`** (help ordering is pflag's default, §3.1/§3.9); `RunCheckoutSync` contains at
@@ -3547,6 +4760,131 @@ cannot leak into a fixture or a permanent golden. All tests MUST pass on macOS a
     the argv log shows a **second** `fetch`, and the run completes normally. No `--continue` or
     `--abort` is required, offered, or accepted for that window, and no new stage exists for it.
 
+58. **Divergent-layout regression (C4 rule 2, §3.11), external mode, both directions.** In a fixture
+    where `TWS_ROOT` points at a workspace root that is **not** `ws.MetadataRoot` — built with the
+    shipped `setupGitRepo` / `withWorkspaceEnv` / `createLinearStack` helpers so the divergence is
+    real and not simulated — the following are asserted, each from at least one cwd in cells 1–4 and
+    once from the feature directory (cells 5–6), and each in the direction where the stack lives
+    under `internal.FeaturePath` **and** in the direction where it lives under
+    `ws.ResolveFeaturePath`:
+    - **no-flag plain run**: the stack is really rebased (per-entry `[+]` lines and moved branch
+      SHAs, asserted against the real bases), and the §17.1 argv log contains **no** `rebase … origin/main`
+      fallback record;
+    - **scoped run** (`--only` and `--from`): the same, restricted to the selection, with every
+      unselected branch SHA byte-identical;
+    - **failure → state → recovery**: a conflicting scoped run writes its state under the **same**
+      root it rebased from, and the immediately following `tws sync <feature>` sees it (refusing
+      with the `previous sync incomplete` / §8.7 message rather than starting over), `--continue`
+      resumes it, and `--abort` clears it — proving `saveIncompleteSync`, the classifier, and the
+      three verbs share one root and closing today's split-brain;
+    - **`--push` and `tws push`**: both push the real branches instead of failing with
+      `no stack.yaml found for feature: <f>`, and both resolve the identical layout;
+    - **`tws sync --only <TAB>`** (`syncEntryCompletion`) offers exactly the non-archived entries of
+      that same stack, never an empty list;
+    - **agreeing control**: the same assertions run in a fixture where the two derivations agree
+      show **zero** difference from the pre-change tree in stdout, stderr, exit code, files, modes,
+      and refs, and the layout resolver performs no
+      filesystem probe and no Git call there. The argv log of that control differs **only** by the
+      §4.1 rule 6c workspace-root resolution events removed from the run (`3 + N + E` → 2 for sync,
+      `1 + N` → 2 for the push half), compared as whole events per §17.1 comparison mode 3.
+    - **resolution budget on the divergent fixture**: the §17.1 argv log of each divergent-layout
+      run contains **exactly two** workspace-root resolution events — one `RequireWorkspace` event
+      followed by one `TwsRoot` event (§3.11) — for the plain, scoped, `--continue`, `--abort`,
+      `--push`, `tws push`, and completion invocations alike, proving the resolver added none and
+      that no helper re-derives a root. A run whose log shows a third event fails this criterion.
+      The count is taken after grouping with §3.11's **anchored** rule (anchor on each
+      `--git-common-dir` record whose `-C` operand is that record's own process cwd, in reverse log
+      order, forward-pairing to a following unconsumed bare `rev-parse --show-toplevel` and
+      otherwise backward-pairing), and the
+      fixture MUST configure a `test_command` so at least one
+      standalone `internal.LoadConfig` probe from `runValidation` sits next to a resolution event:
+      those ungrouped bare `rev-parse --show-toplevel` records are **excluded** from the event count
+      and asserted present, unchanged, and in position on both sides. A comparator that counted them
+      as resolution records would report three or more events here and fail. The runs taken from the
+      **feature directory** (cells 5–6) additionally pin the `inferExternalRepoRoot` block: the cwd
+      is outside any repository, so the surviving `RequireWorkspace` still emits one foreign-operand
+      `git -C <path> rev-parse --git-common-dir` per candidate (sibling repo plus one per
+      materialized entry — measured as a contiguous four-record block directly after the
+      `RequireWorkspace` event on a three-entry feature, before the guard's `TwsRoot` event). Those
+      records are **excluded** from the two-event count and asserted present, unchanged, and in
+      position on both sides; a comparator that anchored on them would report six or more events on
+      this fixture and fail, and one that counted the block as a resolution would mistake a
+      fixture-size property for a change under test. On the **push** halves the block is emitted once
+      per `RequireWorkspace` call, so `1 + N` blocks before and one after — the only licensed
+      non-event removal (§4.1 rule 6c).
+59. **Standalone `tws push` keeps its guard and its checkout refusal** (§3.11). Three assertions,
+    all against real fixtures:
+    - **Sibling-space guard, external.** `TestSpaceGuard_ExternalCommandMatrix/push`
+      (`internal/cli/space_guard_test.go:270-276`) passes **without any edit to that file**: with a
+      registered space owning the top-level directory `learning`, `tws push learning` returns the
+      `top-level directory of registered space` error, exits nonzero, leaves
+      `snapshotTreeIgnoringLock` byte-identical, and leaves the registered space directory present.
+      A companion assertion in the new tests proves the ordering directly: with the guard tripping,
+      `resolveExternalSyncLayout` is never reached — no `stack.yaml` under either candidate root is
+      opened, no worktree is stat-ed, and the §17.1 argv log carries **exactly one**
+      workspace-root resolution event (the `RequireWorkspace` event) and **no** `TwsRoot` event,
+      proving the refusal happens before `internal.TwsRoot()` is called at all — which is asserted
+      by running the same case in a
+      `TWS_ROOT`-divergent fixture (AC 58's shape) where a resolver call would otherwise be
+      observable.
+    - **Checkout-mode refusal is unchanged.** In the `checkout` fixture with a stack holding at
+      least one entry, `tws push <feature>` fails with exactly
+      `linked worktrees are not supported in checkout mode` and a nonzero exit, byte-identical
+      stdout/stderr to the pre-change tree, no remote ref created or updated (`git for-each-ref` on
+      the bare remote is identical before and after), no `git push` in the §17.1 argv log, and no
+      file written under the feature directory. The same command over a **feature whose stack has
+      no branches** returns nil with empty stdout and exit 0, exactly as today. The only permitted
+      argv difference on this path is the one declared read-only workspace re-resolution of §3.11
+      (one added `RequireWorkspace` event); no other argv, and no mutating argv, may appear.
+      That difference is a whole `RequireWorkspace` event — **both** its records,
+      `git rev-parse --show-toplevel` and `git -C <cwd> rev-parse --git-common-dir` (§3.11) — and
+      the checkout arm must show **no** `TwsRoot` event at all, i.e. no resolution event whose two
+      records appear in the reverse order, proving `internal.TwsRoot()` is never called on that arm.
+      Both sides are grouped with §3.11's anchored rule, which reads this path's consecutive
+      `show → common` pairs as `RequireWorkspace` events rather than as interior `TwsRoot` events.
+      A negative assertion accompanies it: for a non-empty stack the run must **not** print any
+      `  [-] NAME (archived, skipped)` line, must **not** print any `  [+] NAME (pushed)` line, and
+      must **not** exit 0 — routing checkout push through the external layout resolver would
+      produce exactly that skipped-everything, exit-0 shape, and the refactor may not convert the
+      refusal into such a silent success.
+    - **External-mode push keeps every observable behaviour and performs exactly two workspace-root
+      resolution events.** In the external `linear` fixture (coupled names), `tws push <feature>` produces
+      stdout, exit code, and resulting refs (`git for-each-ref` on the bare remote) **identical** to
+      the pre-change tree, and its ordered **mutating** records —
+      `git push --force-with-lease origin <GitBranch>`, one per non-archived entry in stack order —
+      match the pre-change ordered `git push --force-with-lease origin <ref>` records position for
+      position, operand for operand, with the same cwd and exit-status class. **Whole-log argv
+      identity is not asserted, because it is false**: the pre-change log carries `1 + N` read-only
+      **`RequireWorkspace` events** for a stack of `N` entries (one from
+      `internal.RequireFeaturePath`, one per entry from `internal.RequireWorktreePath`, archived
+      entries included), each event being the ordered pair `git rev-parse --show-toplevel` +
+      `git -C <cwd> rev-parse --git-common-dir`, and the post-change log MUST carry **exactly two**
+      events — one `RequireWorkspace` event from `pushCmd.RunE` followed by one `TwsRoot` event from
+      its external arm — with every other event **absent** and no record added beyond that second
+      event. The reduction is
+      asserted directly by counting whole resolution **events** on both sides (`1 + N` before, `2`
+      after) on the `linear` fixture (`N = 3`) and again on the `archived` fixture, whose
+      non-materialized entry proves the removed per-entry resolution preceded the `os.Stat` skip and
+      was therefore emitted for archived entries too, and by asserting that the mutating and output
+      comparisons above still hold on both. Both sides are grouped with §3.11's anchored rule; the
+      pre-change log of this path is `show → common` repeated, which that rule reads as `1 + N`
+      `RequireWorkspace` events precisely because it visits the anchors in reverse log order, so the
+      rightmost anchor claims the show record before it and every anchor to its left does the same.
+      The `linear` fixture is exercised from the **repository root** (cwd cell 1), where
+      `MainRepoRoot()` succeeds and **no** `inferExternalRepoRoot` record exists at all; the
+      companion run from the **workspace root** (cell 4) additionally asserts the §3.11 attachment
+      rule — `1 + N` inference blocks before, one after, each block being the contiguous
+      foreign-operand `--git-common-dir` run directly after a `RequireWorkspace` event, with the
+      surviving block verbatim and in position, and none of its records counted as an event. Two further cases pin the arithmetic honestly and MUST
+      be present: a **one-entry** stack, where `1 + N = 2` and the event **count is therefore
+      unchanged** (only the second event's shape and record order differ), and an **empty** stack,
+      where the post-change log carries **two** events against the pre-change log's **one** — a
+      declared, read-only **addition** on that input, with stdout still empty and the exit code
+      still 0. No assertion anywhere may claim "exactly one workspace resolution" on this path. This
+      is the read-only carve-out of §4.1
+      rule 6c and the only permitted difference on this path. In the AC 58 divergent fixture the
+      command pushes the same layout the run rebased, with the same two resolution events.
+
 ---
 
 ## 17. Test matrix and harnesses
@@ -3559,7 +4897,11 @@ invocation and captures the two process streams separately, because sync output 
 captures neither. Fixtures use the date-pinned builder pattern
 (`internal/cli/stack_status_test.go:32-90`) so object IDs are byte-stable across runs and machines.
 No golden pins multi-repo `Fetching …` ordering or sibling ordering: `UniqueRepos` and `TopoSort`
-both seed from maps, and no golden pins Git's own prose (comparison mode 1b).
+both seed from maps, and no golden pins Git's own prose (comparison mode 1b). Concretely, a fixture
+whose output contains **two or more** mutually unordered lines — several `Fetching …` lines, or a
+multi-anchor `[-]` block (§3.7) — MUST NOT be captured as a byte-compared golden; such assertions
+are set-based, and byte-pinned goldens are reserved for fixtures with a single repo and a single
+selected anchor.
 
 **Three comparison modes, deliberately different:**
 
@@ -3567,7 +4909,16 @@ both seed from maps, and no golden pins Git's own prose (comparison mode 1b).
    capture is not portable, so exactly two closed mechanisms are applied and nothing else.
 
    **(a) Path normalization.** `goldenReplacements`, `goldenApplyReplacements`, and
-   `goldenAssertNoResidual` (`internal/cli/stack_status_test.go:421-492`) are reused verbatim. The
+   `goldenAssertNoResidual` (`internal/cli/stack_status_test.go:421-492`) are reused verbatim —
+   **called, never edited**. `internal/cli/stack_status_test.go` is **not** a changed file of this
+   feature: `goldenGoldenPath` and `goldenCompareOrWrite` hard-code the `existing_commands` path
+   segment and MUST NOT be parameterized, re-pointed, or otherwise modified. The sync harness
+   declares its **own** sibling helpers in `internal/cli/sync_golden_test.go` — a sync-local golden
+   path builder rooted at `testdata/sync_noflag/` and a sync-local compare-or-write that reuses the
+   shipped `goldenExitCode` artifact shape (`exit: N\n<body>`) and the shipped
+   `goldenPkgDir`/regen-env conventions. Both packages' helpers are ordinary package-`cli` test
+   functions, so nothing is exported and `internal/cli/stack_status_test.go` does **not** become a
+   changed file of this feature (§13.6). The
    sync harness supplies the enumerated table of §4.1 rule 1 — repository roots (`<REPO>`,
    `<REPO2>`, …), metadata root (`<META>`), resolved feature path (`<FEATURE>`), worktrees root
    (`<WORKTREES>`), bare remotes (`<REMOTE>`, `<REMOTE2>`, …), fixture root (`<ROOT>`), `HOME`, and
@@ -3608,8 +4959,9 @@ both seed from maps, and no golden pins Git's own prose (comparison mode 1b).
      the sidecar copy is a copy, not a redirection, and no caller of these three shapes ever sees a
      stream the wrapper emptied. Because the tee is mode-independent, the containment probe and the
      `DefaultBranchIn` reads carry their output in **every** capture, external and checkout alike,
-     which is exactly what makes the two closed C4 carve-outs of comparison mode 3 assertable on
-     both sides in both modes. A wrapper that `exec`s any of these three shapes in either mode
+     which is exactly what makes the two output-carrying closed C4 carve-outs of comparison mode 3
+     assertable on both sides in both modes (the third carve-out, the removed push-path resolutions,
+     is asserted by record identity and count and needs no output). A wrapper that `exec`s any of these three shapes in either mode
      records no output and violates this specification.
    - **Two modes, selected per capture by one environment variable** (`TWS_GIT_WRAPPER_DIVERT=1` or
      unset; never auto-detected, never inferred from argv). Neither mode alters the tee above; the
@@ -3756,24 +5108,37 @@ both seed from maps, and no golden pins Git's own prose (comparison mode 1b).
    (`internal/checkout_sync.go:550-552`) today, and this feature does **not** add production seams
    solely for goldens. The semantic comparator is therefore the normative path, and any seam added
    later is an optimization, not a requirement.
-3. **Argv log — exact ordered match under exactly one closed carve-out (the two C4 events).**
+3. **Argv log — exact ordered match under exactly one closed carve-out (the three C4 events).**
    For every frozen no-flag capture (cells 1–4, 7–8) taken on an input **outside** the declared
    C2/C3 defect fixtures of §4.1 rule 7, the pre-change and post-change sidecar logs
    are compared as ordered `(verb, argv, exit-status class)` records, path-normalized by the same
    table of mode 1(a). The comparison is **exact**: every record MUST match its pre-change
    counterpart in verb, in every flag and operand, in position, and in exit-status class. Exactly
-   one carve-out exists; it is **closed**, contains exactly the two read-only C4 argv carve-outs of
-   §4.1 rule 6, and MUST be declared as literal constants in the test file beside the closed
-   dynamic sets — never computed, never discovered, never widened by a helper. The **decoupled-name
+   one carve-out exists; it is **closed**, contains exactly the three read-only C4 argv carve-outs of
+   §4.1 rule 6 — `c4ContainmentProbe`, `c4DefaultBranchProbe`, and `c4ResolutionCompression` — and
+   MUST be declared as literal constants in the test file beside the closed
+   dynamic sets — never computed, never discovered, never widened by a helper. Because
+   `c4ResolutionCompression` reaches the **external** frozen captures, an external capture's records
+   are grouped into `workspaceRootResolutionEvent`s (§3.11) **before** the ordered comparison; the
+   grouping is the anchored algorithm of §3.11, is part of the closed carve-out, and MUST NOT be
+   applied to any other record shape — in particular a bare `rev-parse --show-toplevel` that the
+   anchored grouping leaves unconsumed is a standalone `LoadConfig` probe, and a
+   `git -C <path> rev-parse --git-common-dir` whose `-C` operand is not the process cwd is an
+   `inferExternalRepoRoot` probe; both are compared as ordinary records, verbatim and in position.
+   The **decoupled-name
    `--push` fixture (C2)** and the **duplicate-`GitBranch()` checkout fixture (C3)** are not
    compared under this mode at all: their logs are declared-change evidence for AC 33 and AC 34.
 
    - **`c4ContainmentProbe` — checkout only, exactly one *added* record at one exact position.**
      The post-change log of a checkout capture MUST contain **exactly one** record absent from the
-     pre-change log, whose argv is exactly `git -C <cwd> rev-parse --show-toplevel`. The probe is
+     pre-change log, whose argv is exactly `git -C <cwd> rev-parse --show-toplevel`, and **zero**
+     records absent from the **post**-change log: nothing on this path is removed. The probe is
      **not** required to precede every pre-change record, and a comparator that requires that is
-     wrong: `RequireWorkspace` and `RequireFeaturePath` complete first and their Git reads
-     (`rev-parse --git-common-dir` and any other resolution read) still come first on both sides.
+     wrong: `RequireWorkspace` (in `RunE`) and `RequireFeaturePath` (inside `runCheckoutSync`,
+     unchanged by this feature, §10.1) complete first and their Git reads
+     (two `RequireWorkspace` events — each a `rev-parse --show-toplevel` plus a
+     `-C <cwd> rev-parse --git-common-dir` — and any other resolution read) still come first, in the
+     same order, on both sides.
      The required shape is a three-part split of the post-change log:
 
      1. the pre-change log's **workspace/feature-resolution prefix**, matched **verbatim** in argv,
@@ -3841,14 +5206,140 @@ both seed from maps, and no golden pins Git's own prose (comparison mode 1b).
      (AC 46, AC 53) instead of being required to be equivalent. A frozen fixture that disagrees is a
      **failure**. Where the entry has no repo context, no `-C` appears on either side and the
      records compare verbatim with no carve-out applied.
+   - **`c4ResolutionCompression` — external only, whole workspace-root resolution *events*
+     removed, with the mutating argv compared separately.** This carve-out applies to captures of an
+     **external** run: `tws sync` in every verb (including the frozen AC 1 no-flag externals — this
+     carve-out **does** reach them, and any comparator built on the earlier "push only" wording is
+     wrong), and `tws push` / `tws sync --push`. Checkout captures are outside it entirely.
+
+     **The unit is an event, never a record.** The comparator first groups each log into
+     `workspaceRootResolutionEvent`s per §3.11, and it MUST recognise **both** shapes: a
+     `RequireWorkspace` event, the ordered pair `git rev-parse --show-toplevel` then
+     `git -C <cwd> rev-parse --git-common-dir`; and a `TwsRoot` event, the same two records in the
+     **reverse** order (because `internal.TwsRoot` calls `MainRepoRoot` before `LoadConfig`). Both
+     records of an event share the run's recorded cwd. The grouping is the **anchored** algorithm of
+     §3.11 and MUST be implemented exactly as specified there:
+
+     - it anchors on **each `--git-common-dir` record whose `-C` operand equals that record's own
+       recorded process cwd** (after `filepath.Clean` on both sides) and **never** on a bare
+       `rev-parse --show-toplevel` record, nor on a `--git-common-dir` record scoped to any other
+       path, visiting the anchors in **reverse log order**;
+     - it pairs **forward** (`common → show`, a `TwsRoot` event) when the immediately following
+       record is an unconsumed bare `rev-parse --show-toplevel` in the same cwd;
+     - otherwise it pairs **backward** (`show → common`, a `RequireWorkspace` event) with the
+       immediately preceding **unconsumed** bare `rev-parse --show-toplevel` record in the same cwd;
+     - if neither holds it **fails the capture** rather than guessing.
+
+     The reverse-order walk is normative, not an implementation detail: it is what makes today's
+     `show → common` × `(1 + N)` external push log group into `1 + N` `RequireWorkspace` events
+     instead of interior `TwsRoot` events, while still resolving the ambiguous
+     `show → common → show` run in favour of the `TwsRoot` reading (§3.11).
+
+     **Bare `rev-parse --show-toplevel` records are not unique to resolution events, and the
+     comparator MUST NOT assume they are.** `runValidation` calls `internal.LoadConfig()` for every
+     validated entry (`internal/cli/sync_helpers.go:237-238`), and each such call emits one bare
+     `rev-parse --show-toplevel` record on the external sync path. Every bare
+     `rev-parse --show-toplevel` the grouping leaves unconsumed is such a **standalone `LoadConfig`
+     probe**: it stays in the ordered **non-event** log, is compared **verbatim and in position**
+     between the two sides, and MUST NOT be removed, absorbed into an event, reordered, or
+     normalized. This is what makes the measured
+     `standalone show → common → show` adjacency group correctly — the probe emitted by
+     `runValidation` immediately before the next entry's `internal.WorktreePath` derivation. A
+     show-anchored greedy comparator would pair that probe with the following `--git-common-dir`
+     record, report a phantom `RequireWorkspace` event, and orphan the real `TwsRoot` event's second
+     record; such a comparator is **wrong** and fails review, as does one that
+     counts bare `--git-common-dir` records or that treats one record as one resolution — it would
+     silently ignore half of every removed event.
+
+     **`--git-common-dir` records are not unique to resolution events either, and the operand test
+     is what separates them.** From cwd cells 4–6 (§12.11) the cwd is outside any repository,
+     `RequireWorkspace`'s `MainRepoRoot()` fails, and `inferExternalRepoRoot` emits one
+     `git -C <path> rev-parse --git-common-dir` per candidate — configured workspace keys (map
+     order, **unspecified**), the `.tws` sibling repo, and every materialized entry of every feature
+     in the workspace. Measured on the built binary from the workspace root and from the feature
+     directory, `tws sync <f> --abort` over a three-entry feature emits
+     `show, common@cwd, common@<sibling>, common@<wt1>, common@<wt2>, common@<wt3>, common@cwd, show`
+     — two events and **four** non-event records — while the same command from the repository root
+     emits only the four event records. The comparator MUST therefore:
+
+     - treat every `--git-common-dir` record whose `-C` operand is not the process cwd as an
+       **ordinary non-event record**, compared verbatim and in position, never grouped, never
+       counted toward the `3 + N + E` / `1 + N` / `2` event budgets, and never normalized away;
+     - **not** pin their number: it is `C + S + M` over the fixture's configured mappings, sibling,
+       and materialized entries, and it changes with the fixture rather than with the change under
+       test;
+     - **refuse to byte-pin or ordered-compare** any capture from a fixture with two or more
+       configured workspaces mapping to one metadata root — three consecutive measured runs of one
+       such fixture produced three different probe orders; frozen fixtures MUST have at most one
+       such mapping;
+     - allow exactly one removal: when this carve-out removes a `RequireWorkspace` event, the
+       contiguous inference block emitted **inside that same call** — the run of foreign-operand
+       records directly after that event's `common@cwd` record — is removed with it. This applies to
+       the **push** path only (`1 + N` → 2 events, hence `1 + N` → 1 blocks when captured from cells
+       4–6). On the **sync** path the single `RequireWorkspace` survives, so its block MUST appear
+       on the post-change side verbatim, in the same order, in the same position; a missing or
+       reordered inference record there is a **failure**.
+
+     Both bullets above are also why the anchored grouping never fails on this tree: a foreign
+     record can only sit **after** a completed `RequireWorkspace` pair (nothing shells out between
+     `LoadConfig` and `MainRepoRoot`, and `TwsRoot`'s failure triggers no inference), so it can only
+     make rule 1's forward test decline — which is the correct reading — and never separates a show
+     record from its anchor.
+
+     The comparison is split in two, and the two halves are asserted
+     independently because a whole-log match is impossible here and MUST NOT be attempted:
+
+     1. **Resolution events.**
+        - *External sync captures:* the pre-change log carries `3 + N + E` events for a clean plain
+          run over `N` materialized entries with `E` stale-edge child probes — one
+          `RequireWorkspace` event, one `TwsRoot` event for the guard, and one `TwsRoot` event for
+          every `internal.FeaturePath` / `internal.WorktreePath` derivation. The post-change log
+          MUST carry **exactly two**, in order: the same `RequireWorkspace` event, then the same
+          `TwsRoot` event, both at their pre-change positions. Every other event MUST be **absent**
+          and **no** event or record may be added.
+        - *External push captures:* the pre-change log carries `1 + N` `RequireWorkspace` events —
+          one from `internal.RequireFeaturePath` and one per entry from
+          `internal.RequireWorktreePath`, emitted before the archived `os.Stat` skip, so archived
+          entries count. The post-change log MUST carry **exactly two**: one `RequireWorkspace`
+          event followed by one `TwsRoot` event. The comparator asserts the exact counts
+          (`1 + N` → `2`) and MUST tolerate, and explicitly cover, the two boundary cases: `N = 1`,
+          where the **count is unchanged** and only the second event's shape (hence its records'
+          order) differs, and `N = 0`, where the post-change log carries **one event more** than the
+          pre-change log. `1 + N` → `1` is **not** the rule and MUST NOT be encoded in the
+          comparator.
+     2. **Mutating push records and the rest of the log.** The ordered
+        `git push --force-with-lease origin <ref>` records — one per non-archived entry, in stack
+        order — MUST match position for position, with the same cwd and the same exit-status class,
+        and every remaining record (`rebase`, `fetch`, `for-each-ref`, `rev-parse` of other shapes —
+        **including every ungrouped bare `rev-parse --show-toplevel` standalone `LoadConfig`
+        probe** and every foreign-operand `--git-common-dir` `inferExternalRepoRoot` probe that
+        survives per the attachment rule above — `merge-base`, `status`, and so
+        on) MUST match verbatim in argv, relative order, and exit-status class, subject only to
+        carve-outs (a) and (b). On a coupled-name
+        fixture the push operand matches too; on the decoupled C2 fixture the operand is the
+        declared rule-7 change and that capture is declared-change evidence (AC 33), not a frozen
+        comparison.
+
+     **No Git call added by the resolver.** The comparator MUST additionally assert that the
+     post-change log contains no record attributable to `resolveExternalSyncLayout`: the two
+     surviving events sit at their pre-change positions (before the guard's successor records), and
+     no `rev-parse`, `config`, or any other record appears between the layout resolution point and
+     the first pre-change record that follows it.
+
+     Checkout push captures are **outside** this carve-out: `pushFeatureCheckout` keeps today's
+     per-entry `RequireWorktreePath`, the checkout arm never calls `internal.TwsRoot()` (so no
+     `TwsRoot` event may appear in a checkout capture), and the path gains the one added
+     `RequireWorkspace` event of §3.11, which AC 59
+     asserts directly.
 
    **No other argv difference is permitted in a compared capture.** Any added, removed, reordered,
    or otherwise
    altered record — in particular any difference in a `fetch`, `push`, `rebase`, or `checkout`
    record, or in any `rev-parse`, `merge-base`, `for-each-ref`, `status`, `symbolic-ref`, or
-   `check-ref-format` record outside the two carve-outs above — fails the comparison and is a
+   `check-ref-format` record outside the three carve-outs above (`c4ContainmentProbe`,
+   `c4DefaultBranchProbe`, `c4ResolutionCompression`) — fails the comparison and is a
    regression, not a declared change. This mode applies to **frozen** captures only: the declared
-   cells 5, 6, and 9 (C4) and the declared C2/C3 defect fixtures are not compared against a
+   divergent-layout fixtures and cell 9 (C4) and the declared C2/C3 defect fixtures are not compared against a
    frozen baseline at all, and their argv logs are the declared-change evidence of AC 46, AC 33, and
    AC 34 respectively.
 
@@ -3856,16 +5347,29 @@ both seed from maps, and no golden pins Git's own prose (comparison mode 1b).
 
 | Fixture | Shape | Used by |
 |---|---|---|
-| `linear` | `root → parent → child` in one repo, bare remote | AC 1, 12–26 |
+| `linear` | `root → parent → child` in one repo, bare remote | AC 1, 12–26, 59 |
 | `subtree` | `root → a → {b, c}`, `c → d` | AC 20, 22, 25 |
 | `decoupled` | `name: work`, `branch: user/work` — **declared C2 fixture**: no-flag `--push` captures live in `declared_c2/`, never in the frozen goldens (§4.1 rule 7) | AC 33, 49 |
 | `duplicate-branch` | two names, one `Branch` — **declared C3 fixture**: no-flag checkout captures and its `stack.yaml` live in `declared_c3/`, never in the frozen goldens (§4.1 rule 7) | AC 19, 34, 49 |
 | `multi-repo` | two repos, cross-repo base edge, secondary repo whose default branch differs from the primary's | AC 17, 48, 53 |
-| `archived` | one `Archived: true` entry, one non-materialized entry, one prunable worktree | AC 47 |
+| `archived` | one `Archived: true` entry, one non-materialized entry, one prunable worktree | AC 47, 59 |
 | `literal-root` | roots spelled `master`, `origin/master`, and a tag | AC 18 |
-| `checkout` | `.tws/features/**` single checkout, plus a linked worktree for cwd cell 9 and a bare remote that can be removed | AC 6, 13, 46, 55–57 |
-| `cwd-agree` | external feature directory where `ws.ResolveFeaturePath` and `internal.FeaturePath` resolve to the **same** path (cells 5–6, frozen half) | AC 46 |
-| `cwd-disagree` | external feature directory where the two derivations **disagree** (constructed through `TWS_ROOT`/workspace detection), so the pre-change run falls into `syncFallback` (cells 5–6, declared half) | AC 46 |
+| `space-conflict` | a registered space owning the top-level directory `learning` beside a feature workspace, in both an agreeing and a `TWS_ROOT`-divergent external layout — the shape `TestSpaceGuard_ExternalCommandMatrix` already builds with `withUnifiedWorkspaceEnv` + `writeSpaces` | AC 59 |
+| `checkout` | single checkout in the **new** layout `.tws/features/<feature>/**` only — never the legacy `.tws/<feature>` shape, because `internal.checkoutStateDir` walks two directories up and would put the transaction outside `.tws/` for a legacy path while `ws.CheckoutStateDir()` (which status uses) would not — plus a linked worktree for cwd cell 9 and a bare remote that can be removed | AC 6, 13, 46, 55–57, 59 |
+| `cwd-agree` | external workspace where `ws.ResolveFeaturePath` and `internal.FeaturePath` resolve to the **same** path; exercised from cwd cells 1–6 (frozen half) | AC 46 |
+| `cwd-disagree-b` | external workspace where the two derivations **disagree** (constructed through `TWS_ROOT`/workspace detection) and the readable `stack.yaml` lives under `internal.FeaturePath` — the shipped split-brain shape: rebase under one root, state/push under the other (declared half, direction B) | AC 46, AC 58 |
+| `cwd-disagree-a` | same divergence, with the readable `stack.yaml` under `ws.ResolveFeaturePath` only, so the pre-change run falls into `syncFallback`'s `origin/main` rebase (declared half, direction A) | AC 46, AC 58 |
+
+**Fixture rule for the `inferExternalRepoRoot` block (normative, §3.11).** Every external fixture
+whose captures are compared as an ordered log MUST configure **at most one** workspace in
+`cfg.Workspaces` whose root canonicalizes to that fixture's metadata root: the configured-candidate
+loop iterates a Go map, and a fixture with two or more such mappings emits its
+`git -C <path> rev-parse --git-common-dir` probes in **unspecified** order (measured: three
+consecutive runs, three orders). Such a fixture may only be used for assertions that do not depend
+on record order, and may never be a frozen golden. No fixture may make the process cwd itself a
+candidate (a configured repo key, the `.tws`-stripped sibling, or a `worktrees/<name>` path that is
+not a repository), because that would produce a cwd-operand `--git-common-dir` record with no show
+partner and the grouping would — correctly — fail the capture.
 
 ### 17.3 Crash and failure injection
 
@@ -3875,6 +5379,15 @@ both seed from maps, and no golden pins Git's own prose (comparison mode 1b).
 - Conflicts are produced by real conflicting commits, never by simulated Git failures.
 - Unreachable remotes are produced by `os.RemoveAll` on a bare remote directory, so any network
   attempt fails observably.
+- **Transient `.tws-state-*` files.** `atomicWriteFile` creates its temporary with
+  `os.CreateTemp(filepath.Dir(path), ".tws-state-*")`, so any snapshot taken **during** a write —
+  in particular from a `SyncStepHook` or `StepHook` — can observe a `.tws-state-XXXXXX` file inside
+  the feature directory or the state directory. Every file-set snapshot helper used by this feature
+  ignores that pattern explicitly, exactly as `snapshotTreeIgnoringGitLocks`
+  (`internal/cli/space_test.go`) ignores Git lock files; note that `isTransientGitLockPath` does
+  **not** cover it (it requires a `.git` path segment) and that `.sync-run.lock` — which lives in
+  the feature directory, not under `.git` — is likewise **not** filtered by it and MUST appear in
+  snapshots.
 - Checkout's pre-transaction fetch window (§10.3 step 11) has no stage and therefore no `StepHook`.
   AC 57 injects its crash through the §17.1 wrapper instead: for the `fetch` verb only, and only in
   that test, the wrapper — still in **record-only** mode, so every stream stays inherited and
@@ -3890,8 +5403,17 @@ both seed from maps, and no golden pins Git's own prose (comparison mode 1b).
 var syncProcessAlive = isProcessAlive   // internal/sync_run_state.go
 ```
 
-Tests set it to a controlled predicate, and write guard files with the test's own PID for `live` and
-with a PID asserted dead for `stale`. Every state in §8.6 is constructed on disk directly. **No**
+This package-level variable is the **default** for `SyncClassifyOpts.Alive` when a caller passes
+nil — which `internal/cli` does. It is the seam the **sync-path** tests substitute.
+
+**`tws status` tests MUST NOT touch it.** `buildFeatureSync` passes
+`Alive: proberAsChecker{b.opts.Proc}.Alive` (§11.1), so every status test injects liveness through
+the existing `AgentStatusOpts.Proc` `ProcessProber` — the same seam the checkout half of the status
+builder already uses — and no status test mutates a process global. That keeps the status suite
+parallel-safe and consistent with every shipped status test.
+
+Tests write guard files with the test's own PID for `live` and with a PID asserted dead for
+`stale`. Every state in §8.6 is constructed on disk directly. **No**
 test sleeps, races a real sync process, hard-kills a process, or assumes anything about how long a
 setup or teardown window lasts.
 
@@ -3939,6 +5461,20 @@ goldens are identical on macOS and Ubuntu and across Git versions.
    the new run guard share (already on the roadmap).
 9. **Legacy `.sync-state.yaml` symlink refusal** — extending I18 to the ordinary no-flag legacy
    path, as a declared breaking change to frozen behaviour (§12 item 7).
+10. **Align the remaining workspace-rooted readers with the sync layout resolver** — `tws status`
+    and the other commands that resolve a feature directory through `ws.ResolveFeaturePath` alone
+    still disagree with a `TWS_ROOT`-divergent sync run (§3.11). Closing that gap means either
+    teaching `ResolveCurrentWorkspaceE` to honour `TWS_ROOT` or lifting the resolver into
+    `internal`; both change every command's metadata root and belong to a workspace-resolution
+    feature, not to this one. The same follow-up owns any future harmonisation of the two guard
+    roots `tws sync` and `tws push` use today (`internal.TwsRoot()` vs `ws.MetadataRoot`, §3.11),
+    which this feature preserves verbatim.
+11. **Make `tws push` work in checkout mode** — today it fails on the first stack entry with
+    `linked worktrees are not supported in checkout mode` (`internal.RequireWorktreePath`), and
+    this feature deliberately preserves that failure rather than routing checkout push through the
+    external layout resolver (§3.11, AC 59). Giving checkout mode a real push path means pushing
+    from the single checkout with per-branch refspecs, which is a behaviour addition with its own
+    guard, dry-run, and output contract.
 
 ---
 
@@ -3959,7 +5495,7 @@ goldens are identical on macOS and Ubuntu and across Git versions.
 | M11 | Completion gate | **Both become scope-relative.** External filters the existing predicate to the selected propagation edges; checkout's per-plan loop is already correct once the plan is scoped (§7.5) |
 | M12 | State durability | External state becomes **atomic** while keeping mode `0644` and an identical key set, key order, and values (C1; only the inherently per-run `started_at` varies, §4.1); **unreadable** legacy state now fails closed on all three verbs, including `--abort` (declared C1 change, §8.6 row 10); the new payload and guard are `0600`; checkout is unchanged apart from the additive plan `name` key (C5) (§8.1) |
 | M13 | Concurrency | External gains an `O_EXCL` run guard **for new-mode runs only**; no-flag concurrency is untouched and its residual race is documented (§8.3, §8.8) |
-| M14 | Push ref | **Fixed here** for both `tws push` and `tws sync --push`: `entry.GitBranch()` (D13, C2, §7.6). Declared as an observable no-flag change on decoupled names (§4.1 rule 7, §4.5 C2, AC 33); inert for coupled names |
+| M14 | Push ref | **Fixed here** for both `tws push` and `tws sync --push` **in external mode**: `entry.GitBranch()` (D13, C2, §7.6). Declared as an observable no-flag change on decoupled names (§4.1 rule 7, §4.5 C2, AC 33); inert for coupled names. Checkout-mode `tws push` is out of scope and keeps its `ErrWorktreeUnsupported` refusal verbatim (§3.11, AC 59, follow-up §18 item 11) |
 | M15 | Guards | **Kept divergent.** Checkout keeps dirty/detached/in-progress/lock rejections; external gains none, for no-flag **and** scoped runs (§10.8, §12.8) |
 
 ## 20. Decision register — D1–D20 resolved
@@ -3974,11 +5510,11 @@ goldens are identical on macOS and Ubuntu and across Git versions.
 | D6 | Collapse onto `StackEdge` | **Keep and scope now**; collapse is a follow-up (§7.5, §18.2) |
 | D7 | State versioning | **Added** (`SyncRunStateVersion = 2`, `CheckoutTransactionVersion = 2`) for **new→future protection only**; absent = legacy; unknown = refused. Never described as downgrade protection (§8.1) |
 | D8 | External `--push` on `--continue` | **Persisted in the payload**; rejected only when explicitly supplied and conflicting. Plain `--continue` accepts persisted `push: true`. Checkout's symmetric rule applies only to v2 transactions. A `--continue` carrying any **trigger** flag is allowed to compare at all only against v2 state; against absent or legacy state it is refused by I20 rather than silently ignored or broad-resumed (§3.5, §10.5 rules 0–5) |
-| D9 | cwd resolution | **Fixed here**, because the invocation matrix fails today — D9's own escape clause. Three bounded code fixes (C4) covering **two** declared matrix cells — external 5/6 and checkout 9; there is no outside-any-repository checkout cell, because `RequireWorkspace` resolves external mode or errors before checkout dispatch, leaving the probe's error arm defensive only. The `resolveBase` fix is repo-scoped **only** where a repo context exists, and is otherwise exactly today's `DefaultBranch()`. The two **read-only** Git argv changes the fixes imply — the checkout containment probe and the repo-scoped `DefaultBranchIn` event, the latter compared as one closed logical event validated by resolved value, with no claim of equal command count or exit-status class — are declared as a closed carve-out in §4.1 rule 6 and asserted by AC 2 (§10.9, §13.4, §12.11, AC 46, AC 53) |
+| D9 | cwd and layout resolution | **Fixed here**, because the invocation matrix fails today — D9's own escape clause. Three bounded code fixes (C4): one **external sync layout resolver** (§3.11) replacing both of today's feature-path derivations — candidate `internal.FeaturePath` wins when it holds a readable `stack.yaml`, preserving the documented `TWS_ROOT` priority and today's execution root — plus the checkout `RepoDir` containment refusal and the repo-scoped `resolveBase`. Two declared input classes: **every** divergent external layout (both directions, any external cwd 1–6) and checkout cell 9; there is no outside-any-repository checkout cell, because `RequireWorkspace` resolves external mode or errors before checkout dispatch, leaving the probe's error arm defensive only. The `resolveBase` fix is repo-scoped **only** where a repo context exists, and is otherwise exactly today's `DefaultBranch()`. The three **read-only** Git argv changes the fixes imply — the checkout containment probe, the repo-scoped `DefaultBranchIn` event (compared as one closed logical event validated by resolved value, with no claim of equal command count or exit-status class), and the compression of the external paths' workspace-root resolution events — external sync from `3 + N + E` to two, external push from `1 + N` to two, each event being an ordered **pair** of `rev-parse --show-toplevel` / `-C <cwd> rev-parse --git-common-dir` records, so the reduction is `1 + N` → 2 and never `1 + N` → 1 — are declared as a closed carve-out in §4.1 rule 6 and asserted by AC 2 and AC 59 (§3.11, §10.9, §13.4, §12.11, AC 46, AC 53) |
 | D10 | `syncFallback` | **Refused when any trigger flag is present** (I9); the no-flag path, including `origin/main` and `internal.Must`, is untouched (§4.2.7) |
 | D11 | Cross-repo selection in checkout | **Refused** (I12), by `ResolveSyncSelection` under `SyncSelectionOpts{Mode: ModeCheckout}`; never refused in external mode (§5.2, §5.5) |
 | D12 | Archived selection semantics | **Unified for selection validation** on the metadata flag; execution paths unchanged per mode (§5.5, §5.7) |
-| D13 | `pushFeature` ref defect | **Fixed here** (C2), for `tws push` and `tws sync --push` alike (§7.6), and declared as an observable no-flag change on decoupled `Name`/`Branch` entries — push argv, per-entry line, exit code, and remote ref (§4.1 rule 7, §4.5 C2, AC 33) |
+| D13 | `pushFeature` ref defect | **Fixed here** (C2), for external `tws push` and external `tws sync --push` alike (§7.6), and declared as an observable no-flag change on decoupled `Name`/`Branch` entries — push argv, per-entry line, exit code, and remote ref (§4.1 rule 7, §4.5 C2, AC 33). Checkout mode keeps today's path and today's refusal (§3.11, AC 59) |
 | D14 | `no-fetch` and `--push` | **Allowed.** `no-fetch` constrains input refs; `--push` is explicit output. Help and docs say "no automatic network input", never "offline" (§6.2) |
 | D15 | Atomic external state | **Now**, keeping mode `0644` and an identical key set, key order, and values, with the coupled decode-error hardening declared per verb for unreadable state, `--abort` included (C1, §4.1 rule 4, §4.5, §8.6 row 10) |
 | D16 | External `--test` | **Left inert**; changing it is a follow-up (§7.7, §18.4) |
@@ -3986,7 +5522,7 @@ goldens are identical on macOS and Ubuntu and across Git versions.
 | D17b | Downgrade safety mechanism | **Fail-closed**: versioned payload in a file old binaries never open, plus a legacy-path sentinel whose `failed_branch` is a per-run `crypto/rand` marker ending in `.lock`, collision-refused before any side effect; symmetric ordering with the sentinel outermost; `saveIncompleteSync` unusable for new-mode runs; guarantee scoped to "while the sentinel exists" (§8.2, §8.5, §9.1) |
 | D18 | New-binary handling of the state matrix | **Refuse everywhere except** `{real legacy, absent}` (frozen legacy) and `{sentinel, valid}` (authoritative, resumable with a stale/absent guard). Full 12-cell table with guard precedence — live-guard precedence covers rows **2**, 4 and 5 — in §8.6 |
 | D18b | New-binary UX for its own marker | **Intercept** before the legacy error; discriminate from guard liveness + payload state; reclaim with `forceAcquireCheckoutLock` semantics; ordinary legacy state keeps today's message byte for byte (§8.7) |
-| D19 | `tws status` behaviour | **Marker-aware, read-only projection with live-guard precedence**, driven by the shared `internal.ClassifyExternalSyncState` called **before** the `os.Stat(statePath)` early return so every cell is observable; real names only; existing issue codes; no new keys, no schema bump; status never mutates; deterministic PID seam in tests (§11.1) |
+| D19 | `tws status` behaviour | **Marker-aware, read-only projection with live-guard precedence**, driven by the shared `internal.ClassifyExternalSyncState` called **before** the `os.Stat(statePath)` early return so every cell is observable; real names only; existing issue codes; no new keys, no schema bump; status never mutates; liveness injected through `AgentStatusOpts.Proc` → `SyncClassifyOpts.Alive`, never a process global (§11.1 rules 3/8, §17.4) |
 | D20 | `tws import` filtering | **Extend `isRuntimeState`** with the two new exact names; export unchanged and already allow-listed (§11.2) |
 
 ## 21. Declared refinements of analysis recommendations
@@ -4010,17 +5546,23 @@ is a decision, taken deliberately, with its reason.
    abort half — the only verb an operator reaches for after the panic — would leave the defect
    half-fixed and the documentation false, so it is declared (§4.1 rule 4, §4.5 C1, §8.6 row 10,
    §8.7, AC 40) rather than described as frozen.
-3. **D9 "test here, fix in a follow-up."** The escape clause fires: matrix cells 5 and 9 fail
-   today, so the three bounded code fixes of C4 are in scope. No broader cwd refactor is undertaken.
-   The consequence is declared rather than hidden: those two cells (plus cell 6, the nested form of
-   cell 5) change observably **including on the no-flag path**, and are declared behavioural
-   exception 2 (§4.1 rule 5, §4.5 C4, §14, AC 46). No "checkout from outside any repository" cell is
+3. **D9 "test here, fix in a follow-up."** The escape clause fires: a `TWS_ROOT`-divergent external
+   layout runs split-brain today and checkout cell 9 mutates the wrong tree, so the three bounded
+   code fixes of C4 are in scope. No broader cwd or workspace refactor is undertaken —
+   `internal/workspace.go` and `internal/resolve.go` are untouched and no workspace-resolution
+   parent becomes a hard dependency (§13.5, §15). The consequence is declared rather than hidden:
+   divergent external layouts (both directions, any external cwd 1–6) and checkout cell 9 change
+   observably **including on the no-flag path**, and are declared behavioural
+   exception 2 (§4.1 rule 5, §4.5 C4, §14, AC 46, AC 58). No "checkout from outside any repository"
+   cell is
    claimed or fixed: `RequireWorkspace` resolves external mode or errors before checkout dispatch,
    so the containment probe's error arm is defensive depth, not shipped behaviour change (§10.9).
    Every other cwd cell stays frozen in stdout,
-   stderr, exit code, files, and modes — and stays frozen in Git commands too, apart from the two
-   **read-only** argv carve-outs the fixes necessarily imply (the checkout containment probe and the
-   repo-scoped default-branch resolution). Those are declared as a closed carve-out, §4.1 rule 6,
+   stderr, exit code, files, and modes — and stays frozen in Git commands too, apart from the three
+   **read-only** argv carve-outs the fixes necessarily imply (the checkout containment probe, the
+   repo-scoped default-branch resolution, and the compression of the external paths'
+   workspace-root resolution **events** — external sync `3 + N + E` → 2, external push `1 + N` → 2 —
+   which removes whole ordered record pairs and, outside an empty-stack push, adds nothing). Those are declared as a closed carve-out, §4.1 rule 6,
    and asserted exactly by AC 2 / §17.1 comparison mode 3 rather than left as an unstated exception
    to a frozen-Git-command claim the implementation could not honour. The default-branch carve-out
    is deliberately **not** claimed to be argv-shaped: the two sides ask *different repositories* the
@@ -4036,12 +5578,17 @@ is a decision, taken deliberately, with its reason.
    where the defect occurs. The declared cost is that a no-flag transaction is semantically
    equivalent but **not** byte-identical to previous releases in this one additive field (§4.1
    rule 3, §4.5).
-6. **I7 and I18 are scoped, not global.** Refusing `--continue --abort` and refusing a symlinked
+6. **I7 and I18 are scoped, not global, and I18 is decided from recorded facts.** Refusing
+   `--continue --abort` and refusing a symlinked
    legacy state file are both improvements, but applying them unconditionally would change frozen
    no-flag behaviour. I7 fires only for new-mode invocations and v2 state; I18 covers the new-mode
-   state paths only, and an ordinary legacy `.sync-state.yaml` symlink with no payload is still
-   followed. Both limitations are documented (§3.5, §12 item 7, §18 item 9) rather than silently
-   fixed or silently dropped.
+   state paths only, and an ordinary legacy `.sync-state.yaml` symlink is still followed **exactly
+   when** the run carries no trigger flag, no payload sits beside it, and its content is not a
+   sentinel (§12 item 7). The policy split is equally deliberate: the classifier only ever
+   **records** `LegacySymlink`/`PayloadSymlink`/`GuardSymlink` from one `Lstat` per path and never
+   follows or trusts a symlinked payload or guard; package `cli` owns the refusal and MUST NOT
+   `Lstat` again (§3.6 steps 7–8, §11.1). Both limitations are documented (§3.5, §12 item 7, §18
+   item 9) rather than silently fixed or silently dropped.
 7. **One shared, read-only state classifier.** `internal.ClassifyExternalSyncState` is introduced so
    `tws sync` and `tws status` cannot drift, and `buildFeatureSync` calls it **before** the
    `os.Stat(statePath)` early return that would otherwise hide every payload-only, guard-only, and
@@ -4093,13 +5640,49 @@ is a decision, taken deliberately, with its reason.
 12. **C2 and C3 are declared no-flag changes, not silent ones.** The analysis treats the
     `pushFeature` ref fix and the `finalizeTransaction` attribution fix as invisible on the frozen
     path. Refined to: each is observable on exactly one declared fixture shape — a decoupled
-    `Name`/`Branch` for C2 (push argv, per-entry line, exit code, remote ref), and a duplicate
+    `Name`/`Branch` for C2 in **external** mode (push argv, per-entry line, exit code, remote
+    ref) — checkout `tws push` never reaching a push at all — and a duplicate
     `GitBranch()` for C3 (`stack.yaml` attribution) — and both are reachable from ordinary flag-free
     invocations. Calling them frozen would make §4.1 false in exactly the cases the fixes exist for,
     so they are declared as behavioural exception 3 (§4.1 rule 7, §4.5 C2/C3, §14, AC 33, AC 34),
     their pre-change behaviour is stored as declared-change evidence rather than as a golden, and
     the frozen claims of §4.1 are scoped to inputs outside those fixtures. Coupled-name and
     unique-branch fixtures — every AC 1 golden — stay frozen, argv and `stack.yaml` included.
+
+13. **One external sync layout resolver, with candidate B first.** The analysis (and an earlier
+    draft of §13.4 rule 2) treats the cwd fix as "make `syncFeature` use the already-resolved
+    path". Refined to: the run resolves **one** layout (§3.11) and every external helper takes it
+    explicitly, because today's code is split-brain — it rebases under `internal.FeaturePath` and
+    reads/writes state and pushes under `ws.ResolveFeaturePath` — so fixing one half alone would
+    turn the shipped `TWS_ROOT`-divergent no-flag run into a silent no-op (`syncFallback` over an
+    empty `worktrees/`, exit 0, `Sync complete.`). The winner is `internal.FeaturePath` whenever it
+    holds a readable `stack.yaml`, **including when both do**, which preserves the documented
+    `TWS_ROOT` priority and today's execution root; the workspace-rooted candidate wins only when it
+    alone holds the stack; and with no stack anywhere the frozen `syncFallback` root is unchanged.
+    Making `ResolveCurrentWorkspaceE` honour `TWS_ROOT` was considered and **rejected**: it would
+    re-root every command and add a workspace-resolution hard parent (§15). Both disagreement
+    directions are declared, in every external cwd cell, because the divergence is layout-driven,
+    not cwd-driven (§4.1 rule 5, AC 46, AC 58). Refined once more so the resolver cannot hide a
+    resolution: candidate B is built as `filepath.Join(twsRoot, feature)` from the **caller's**
+    single `internal.TwsRoot()` call, not by calling `internal.FeaturePath` inside the resolver, so
+    `resolveExternalSyncLayout` is provably Git-free and each external command performs exactly two
+    workspace-root resolution events (§3.11, §4.1 rule 6c, AC 51).
+14. **Ordering is `TopoSort`'s, and `TopoSort` is not deterministic among siblings.** The analysis
+    and earlier drafts describe the `[-]` block, the plan, and the persisted selection as
+    "topological order", which reads as a stable sequence. Refined to: `TopoSort` seeds its Kahn
+    queue from a Go map, so independent anchors and siblings come back in a run-varying order.
+    Rather than add a second sort or a tie-break — which would change ordering behaviour for a
+    cosmetic guarantee, and `internal/stack.go` is explicitly untouched (§13.5) — this
+    specification guarantees **parent-before-child only**, compares every multi-anchor block as an
+    unordered set, and permits byte-pinned goldens only for single-anchor fixtures (§3.7, §5.2,
+    AC 18, AC 24).
+15. **Liveness is an injected option, not only a package global.** §17.4's
+    `var syncProcessAlive` remains the default for the sync path, but `SyncClassifyOpts` gains
+    `Alive func(pid int) bool` and `buildFeatureSync` passes the prober it has already been given
+    (`proberAsChecker{b.opts.Proc}.Alive`, `internal/checkout_health.go`). Without this, every
+    status test asserting a live or stale guard would have to mutate a process-global variable,
+    which is not parallel-safe and contradicts how every shipped status test injects liveness
+    (§11.1 rules 3 and 8, §17.4, AC 43).
 
 No other recommendation is altered. Where the analysis marks something "unresolved", §20 settles it;
 where it marks something "resolved", this document restates it in binding form.
