@@ -5,8 +5,8 @@
   "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-08-14T08:02:34Z",
-  "updated_at": "2026-08-17T23:47:54Z",
-  "last_command": "record",
+  "updated_at": "2026-08-17T23:50:57Z",
+  "last_command": "verify",
   "notes": "landed at 2026-08-17T23:47:55Z",
   "apply": {
     "completed_at": "2026-08-17T23:47:01Z",
@@ -115,5 +115,29 @@
       "slug": "skill-distribution",
       "kind": "soft"
     }
-  ]
+  ],
+  "verify": {
+    "verified_at": "2026-08-17T23:50:56Z",
+    "passed": false,
+    "recipe_hash_at_verify": "3a59ea8344f3c47d6d18a1ef80e54f146c18a1679d5cfb9af43534432f41344c",
+    "patch_hash_at_verify": "1a5fc776c599ea2bca58d47cfa405f90045afabd7367b3c2379484eefd9f8999",
+    "parent_snapshot": {
+      "agent-work-status-dashboard": "applied",
+      "amend-aware-rebase": "applied",
+      "archive-worktree": "applied",
+      "branch-name-decoupling": "applied",
+      "checkout-stack-safety": "applied",
+      "checkout-workspace-lifecycle": "applied",
+      "cobra-migration": "applied",
+      "fix-checkout-feature-path-routing": "applied",
+      "fix-default-base-branch": "applied",
+      "fix-external-feature-dir-resolution": "applied",
+      "fix-sync-continue-descendants": "applied",
+      "keep-track-of-stacked-diffs-and-dependencies": "applied",
+      "multi-repo-workspaces": "applied",
+      "push-branches": "applied",
+      "quiet-fetch-output": "applied",
+      "sync-continue": "applied"
+    }
+  }
 }
