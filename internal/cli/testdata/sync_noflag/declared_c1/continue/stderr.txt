@@ -1,0 +1,2 @@
+exit: 1
+nothing to continue — no sync in progress

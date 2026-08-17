@@ -1,0 +1,7 @@
+branches:
+  - name: root
+    base: main
+  - name: parent
+    base: root
+  - name: child
+    base: parent

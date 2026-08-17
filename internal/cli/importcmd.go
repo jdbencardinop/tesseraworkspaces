@@ -171,11 +171,16 @@ func safeArchiveTarget(root, name string) (string, error) {
 }
 
 // isRuntimeState returns true for explicit runtime-state paths.
+//
+// The list is exact-name only: no prefix matching, so no user file is filtered
+// accidentally. Any future runtime-state file MUST be added here explicitly.
 func isRuntimeState(path string) bool {
 	normalized := filepath.ToSlash(path)
 	return strings.HasPrefix(normalized, ".tws/state/") ||
 		normalized == ".tws/state" ||
-		normalized == ".sync-state.yaml"
+		normalized == ".sync-state.yaml" ||
+		normalized == ".sync-state.v2.yaml" ||
+		normalized == ".sync-run.lock"
 }
 
 func recreateWorkspaceE(export internal.WorkspaceExport, injectSrc string, ws internal.Workspace) error {

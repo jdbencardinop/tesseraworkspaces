@@ -65,7 +65,38 @@ tws sync auth                       # quiet fetch + rebase in dependency order
 tws sync auth --push                # sync + push all branches
 tws sync auth --continue            # resume after conflict resolution
 tws sync auth --abort               # discard sync state
+
+tws sync auth --only api            # sync exactly one stack entry
+tws sync auth --from api            # sync one entry and its descendant subtree
+tws sync auth --local-only          # replay local parent tips; never advance an anchor
+tws sync auth --no-fetch            # plan from local refs; no automatic network input
+tws sync auth --fetch --full        # name both axes explicitly (external defaults)
 ```
+
+**Sync modes.** Three independent axes select what a run does. `--fetch` /
+`--no-fetch` chooses the *input-ref* policy (external defaults to `fetch`,
+checkout to `no-fetch`); `--full` / `--local-only` chooses propagation; `--only`
+/ `--from` chooses scope. Running `tws sync <feature>` with no flags is
+unchanged. Notes:
+
+- `--no-fetch` means "no automatic network **input**" — not "offline". An
+  explicit `--push` is still allowed and is the only way a `no-fetch` run
+  reaches the network.
+- `--local-only` never advances a root from its remote base; selecting only an
+  anchor is a no-op success, not an error.
+- A scoped run drops `git rebase --update-refs`, so it cannot move a branch
+  outside the selection.
+- Incompatible combinations are refused before any fetch, lock, or rebase.
+- A scoped (`--only`/`--from`) `--push` is strict: the run stops at the first
+  rejected push, keeps its recovery state, and `tws sync <feature> --continue`
+  retries only the entries that were never pushed. A `scope=all` run, `tws push`,
+  and the no-flag `tws sync --push` push the whole feature and keep today's
+  lenient per-entry failure line.
+- Running two syncs against one feature concurrently is still unsafe: a scoped
+  run is guarded, but a no-flag run takes no lock. This is not fixed.
+- Downgrading in the middle of a scoped run: an older tws fails closed on plain
+  sync and on `--continue`. Downgrading *after* an explicit old `--abort` is
+  unsupported.
 
 - **Amend-aware** — uses `--onto` to avoid ghost conflicts from amended commits
 - **Archived branch support** — syncs archived branches via `--update-refs` or optimistic rebase
@@ -124,7 +155,7 @@ tws init --register --register-alias myapp   # also enroll in the global registr
 | `tws add <feature> [-n branch] [--open] [--tmux]` | Create feature workspace |
 | `tws new <feature> <branch> [--base] [--repo] [--force]` | Create worktree branch |
 | `tws open [feature] [branch] [--tmux] [--no-agent]` | Open worktree (interactive picker if no args) |
-| `tws sync <feature> [--push] [--continue] [--abort] [--verbose]` | Rebase in dependency order |
+| `tws sync <feature> [--push] [--continue] [--abort] [--verbose] [--fetch\|--no-fetch] [--full\|--local-only] [--only <entry>\|--from <entry>]` | Rebase in dependency order, optionally scoped |
 | `tws push <feature> [--dry-run]` | Push all branches |
 | `tws stack <feature>` | Show dependency tree |
 | `tws stack status <feature> [--json]` | Stack ancestry, materialization, and upstream status |

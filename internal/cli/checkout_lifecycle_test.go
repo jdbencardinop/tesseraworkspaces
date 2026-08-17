@@ -623,6 +623,8 @@ func TestExport_RuntimeStateExcluded(t *testing.T) {
 		{".tws/state/something", true},
 		{"state/something", false},
 		{".sync-state.yaml", true},
+		{".sync-state.v2.yaml", true},
+		{".sync-run.lock", true},
 		{"inject/CLAUDE.local.md", false},
 		{"stack.yaml", false},
 		{"inject/foo.txt", false},

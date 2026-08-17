@@ -1,0 +1,46 @@
+000	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+001	zero	<REPO>	-C <REPO> rev-parse --git-common-dir	
+002	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+003	zero	<REPO>	-C <REPO> rev-parse --git-common-dir	
+004	zero	<REPO>	rev-parse --git-path rebase-merge	
+005	zero	<REPO>	rev-parse --git-path rebase-apply	
+006	zero	<REPO>	rev-parse --git-path MERGE_HEAD	
+007	zero	<REPO>	rev-parse --git-path CHERRY_PICK_HEAD	
+008	zero	<REPO>	rev-parse --git-path REVERT_HEAD	
+009	zero	<REPO>	status --porcelain	
+010	zero	<REPO>	symbolic-ref --short HEAD	main
+011	zero	<REPO>	rev-parse HEAD	
+012	zero	<REPO>	rev-parse main	
+013	zero	<REPO>	rev-parse root	
+014	zero	<REPO>	rev-parse root	
+015	zero	<REPO>	rev-parse parent	
+016	zero	<REPO>	rev-parse parent	
+017	zero	<REPO>	rev-parse child	
+018	zero	<REPO>	rev-parse parent	
+019	zero	<REPO>	rev-parse child	
+020	zero	<REPO>	rev-parse main	
+021	zero	<REPO>	checkout root	
+022	zero	<REPO>	rebase --no-fork-point main	
+023	zero	<REPO>	rev-parse HEAD	
+024	zero	<REPO>	merge-base --is-ancestor addb1298ef23fa15db6c24943b0cf79664e105b6 root	
+025	zero	<REPO>	rev-parse root	
+026	zero	<REPO>	checkout parent	
+027	zero	<REPO>	rebase --no-fork-point root	
+028	zero	<REPO>	rev-parse HEAD	
+029	zero	<REPO>	merge-base --is-ancestor 4e4c722af802afbb6d985c2771fc1dd7b766ddc4 parent	
+030	zero	<REPO>	rev-parse parent	
+031	zero	<REPO>	checkout child	
+032	zero	<REPO>	rebase --no-fork-point parent	
+033	zero	<REPO>	rev-parse HEAD	
+034	zero	<REPO>	merge-base --is-ancestor 3e520ce4fa98e593026b32488717c84184dbd865 child	
+035	zero	<REPO>	rev-parse parent	
+036	zero	<REPO>	checkout child	
+037	zero	<REPO>	rebase --no-fork-point parent	
+038	zero	<REPO>	rev-parse HEAD	
+039	zero	<REPO>	merge-base --is-ancestor 3e520ce4fa98e593026b32488717c84184dbd865 child	
+040	zero	<REPO>	merge-base --is-ancestor addb1298ef23fa15db6c24943b0cf79664e105b6 root	
+041	zero	<REPO>	merge-base --is-ancestor 4e4c722af802afbb6d985c2771fc1dd7b766ddc4 parent	
+042	zero	<REPO>	merge-base --is-ancestor 3e520ce4fa98e593026b32488717c84184dbd865 child	
+043	zero	<REPO>	merge-base --is-ancestor 3e520ce4fa98e593026b32488717c84184dbd865 child	
+044	zero	<REPO>	checkout main	
+045	zero	<REPO>	rev-parse HEAD	

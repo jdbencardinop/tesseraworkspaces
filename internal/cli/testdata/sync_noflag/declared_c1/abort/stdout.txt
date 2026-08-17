@@ -1,0 +1,2 @@
+exit: 0
+Nothing to abort — no sync in progress.

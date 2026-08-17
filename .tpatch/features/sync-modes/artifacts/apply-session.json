@@ -1,0 +1,8 @@
+{
+  "slug": "sync-modes",
+  "completed_at": "2026-08-17T23:47:01Z",
+  "base_commit": "cf8a1d9fe3419430099c06cb3ecdf9bf21e34b65",
+  "has_patch": true,
+  "validation_status": "passed",
+  "validation_notes": "tpatch test — command: GIT_CONFIG_COUNT=0 go test ./... -count=1"
+}

@@ -1,0 +1,6 @@
+exit: 0
+Fetching default repo... done
+Syncing worktree: <WORKTREES>/child
+Syncing worktree: <WORKTREES>/parent
+Syncing worktree: <WORKTREES>/root
+Sync complete.

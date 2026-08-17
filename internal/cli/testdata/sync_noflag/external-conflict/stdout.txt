@@ -1,0 +1,8 @@
+exit: 1
+Fetching default repo... done
+  [+] root (active)
+  [+] parent (active)
+  [!] child (active)
+    Resolve conflicts in: <WORKTREES>/child
+    Then run: git add . && git rebase --continue
+    Resume with: tws sync auth --continue

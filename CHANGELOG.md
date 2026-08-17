@@ -2,6 +2,106 @@
 
 ## Unreleased
 
+- **Sync modes** — `tws sync <feature>` gains three independent axes:
+  `--fetch`/`--no-fetch` (input-ref policy), `--full`/`--local-only`
+  (propagation policy), and `--only <entry>`/`--from <entry>` (selection scope,
+  by logical `stack.yaml` name). External defaults to `fetch × full × all`,
+  checkout to `no-fetch × full × all`, so **`tws sync <feature>` with no mode
+  flag is unchanged in both workspace modes**
+- **`no-fetch` is an input-ref policy, not an offline mode** — it forbids every
+  automatic remote *input* (`fetch`, `ls-remote`, implicit remote probes) and
+  reads only local and remote-tracking refs. An explicit `--push` is still
+  allowed and is the only way such a run reaches the network. A base ref that
+  does not resolve locally is a pre-flight refusal, never a mid-run failure
+- **`local-only` never advances an anchor** — it replays selected same-repo
+  parent tips into their children using the parent's current local tip, and
+  never consults `origin/<default>` for an anchor. A selection that holds no
+  propagation edge prints `Nothing to propagate.` and exits 0
+- **A scoped run cannot move an unselected branch** — `git rebase
+  --update-refs` is dropped whenever the scope is not `all`, and only selected
+  entries' `last_base_sha` values are rewritten. Stale edges outside the scope
+  are reported informationally and do not change the exit code. The amend-aware
+  `--onto <base> <last_base_sha>` replay is preserved in every cell
+- **Recovery carries the frozen decision** — external new-mode runs persist a
+  v2 payload (`.sync-state.v2.yaml`, `0600`) plus a per-run guard
+  (`.sync-run.lock`, `0600`), and write a legacy-shaped sentinel to
+  `.sync-state.yaml` whose `failed_branch` is a nonce marker. `--continue`
+  resumes the persisted scope, policy, push, and validation decision;
+  incompatible flags on `--continue` are refused naming both values. Checkout
+  transactions gain `state_version: 2` and the same policy keys, all additive
+  and `omitempty`, so a legacy transaction round-trips unchanged
+- **Incompatible combinations are refused before any side effect** — mutually
+  exclusive axes, explicit `false` on a presence-only axis flag, an empty
+  selector, `--continue` with `--abort`, `--abort` with a mode flag, an unknown
+  or archived selector, a cross-repo entry in checkout mode, two selected
+  entries sharing one Git branch, a marker collision, a live run guard, and a
+  runtime-state path that is a symlink
+- **A mode-flagged scoped `--push` is strict and resumable** — a `--only`/`--from`
+  run pushes only the entries it selected and rebased, in selection order,
+  records each accepted push in the payload before attempting the next one, and
+  stops at the first rejected push with a non-zero exit while keeping its
+  payload, sentinel, and guard on disk. `tws sync <feature> --continue` then
+  retries exactly the entries that were never pushed: it re-rebases nothing and
+  re-pushes nothing. A `scope=all` run (including `--local-only --push`), `tws
+  push`, and the no-flag `tws sync --push` keep today's lenient whole-feature
+  push, with its per-entry `[x] <name> (push failed)` line and exit 0
+- **Checkout `--fetch` is a pre-plan refresh, not a transaction step** — it
+  refreshes remote-tracking refs once, before the plan is built and before the
+  transaction exists, and is deliberately not resumable: an interrupted refresh
+  leaves no transaction behind, so the same command simply re-runs
+- **Sync mode flags on `--continue` are refused without v2 state** — `tws sync
+  <feature> --continue` carrying any of `--fetch`, `--no-fetch`, `--full`,
+  `--local-only`, `--only`, or `--from` against legacy or absent state fails with
+  `cannot use sync mode flags on --continue without v2 state; continue without
+  them or abort and start a new run`, identically in both workspace modes. A
+  trigger-free `--continue` is unchanged
+- **`tws status` is marker-aware and still read-only** — it projects the real
+  failed entry, the real pending and completed lists, and guard liveness through
+  the prober it was already given. The marker never appears in output or JSON.
+  No new issue code, no new key, and no `schema_version` bump
+- **`tws import` filters the two new runtime-state files** —
+  `.sync-state.v2.yaml` and `.sync-run.lock` join `.sync-state.yaml` and
+  `.tws/state/`, so an imported archive can never plant foreign live state.
+  Export was already allow-listed and is unchanged
+- **Fix: external `tws push` and `tws sync --push` push the Git branch**
+  (`entry.GitBranch()`), not the logical `stack.yaml` name. *Behaviour note:* for
+  a decoupled entry (`name: work`, `branch: user/work`) the pushed ref becomes
+  `user/work` — the branch that actually exists — so the push argv, the per-entry
+  line, and the updated remote ref all change on the no-flag path too. The exit
+  code does not: the legacy push loop already prints `[x] <name> (push failed)`
+  and exits 0. Checkout-mode `tws push` is unchanged and still exits non-zero with
+  `linked worktrees are not supported in checkout mode`
+- **Fix: one external sync layout** — external sync and push derive the feature
+  directory, the worktrees root, the state paths, and the push context from a
+  single resolver instead of mixing `TWS_ROOT` and the workspace metadata root.
+  *Behaviour note:* under a divergent `TWS_ROOT` the shipped code ran
+  split-brain (rebasing under one root while reading and writing sync state
+  under the other); it now uses one root for the whole run. Where the two roots
+  agree — every healthy layout — nothing changes
+- **Fix: checkout sync operates on the repository checkout** — `RepoDir` is the
+  resolved workspace repository root, and a cwd that belongs to a different
+  working tree (a linked worktree of the same repository) is refused with a
+  clean error instead of silently rebasing the wrong tree
+- **Fix: corrupt external sync state fails closed** — a `.sync-state.yaml` that
+  cannot be decoded now reports the file and exits 1 for plain sync,
+  `--continue`, and `--abort`. Previously plain sync dereferenced a nil state,
+  and `--abort` reported "nothing to abort" at exit 0 while leaving a possibly
+  live rebase in place. Nothing is deleted
+- **Fix: checkout `last_base_sha` is attributed by logical name** — plan entries
+  now carry `name:`, so a stack with two entries sharing one Git branch is
+  attributed correctly. This applies on the no-flag path too, and is the only
+  no-flag checkout transaction difference
+- **Known limitations, stated honestly** — two concurrent syncs against one
+  feature are still unsafe: a scoped run is guarded, but a no-flag run takes no
+  lock and does not consult the guard. Downgrading to an older tws *after* an
+  explicit old `--abort` is unsupported, and an older tws must not be used to
+  resume a scoped checkout sync — abort it instead. The legacy
+  `.sync-state.yaml` path is still **followed** when it is a symlink on a
+  no-flag run, because that read is frozen: only runs carrying a mode flag, and
+  runs handling v2 state, refuse a symlinked runtime-state path. The two new
+  files (`.sync-state.v2.yaml`, `.sync-run.lock`) are never followed through a
+  symlink by any invocation
+
 - **Stack status** — `tws stack status <feature> [--json]` reports, for every
   entry in `stack.yaml` order, its logical name and Git branch, local head,
   configured base and parent head, the recorded `last_base_sha` verdict,

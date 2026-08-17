@@ -32,11 +32,20 @@ Shipped foundations:
   and ahead/behind counts over a versioned document. It consumes the shipped
   `StackEdge` projection rather than computing ancestry of its own, is
   read-only and local-only with no implicit fetch, and reports a fact it cannot
-  establish locally as `null` rather than as clean, attached, or zero.
+  establish locally as `null` rather than as clean, attached, or zero;
+- sync modes: `tws sync <feature>` carries three independent axes — input-ref
+  policy (`--fetch`/`--no-fetch`), propagation policy (`--full`/`--local-only`),
+  and selection scope (`--only <entry>`/`--from <entry>`, by logical
+  `stack.yaml` name) — with mode-dependent defaults that leave the no-flag run
+  unchanged in both workspace modes. A scoped run drops `--update-refs` so it
+  cannot move an unselected branch; the frozen decision, scope, push, and
+  validation command are persisted and carried through `--continue` and
+  `--abort`; incompatible combinations are refused before any fetch, lock, or
+  rebase; and external sync and push share one resolved layout.
 
-Current target: **sync modes** — the first remaining P1 item below: local-only
-propagation, no-fetch operation, surgical branch/descendant sync, and explicit
-root targets.
+Current target: **rebase plan guard** — the first remaining P1 item below: show
+the old base, new base, and replay count, and stop surprising broad rebases
+before they start.
 
 Follow-ups explicitly owned by later features rather than by `tws status`:
 
@@ -71,7 +80,7 @@ For decoupled names, `StackEntry.Name` identifies the tws worktree while `StackE
 
 ## P1 stack safety and observability backlog
 
-- **Sync modes**: support local-only propagation, no-fetch operation, surgical branch/descendant sync, and explicit root targets.
+- **Sync modes (shipped)**: local-only propagation, no-fetch operation, surgical branch/descendant sync, and explicit root targets, with the frozen decision persisted and carried through `--continue`/`--abort`.
 - **Rebase plan guard**: show the old base, new base, and replay count; stop surprising broad rebases before they start.
 - **Safe reparent/restack**: update Git and metadata atomically for a single-parent stack.
 

@@ -1,0 +1,32 @@
+000	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+001	zero	<REPO>	-C <REPO> rev-parse --git-common-dir	
+002	zero	<REPO>	-C <REPO> rev-parse --git-common-dir	
+003	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+004	zero	<REPO>	-C <REPO> rev-parse --git-common-dir	
+005	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+006	zero	<WORKTREES>/root	fetch	
+007	zero	<REPO>	-C <REPO> rev-parse --git-common-dir	
+008	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+009	zero	<REPO>	-C <WORKTREES>/root rev-parse --abbrev-ref HEAD	
+010	zero	<REPO>	rev-parse --abbrev-ref origin/HEAD	origin/main
+011	zero	<REPO>	-C <WORKTREES>/root rev-parse origin/main	
+012	zero	<WORKTREES>/root	rebase --update-refs origin/main	
+013	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+014	zero	<REPO>	-C <REPO> rev-parse --git-common-dir	
+015	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+016	zero	<REPO>	-C <WORKTREES>/parent rev-parse --abbrev-ref HEAD	
+017	zero	<REPO>	-C <WORKTREES>/parent rev-parse root	
+018	zero	<WORKTREES>/parent	rebase --update-refs root	
+019	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+020	zero	<REPO>	-C <REPO> rev-parse --git-common-dir	
+021	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+022	zero	<REPO>	-C <WORKTREES>/child rev-parse --abbrev-ref HEAD	
+023	zero	<REPO>	-C <WORKTREES>/child rev-parse parent	
+024	zero	<WORKTREES>/child	rebase --update-refs parent	
+025	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+026	zero	<REPO>	-C <REPO> rev-parse --git-common-dir	
+027	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+028	zero	<WORKTREES>/parent	merge-base --is-ancestor root parent	
+029	zero	<REPO>	-C <REPO> rev-parse --git-common-dir	
+030	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+031	zero	<WORKTREES>/child	merge-base --is-ancestor parent child	

@@ -31,7 +31,7 @@ func TestSyncContinueResumesDescendants(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := handleSyncContinue("feature", featurePath, false); err != nil {
+	if err := handleSyncContinue("feature", externalSyncLayout{FeaturePath: featurePath, WorktreesRoot: filepath.Join(featurePath, "worktrees")}, false); err != nil {
 		t.Fatalf("handleSyncContinue: %v", err)
 	}
 	if internal.HasSyncState(featurePath) {
@@ -61,7 +61,7 @@ func TestSyncContinueRetainsStateOnLaterFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := handleSyncContinue("feature", featurePath, false); err == nil {
+	if err := handleSyncContinue("feature", externalSyncLayout{FeaturePath: featurePath, WorktreesRoot: filepath.Join(featurePath, "worktrees")}, false); err == nil {
 		t.Fatal("expected child conflict")
 	}
 	persisted, err := internal.LoadSyncState(featurePath)

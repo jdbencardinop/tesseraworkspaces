@@ -1,0 +1,4 @@
+000	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+001	zero	<REPO>	-C <REPO> rev-parse --git-common-dir	
+002	zero	<REPO>	-C <REPO> rev-parse --git-common-dir	
+003	zero	<REPO>	rev-parse --show-toplevel	<REPO>

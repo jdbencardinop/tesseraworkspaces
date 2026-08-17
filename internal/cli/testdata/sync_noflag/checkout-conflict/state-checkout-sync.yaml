@@ -1,0 +1,33 @@
+feature: auth
+started_at: "2026-08-17T09:18:37Z"
+lock_pid: 67771
+lock_created: "2026-08-17T09:18:37Z"
+push: false
+original_branch: main
+original_head: addb1298ef23fa15db6c24943b0cf79664e105b6
+plan:
+    - branch: root
+      base: main
+      last_base_sha: ""
+      new_base_sha: addb1298ef23fa15db6c24943b0cf79664e105b6
+      pre_sha: 4e4c722af802afbb6d985c2771fc1dd7b766ddc4
+      post_sha: 4e4c722af802afbb6d985c2771fc1dd7b766ddc4
+    - branch: parent
+      base: root
+      last_base_sha: ""
+      new_base_sha: 4e4c722af802afbb6d985c2771fc1dd7b766ddc4
+      pre_sha: 120747caa07cd51cfa543001e52c7e25dd152997
+      post_sha: 120747caa07cd51cfa543001e52c7e25dd152997
+    - branch: child
+      base: parent
+      last_base_sha: ""
+      new_base_sha: 120747caa07cd51cfa543001e52c7e25dd152997
+      pre_sha: d23929f51c60ae5d35a00ea28407cda79cebf32d
+      post_sha: ""
+current_index: 2
+stage: conflict
+failure_kind: conflict
+failure_msg: "rebase conflict: Rebasing (1/2)\rRebasing (2/2)\rAuto-merging shared.txt\nCONFLICT (add/add): Merge conflict in shared.txt\nerror: could not apply d23929f... child shared\nhint: Resolve all conflicts manually, mark them as resolved with\nhint: \"git add/rm <conflicted_files>\", then run \"git rebase --continue\".\nhint: You can instead skip this commit: run \"git rebase --skip\".\nhint: To abort and get back to the state before \"git rebase\", run \"git rebase --abort\".\nhint: Disable this message with \"git config set advice.mergeConflict false\"\nCould not apply d23929f... # child shared\n"
+completed_indices:
+    - 0
+    - 1

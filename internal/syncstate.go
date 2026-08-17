@@ -37,7 +37,7 @@ func SaveSyncState(featurePath string, s *SyncState) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(SyncStatePath(featurePath), data, 0644)
+	return atomicWriteFile(SyncStatePath(featurePath), data, 0644)
 }
 
 func DeleteSyncState(featurePath string) {

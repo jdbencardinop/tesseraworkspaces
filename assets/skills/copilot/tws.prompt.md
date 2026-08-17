@@ -15,7 +15,7 @@ You are working in a project that uses `tws` for feature-scoped workspaces with 
 - `tws add <feature> [-n <branch>] [--open]` — Create feature (quick start with -n)
 - `tws new <feature> <branch> [--base <parent>] [--force]` — Create worktree branch
 - `tws open [feature] [branch] [--tmux] [--no-agent]` — Open worktree and run agent
-- `tws sync <feature> [--push] [--verbose] [--continue] [--abort]` — Rebase worktrees in dependency order
+- `tws sync <feature> [--push] [--verbose] [--continue] [--abort] [--fetch|--no-fetch] [--full|--local-only] [--only <entry>|--from <entry>]` — Rebase worktrees in dependency order, optionally scoped
 - `tws push <feature> [--dry-run]` — Push all branches with --force-with-lease
 - `tws export <feature> [--full] [--to-repo]` — Export workspace metadata
 - `tws import <file> [--from-repo <feature>]` — Import workspace
@@ -77,7 +77,9 @@ git switch auth-models
 
 Checkout mode stores local metadata under `.tws/features/`, adds `.tws/` to the repo's local Git exclude, creates logical Git branches without linked worktrees, and preserves branches on archive/delete by default. It is single-repository; `--repo` is rejected.
 
-`tws sync <feature>` is transactional in checkout mode: it requires a clean attached checkout, switches/rebases logical branches sequentially, persists recovery state under `.tws/state/`, and restores the original branch. Use `--continue` after resolving conflicts and `--abort` to recover.
+`tws sync <feature>` is transactional in checkout mode: it requires a clean attached checkout, switches/rebases logical branches sequentially, persists recovery state under `.tws/state/`, and restores the original branch. Use `--continue` after resolving conflicts and `--abort` to recover. It must be run from the repository checkout: a cwd inside a linked worktree of the same repository is refused.
+
+Sync modes apply to both workspace modes and are three independent axes: `--fetch`/`--no-fetch` (input refs; external defaults to `fetch`, checkout to `no-fetch`), `--full`/`--local-only` (propagation), and `--only <entry>`/`--from <entry>` (scope, by logical `stack.yaml` name). Running `tws sync <feature>` with no mode flag is unchanged. `--no-fetch` forbids automatic network *input* only — an explicit `--push` is still allowed. A scoped run drops `git rebase --update-refs`, so unselected branches never move. With a scoped flag (`--only`/`--from`), `--push` is strict: the run stops at the first rejected push, keeps its recovery state, and `--continue` retries only the entries that were never pushed; a `scope=all` run pushes the whole feature leniently, as `tws push` does. Do not resume a scoped checkout sync with an older tws; abort it instead.
 
 `tws open <feature> <branch>` runs the configured agent in the repository root and restores the original branch after the agent/follow-up shell exits. `--tmux` keeps the branch owned by a recorded tmux session until `tws close`. Only one checkout session may own the repository; `--all` and automatic hooks remain unsupported.
 

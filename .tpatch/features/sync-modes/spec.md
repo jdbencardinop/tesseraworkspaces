@@ -910,7 +910,7 @@ and `internal.RequireWorktreePath` → a `RequireWorkspace` event each, because 
   `internal.GuardFeatureName(ws.MetadataRoot, feature)` in the position `RequireFeaturePath` gives it
   today, then the mode branch; only **after** the branch has confirmed external mode does that arm
   call `twsRoot := internal.TwsRoot()` **exactly once** (event 2) and pass it to
-  `resolveExternalSyncLayout(ws, twsRoot, feature)`. `pushFeature` and `pushSelected` resolve
+  `resolveExternalSyncLayout(ws, twsRoot, feature)`. `pushFeature` and `pushScoped` resolve
   nothing. Post-change total: **two events**.
 - **Checkout `tws push`** — the checkout arm **never** calls `internal.TwsRoot()`, never builds a
   candidate B, and never sees an `externalSyncLayout`; `pushFeatureCheckout` keeps today's body
@@ -956,7 +956,7 @@ checkout push path is deliberately kept byte-for-byte as it ships today (below).
 | `pushFeature` | `(feature, dryRun)`, resolves candidate A internally (`internal.RequireFeaturePath` once, plus `internal.RequireWorktreePath` **per stack entry**, each re-entering `RequireWorkspace` — `1 + N` `RequireWorkspace` events per invocation) and serves **both** modes | `(feature string, layout externalSyncLayout, dryRun bool)`, **external mode only** — no derivation and **zero** resolution events of its own; `pushCmd`'s external arm resolves the same layout through `resolveExternalSyncLayout(ws, twsRoot, feature)` before calling it, so `tws push` and `tws sync --push` can never disagree and the whole external push path performs exactly **two** resolution events, one `RequireWorkspace` + one `TwsRoot` (`1 + N` → 2, §4.1 rule 6c) |
 | `pushFeatureCheckout` | — (it is the checkout half of today's `pushFeature`) | **new** unexported function carrying today's body **verbatim**, `internal.RequireFeaturePath` + `internal.RequireWorktreePath` and the `entry.Name` argv token included, so a checkout-mode `tws push` keeps exactly today's `ErrWorktreeUnsupported` failure and exit code |
 | `pushCmd` | `RunE` = `internal.RequireTool("git")` then `pushFeature(args[0], dryRun)` | `RequireTool`, `RequireWorkspace`, `internal.GuardFeatureName(ws.MetadataRoot, feature)`, then a **mode branch** — checkout → `pushFeatureCheckout` (no `internal.TwsRoot()` call at all), external → one `internal.TwsRoot()` call then `resolveExternalSyncLayout(ws, twsRoot, feature)` + `pushFeature` (binding order below) |
-| `pushSelected` | new (§7.6) | external mode only; takes the same `layout` |
+| `pushScoped` | new (§7.6) | external mode only; takes the same `layout` |
 | `syncCmd.RunE` (external arm) | `internal.GuardFeatureName(internal.TwsRoot(), feature)` then `ws.ResolveFeaturePath`, with `syncFeature`/`WorktreePath` re-deriving the root repeatedly afterwards | one `twsRoot := internal.TwsRoot()` call feeding **both** `internal.GuardFeatureName(twsRoot, feature)` (same value, same position) and `resolveExternalSyncLayout(ws, twsRoot, feature)`; **no** later `FeaturePath`/`WorktreePath` derivation anywhere in the run |
 | `syncEntryCompletion` | — | resolves `RequireWorkspace` + `internal.TwsRoot()` once each and passes the root to `resolveExternalSyncLayout` (§3.8), so `--only <TAB>` offers exactly the entries the run can sync |
 
@@ -1011,7 +1011,7 @@ archived/dry-run/push branches with the same `entry.Name` argv token. In checkou
 `internal.ErrWorktreeUnsupported` (`internal/resolve.go:323-334`) on the **first** stack entry and
 the command exits nonzero with `linked worktrees are not supported in checkout mode`, exactly as it
 does today; an empty stack still returns nil, exactly as today. The external layout resolver, the
-C2 `GitBranch()` ref fix, and `pushSelected` are **not** applied there, because that loop can never
+C2 `GitBranch()` ref fix, and `pushScoped` are **not** applied there, because that loop can never
 reach a `git push` invocation — so no output line, exit code, ref, or **mutating** argv of a
 checkout push changes (its only argv difference is the one added read-only workspace-resolution
 **event** — both of its records — declared immediately below), and **no silent success is introduced**: `tws push` in checkout mode keeps failing loudly
@@ -1046,7 +1046,7 @@ directions**:
   resolution itself errors. After this feature the external push path performs **exactly two**
   events per command invocation: one `RequireWorkspace` event in `pushCmd.RunE` (for `tws push`) or
   in `syncCmd`'s `RunE` (for `tws sync --push`), and one `TwsRoot` event in the external arm that
-  produces the layout. `pushFeature` / `pushSelected` resolve **nothing** of their own, because they
+  produces the layout. `pushFeature` / `pushScoped` resolve **nothing** of their own, because they
   receive the already-resolved `layout`. So the transformation is **`1 + N` → 2**: for `N ≥ 2`
   events are removed, for `N = 1` the **count is unchanged** and only the second event's shape (and
   therefore its two records' order) differs, and no event is ever added. When such a run is made
@@ -1766,9 +1766,10 @@ observable no-flag change**, each bounded to a declared input class — the same
 2. **C2 — decoupled-name push**, on exactly one input class: an **external-mode** `--push` run (and
    external `tws push`) over an
    entry whose `Name` and `Branch` are **decoupled**. Declared behavioural exception 3 (§4.1
-   rule 7), asserted by AC 33. The `push` **argv**, the per-entry **stdout** line, the **exit code**
-   where that push was the only failure, and the **remote ref** updated all move from broken to
-   correct. **Coupled-name fixtures remain fully frozen**, argv included, and **checkout mode is
+   rule 7), asserted by AC 33. The `push` **argv**, the per-entry **stdout** line, and the
+   **remote ref** updated all move from broken to correct. The **exit code does not change**: the
+   legacy push loop (`pushEntries`) prints `  [x] NAME (push failed)` and returns `nil`, so a
+   pre-change push failure is success-shaped (exit 0) and the post-change success is exit 0 too. **Coupled-name fixtures remain fully frozen**, argv included, and **checkout mode is
    not touched at all** — its `tws push` still fails on `ErrWorktreeUnsupported` (§3.11, AC 59).
 3. **C3 + C5 — duplicate-`GitBranch()` metadata attribution, and the additive plan name.** On
    exactly one input class — a checkout run over a stack containing two entries that share one
@@ -1802,7 +1803,7 @@ persisted bytes.
 | # | Change | Why it is not a compatibility break | AC |
 |---|---|---|---|
 | C1 | `SaveSyncState` becomes atomic (temp + `Sync` + rename) and every reader of `.sync-state.yaml` gains an explicit decode-error branch, **keeping mode `0644` and an identical key set, key order, and values** (D15). **Declared behaviour change on unreadable legacy state (external cell 10, §8.6 row 10), on all three verbs**: plain stops panicking, `--continue` stops failing opaquely, and `--abort` **fails closed with exit 1 instead of silently treating corrupt state as absent** | A truncated `.sync-state.yaml` today makes the plain path dereference a nil `*SyncState` and panic (`internal/cli/sync.go:56-58`); `--continue` reports `nothing to continue — no sync in progress` although the file exists (`internal/cli/sync.go:102-105`); and `--abort` prints `Nothing to abort — no sync in progress.` with exit 0 while leaving the file and any real mid-rebase worktree untouched (`internal/cli/sync.go:85-89`). All three are the *same* defect — an ignored decode error — and they are **directly coupled** to this change: adding the decode-error branch is what removes the panic, and an abort that keeps calling corrupt state "no sync in progress" would keep the operator's only recovery verb lying about the file the hardening exists to protect. Silently deleting a file whose contents are unknown is refused by §8.6's fail-closed rule, so the honest outcome is a clean exit-1 error naming the file and deleting nothing. Atomicity itself changes only the crash window; the resulting file stays mode-identical and content-identical up to the per-run `started_at` timestamp, which is dynamic in the pre-change tree too (§4.1 rule 2) | AC 40 |
-| C2 | `pushFeature` pushes `entry.GitBranch()` instead of `entry.Name` (D13, M14), **in external mode only** — the preserved checkout helper `pushFeatureCheckout` keeps `entry.Name` and never reaches a push (§3.11). **Declared observable no-flag change on exactly one input class** (§4.1 rule 7): for an entry whose `Name` and `Branch` are **decoupled**, a no-flag external `tws sync <feature> --push` (and external `tws push <feature>`) changes the `push` **argv** (`git push --force-with-lease origin <gitbranch>`), the per-entry **stdout** line (`  [+] NAME (pushed)` where today prints `  [x] NAME (push failed)`), the **exit code** where that push was the run's only failure, and the **remote ref** updated (`refs/heads/user/work`; the stray `refs/heads/work` is no longer created) | For coupled names `GitBranch() == Name`, so the ordered mutating push argv, output, exit code, and refs are identical and every coupled fixture stays frozen — its only difference from the pre-change tree being the read-only workspace-root resolution **events** removed by §4.1 rule 6c (`1 + N` → 2 on the push path, so for `N = 1` even the count is unchanged). For decoupled names today's code pushes a ref that is not the branch: the push fails, or worse creates a ref nobody uses, while the real branch is never published — a defect, and the change is broken→correct. Selected push cannot share the helper otherwise. Because the observable difference is declared, the decoupled fixture is captured as **declared-change evidence**, not as a frozen golden (§4.1 rule 7) | AC 33 |
+| C2 | `pushFeature` pushes `entry.GitBranch()` instead of `entry.Name` (D13, M14), **in external mode only** — the preserved checkout helper `pushFeatureCheckout` keeps `entry.Name` and never reaches a push (§3.11). **Declared observable no-flag change on exactly one input class** (§4.1 rule 7): for an entry whose `Name` and `Branch` are **decoupled**, a no-flag external `tws sync <feature> --push` (and external `tws push <feature>`) changes the `push` **argv** (`git push --force-with-lease origin <gitbranch>`), the per-entry **stdout** line (`  [+] NAME (pushed)` where today prints `  [x] NAME (push failed)`), and the **remote ref** updated (`refs/heads/user/work`; the stray `refs/heads/work` is no longer created). The **exit code is unchanged and MUST NOT be asserted as changed**: the legacy push loop returns `nil` after printing its per-entry failure line, so today's broken push already exits 0 | For coupled names `GitBranch() == Name`, so the ordered mutating push argv, output, exit code, and refs are identical and every coupled fixture stays frozen — its only difference from the pre-change tree being the read-only workspace-root resolution **events** removed by §4.1 rule 6c (`1 + N` → 2 on the push path, so for `N = 1` even the count is unchanged). For decoupled names today's code pushes a ref that is not the branch: the push fails, or worse creates a ref nobody uses, while the real branch is never published — a defect, and the change is broken→correct. Selected push cannot share the helper otherwise. Because the observable difference is declared, the decoupled fixture is captured as **declared-change evidence**, not as a frozen golden (§4.1 rule 7) | AC 33 |
 | C3 | `finalizeTransaction` attributes `LastBaseSHA` by logical `Name` instead of first-match `GitBranch()` (M4). **Declared observable no-flag change on exactly one input class** (§4.1 rule 7): a no-flag checkout run over a stack with two entries sharing one `GitBranch()` updates the **correct** entry's `last_base_sha`, so that fixture's `stack.yaml` deliberately differs from the pre-change tree. Git argv, stdout, exit code, file set, and modes are unchanged even there | Identical for unique branches, so every unique-branch fixture stays frozen, `stack.yaml` included. With duplicate `GitBranch()` values today's `break`-on-first-match writes the wrong entry's `last_base_sha` — silent metadata corruption on the frozen path, and the change is broken→correct. Requires C5, because attribution by `Name` needs the plan to carry `Name`. The duplicate-branch fixture is captured as **declared-change evidence**, not as a frozen golden (§4.1 rule 7) | AC 34 |
 | C4 | cwd and layout resolution fixes: checkout `RepoDir`, the **single external sync layout resolver** of §3.11 replacing both of today's feature-path derivations on the **external** path (checkout-mode `tws push` keeps today's `RequireFeaturePath`/`RequireWorktreePath` refusal, AC 59), and `resolveBase`'s **repo-scoped** default branch (D9 escape clause, §3.11, §10.9, §13.4). **Declared observable no-flag change on exactly two input classes** (§4.1 rule 5): every external run whose two derivations disagree — any cwd cell 1–6, **both** directions — now resolves one root for the stack, the worktrees, the state files, the completion gate, and the push, so a divergent layout stops rebasing under one root while reading/writing state and pushing under the other, and stops falling into `syncFallback`'s hard-coded `origin/main` rebase when only the workspace-rooted directory holds the stack; checkout cell 9 (a linked worktree of the checkout repository) now refuses with I19 and exit 1 instead of mutating the wrong working tree. No checkout-from-outside-any-repository change is claimed: `RequireWorkspace` resolves external mode or errors before checkout dispatch, so the probe's `err != nil` arm is defensive only. **Declared read-only Git argv change on otherwise frozen no-flag runs** (§4.1 rule 6), in exactly three carve-outs and no others: (a) every checkout run adds one containment probe `git -C <cwd> rev-parse --show-toplevel` after workspace/feature-path resolution and immediately before the first `RunCheckoutSync` preflight Git call; (b) whenever a materialized/repo context is available, external default-base resolution replaces today's cwd-scoped `internal.DefaultBranch()` with `internal.DefaultBranchIn(repoCtx)` — compared as the **whole closed `DefaultBranchIn` logical event** (successful `rev-parse --abbrev-ref origin/HEAD`; or failed `rev-parse` then `symbolic-ref --short HEAD`; or both failing then the hard-coded `main` fallback), whose command **count and exit-status classes may differ** between the two sides because the pre-change call runs in the process cwd and the post-change call runs in the repository; (c) the external paths stop re-resolving the workspace root per derived path — the carve-out unit is the `workspaceRootResolutionEvent` of §3.11, an ordered **pair** of records (`rev-parse --show-toplevel` + `-C <cwd> rev-parse --git-common-dir` for a `RequireWorkspace` event; the same two reversed for a `TwsRoot` event, since `internal.TwsRoot` resolves `MainRepoRoot` first), grouped by anchoring **only** on `--git-common-dir` records whose `-C` operand is the record's own process cwd — the `inferExternalRepoRoot` probes `RequireWorkspace`'s fallback arm emits from cwd cells 4–6 are ordinary non-event records, never grouped and never compressed, except that a block emitted inside a `RequireWorkspace` call this carve-out removes goes with it (push path only, §3.11). Today an external `tws sync` emits `3 + N + E` events (one `RequireWorkspace`, one `TwsRoot` for the guard, then one `TwsRoot` for `syncFeature`'s `internal.FeaturePath`, for each per-entry `internal.WorktreePath` in both passes, and for each stale-edge child probe) and today's `pushFeature` emits `1 + N` `RequireWorkspace` events (one `internal.RequireFeaturePath` plus one `internal.RequireWorktreePath` per entry, archived entries included, each re-entering `RequireWorkspace`); after this feature **each** external path emits **exactly two** events — one `RequireWorkspace` event and one `TwsRoot` event, both at today's positions — so external sync loses `1 + N + E` events (this **does** reach the frozen AC 1 external captures) and external push goes `1 + N` → 2, which for `N = 1` leaves the count unchanged and for an empty stack adds one; the ordered mutating `push --force-with-lease origin <GitBranch>` argv, stdout, exit code, and refs are compared separately and are unchanged (checkout push is outside it: it never calls `internal.TwsRoot()` and gains one `RequireWorkspace` event instead, §3.11) | Each changes behaviour only where the current code is provably wrong: a divergent layout runs split-brain today and cell 9 of the §12.11 matrix mutates the wrong tree, which is D9's own escape clause. Agreeing layouts and supported cwds are untouched — the layout resolver returns the same path without probing anything, and cells 1–4 and 7–8 resolve to the same toplevel as today, so every frozen no-flag golden lives there. The three argv carve-outs are **read-only**: they write no object, ref, index, or file, and leave stdout, stderr, exit code, files, and modes untouched; asking Git where the cwd is, asking the right repository for its default branch, and asking either question only once, is precisely the fix. Carve-out (c) removes read-only **events** on both external paths and is asserted twice: on the frozen external sync captures by AC 2 (which is where external sync's `3 + N + E` → 2 reduction lands — no frozen golden invokes `--push` or `tws push`, so the push half is asserted by AC 59 and appears inside the AC 33 declared-change diff for the decoupled fixture). It never adds an event on a non-empty stack, and no record it touches is mutating. Carve-out (b) is validated by **resolved value**, not by argv shape: for a frozen fixture the pre-change and post-change events MUST resolve to the same fixture-pinned default branch and every command in the window MUST belong to that one closed event; fixtures declared to **disagree** on the resolved value are C4 declared-change evidence, reviewed rather than required to be equivalent. The `resolveBase` change is deliberately narrow: a repo context is used **only when one exists** (`entry.Repo`, else the entry's materialized worktree path); when no repo context is available the call is exactly today's `internal.DefaultBranch()` with byte-for-byte today's argv, so healthy no-flag single-repo runs keep their default-base semantics unchanged (§13.4) | AC 2, AC 46, AC 53, AC 58, AC 59 |
 | C5 | every **newly written** checkout plan entry records `name:` — in no-flag transactions too | This is the shared-path half of C3: without `name` on disk, `finalizeTransaction` cannot attribute by logical `Name`, and duplicate-`GitBranch()` metadata stays corrupt on exactly the frozen path where the defect bites. The key is additive and `omitempty`; every existing key keeps its value, type, and position; old binaries decode the transaction and silently drop the unknown key, and their `GitBranch()` first-match attribution keeps working. Declared consequence: a no-flag checkout transaction is **semantically equivalent but not byte-identical** to the pre-change tree in this one field | AC 6, AC 34, AC 54 |
@@ -2338,16 +2339,21 @@ shipped `StackEdge` evaluator is **not** collapsed into these two (D6, §18).
 
 ### 7.6 Selected push
 
-New helper in `internal/cli/push.go`:
+New helper in `internal/cli/push.go` (implemented as `pushScoped`, which additionally takes the
+run's selection and its v2 payload so the push half is resumable — the `names` list of the original
+sketch is the payload-filtered `completed` set):
 
 ```go
-func pushSelected(feature string, layout externalSyncLayout, stack internal.Stack, names []string) error
+func pushScoped(feature string, layout externalSyncLayout, stack internal.Stack, sel internal.SyncSelection, completed []string, payload *internal.SyncRunState) error
 ```
 
-- Pushes **only** the entries named in `names`, which the caller populates with the selected
-  entries that were **successfully** rebased in this run (`completed`), in the selection's order —
+- Pushes **only** the entries that were **successfully** rebased in this run (`completed`) and are
+  not already recorded in `payload.pushed`, in the selection's order —
   parent before child, sibling order unspecified (§3.7), so no test pins the sequence of two
   independent pushes.
+- Records every accepted push in the payload **before** the next push is attempted, and stops at the
+  first rejected push with a non-zero exit, so `--continue` retries exactly the entries that were
+  never pushed.
 - Uses `entry.GitBranch()` as the ref (never `entry.Name`).
 - Uses `git push --force-with-lease origin <gitbranch>` through `internal.RunDirClean` in the same
   repo context `pushFeature` computes (`entry.Repo` when set, else the worktree path derived from
@@ -2367,7 +2373,7 @@ workspace-root resolution events per command invocation — one `RequireWorkspac
 plus the one `TwsRoot` event its external arm makes to build the layout. The reduction is
 `1 + N` → 2 (unchanged in count for `N = 1`, one event **added** for an empty stack), and each event
 is an ordered **pair** of records, never a single `--git-common-dir` record — the read-only
-carve-out of §4.1 rule 6c, asserted by AC 59. Both `pushFeature` and `pushSelected` are **external-mode only**.
+carve-out of §4.1 rule 6c, asserted by AC 59. Both `pushFeature` and `pushScoped` are **external-mode only**.
 `pushCmd` (`tws push <feature>`) guards the feature name with
 `internal.GuardFeatureName(ws.MetadataRoot, feature)` and then branches on `ws.Mode`: in external
 mode it makes its one `internal.TwsRoot()` call and resolves the identical layout through
@@ -2384,13 +2390,18 @@ behaviour after the fix: for coupled names nothing observable changes — same
 mutating push argv, same output, same exit code, same refs, with only the read-only
 workspace-root resolution events of §4.1 rule 6c compressed to two — and for a
 decoupled entry (`name: work`, `branch: user/work`) the pushed ref becomes `user/work`, which is the
-branch that actually exists, so the push argv, the per-entry line, the exit code, and the updated
-remote ref all change on the **no-flag** path too. That is the declared C2 exception of §4.1 rule 7
+branch that actually exists, so the push argv, the per-entry line, and the updated
+remote ref all change on the **no-flag** path too — the exit code does not, because the legacy
+per-entry push failure is success-shaped (`pushEntries` returns `nil` after printing
+`  [x] NAME (push failed)`). That is the declared C2 exception of §4.1 rule 7
 (§4.5 C2, AC 33), not a frozen behaviour. The CHANGELOG entry MUST call this out as a fix with a
 behaviour note, scoped to external mode.
 
 New-mode runs with `scope=all` use `pushFeature` (whole stack) so the semantics of "`--push` pushes
-the feature" are unchanged when nothing was scoped; scoped runs use `pushSelected`.
+the feature" are unchanged when nothing was scoped: every materialized entry is considered —
+including an anchor a `--local-only` run deliberately did not rebase — and the legacy **lenient**
+per-entry behaviour (`  [x] NAME (push failed)` and exit 0) is preserved. Only `only` and `subtree`
+scopes use the strict, payload-aware, resumable `pushScoped`.
 
 ### 7.7 Validation
 
@@ -3674,7 +3685,7 @@ field, ordering, or mode, is the regression (AC 1).
 | `internal/cli/push.go` | `pushFeature` | `entry.GitBranch()` ref (C2); takes the resolved `externalSyncLayout` instead of calling `internal.RequireFeaturePath`/`internal.RequireWorktreePath` (§3.11), which drops today's `1 + N` `RequireWorkspace` events (one per stack entry via `RequireWorktreePath`) to **zero** inside the helper and to exactly **two** per command invocation overall (one `RequireWorkspace` event + one `TwsRoot` event, `1 + N` → 2) — the read-only carve-out of §4.1 rule 6c; **external mode only** |
 | | `pushCmd` | `internal.RequireTool("git")`, `internal.RequireWorkspace()`, `internal.GuardFeatureName(ws.MetadataRoot, feature)` — the sibling-space guard, before any layout work, preserving `TestSpaceGuard_ExternalCommandMatrix/push` exactly — then a mode branch: checkout → `pushFeatureCheckout` (no `internal.TwsRoot()` call on that arm), external → one `internal.TwsRoot()` call, then `resolveExternalSyncLayout(ws, twsRoot, feature)` + `pushFeature`, so `tws push` and `tws sync --push` share one root (§3.11, binding order there) |
 | | `pushFeatureCheckout` | new unexported helper holding today's `pushFeature` body **verbatim** (`internal.RequireFeaturePath`, `internal.RequireWorktreePath`, `entry.Name` argv), so checkout-mode `tws push` keeps its `ErrWorktreeUnsupported` failure and nonzero exit unchanged (§3.11, AC 59) |
-| | `pushSelected` | new (§7.6), external mode only |
+| | `pushScoped` | new (§7.6), external mode only |
 | `internal/cli/new.go` | `sameStackRepo` | delegates to `internal.SameStackRepo` |
 | `internal/agent_status.go` | `buildFeatureSync` | calls `internal.ClassifyExternalSyncState` (with `AlwaysReadGuard: true` and `Alive: proberAsChecker{b.opts.Proc}.Alive`) **before** the `os.Stat(statePath)` early return, then dispatches on the cell: marker-aware projection, guard liveness from the injected prober, degenerate-cell issues, cell 7 delegated to today's projection (§11.1). Its feature-path resolution is **unchanged** — status is not re-rooted by §3.11 |
 | `internal/cli/importcmd.go` | `isRuntimeState` | two additional exact names (§11.2) |
@@ -3716,7 +3727,7 @@ declared decision, not an incidental spelling drift.
    `syncFeature` stops calling `internal.FeaturePath(feature)` (`internal/cli/sync.go:173-174`) and
    `syncWithStackFiltered`, `staleStackEdgesFiltered`, `branchContainsConfiguredParent`,
    `handleSyncAbort`, `handleSyncContinue`, `saveIncompleteSync`, `markUpdatedAncestors`,
-   `syncFallback`, `runValidation`, the three runtime-state paths, `pushFeature`/`pushSelected`, and
+   `syncFallback`, `runValidation`, the three runtime-state paths, `pushFeature`/`pushScoped`, and
    `syncEntryCompletion` all take the resolved `featurePath` / worktrees root explicitly, so the run
    has exactly one root **and** exactly two workspace-root resolution events. `syncCmd.RunE` calls
    `twsRoot := internal.TwsRoot()` **exactly once**, at today's guard position, and uses that one
@@ -3843,6 +3854,7 @@ User-facing behaviour changes, so agent skills and documentation MUST be updated
 |---|---|
 | `README.md` | the `tws sync` example block (lines ~64-67) and the command table row (~127) gain the six flags; a short "sync modes" paragraph states the four fetch × propagation cells, the three scopes, that `no-fetch` means no automatic network **input** (not offline) and composes with `--push`, that concurrent syncs of one feature remain unsafe, and that the sync-mode flags can be repeated on `--continue` only for a run that was started with them |
 | `docs/cheatsheet.md` | the sync section (~148-150) gains `--only`, `--from`, `--local-only`, `--no-fetch`, `--fetch`, `--full` one-liners, including the note that checkout `--fetch` refreshes remote-tracking refs before planning and that an interrupted refresh simply re-runs, plus one line on where a checkout sync may be run from (the repository checkout or any subdirectory of it; a linked worktree of that repository is refused, C4, which is why every checkout sync runs one read-only `git rev-parse --show-toplevel` containment check just before its pre-flight checks), and one line stating that `tws push` is an **external-mode** command: in a checkout workspace it still refuses with `linked worktrees are not supported in checkout mode` (§3.11), and checkout branches are pushed with `tws sync --push`; external `tws push` is otherwise unchanged apart from the C2 ref fix and now inspecting the workspace twice per run (once to resolve the workspace, once to resolve the workspace root) rather than once per branch |
+| `assets/skills/claude/tesseraworkspaces/SKILL.md` | the `tws sync` signature, sync guidance, and checkout section gain the three mode axes, scoped-push recovery semantics, per-mode defaults, and the checkout linked-worktree cwd refusal |
 | `assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md` | the sync command list (~52-54) gains the scoped/local-only/no-fetch forms and one guidance line: prefer `--from <entry>` after resolving a conflict in a subtree rather than a full-stack sync |
 | `assets/skills/copilot/tws.prompt.md` | the `tws sync` signature line (~18) and the checkout paragraph (~80) gain the new flags and the scoped-recovery note |
 | `.github/skills/tessera-patch/SKILL.md`, `.claude/skills/tessera-patch/SKILL.md` | **unchanged** — tpatch skills are not tws documentation |
@@ -3904,7 +3916,7 @@ removed, or re-kinded.
 | `quiet-fetch-output` | owns the `Fetching …/done/failed` bytes and the fetch-failure tolerance the fetch axis extends (§6.4) |
 | `cobra-migration` | owns the `RunE`/flag surface and `cmd.Flags().Changed`, which the presence rules require (§3.2) |
 | `fix-sync-continue-descendants` | `staleStackEdges` and `branchContainsConfiguredParent` are both modified/scoped (§7.5) |
-| `push-branches` | `pushFeature`'s ref changes and `pushSelected` filters its entry set (§7.6) |
+| `push-branches` | `pushFeature`'s ref changes and `pushScoped` filters its entry set (§7.6) |
 | `fix-checkout-feature-path-routing` | `runCheckoutSync`'s feature-path routing sits under the C4 `RepoDir` change and the invocation matrix (§10.9) |
 | `fix-external-feature-dir-resolution` | `RequireWorkspace`'s external fallback is what makes cells 5–6 of the cwd matrix work; C4 replaces the two competing feature-path derivations with the single resolver of §3.11 (§13.4 rule 2) |
 | `agent-work-status-dashboard` | `buildFeatureSync`'s external projection semantics change (§11.1) |
@@ -4349,9 +4361,11 @@ cannot leak into a fixture or a permanent golden. All tests MUST pass on macOS a
     is asserted as a **declared-change diff** against
     `internal/cli/testdata/sync_noflag/declared_c2/`, not against a frozen golden: the pre-change
     capture shows `git push --force-with-lease origin work`, the `  [x] NAME (push failed)` line,
-    its exit code, and the absent `refs/heads/user/work`; the post-change run shows
-    `git push --force-with-lease origin user/work`, `  [+] NAME (pushed)`, its exit code, and the
-    updated remote ref. The same criterion asserts the fix is **inert for coupled names**: on the
+    and the absent `refs/heads/user/work`; the post-change run shows
+    `git push --force-with-lease origin user/work`, `  [+] NAME (pushed)`, and the
+    updated remote ref. The **exit code is 0 on both sides** and MUST NOT be asserted as a
+    difference: the legacy push loop prints its per-entry failure line and returns `nil`, so the
+    pre-change nonzero exit this criterion once claimed does not exist. The same criterion asserts the fix is **inert for coupled names**: on the
     `linear` fixture the ordered mutating push argv, output bytes, exit code, and remote refs are
     identical to the pre-change tree — the log's only difference being the whole workspace-root
     resolution **events** compressed by §4.1 rule 6c (`1 + N` → 2 on the push path; for `N = 1` the
@@ -4629,7 +4643,7 @@ cannot leak into a fixture or a permanent golden. All tests MUST pass on macOS a
     sole function in the file that mentions either symbol, to take no `externalSyncLayout`
     parameter, and to be called from exactly one site, the `ws.Mode == internal.ModeCheckout` arm
     of `pushCmd` (so the external push path is provably free of the legacy resolvers while the
-    frozen checkout path keeps them, §3.11, AC 59); `pushFeature` and `pushSelected` each take an
+    frozen checkout path keeps them, §3.11, AC 59); `pushFeature` and `pushScoped` each take an
     `externalSyncLayout` parameter and neither mentions any of the four legacy resolvers;
     `pushCmd` contains exactly one `internal.GuardFeatureName(ws.MetadataRoot, …)` call, textually
     **before** its `internal.TwsRoot()` call, before its `resolveExternalSyncLayout` call, and
@@ -5514,7 +5528,7 @@ goldens are identical on macOS and Ubuntu and across Git versions.
 | D10 | `syncFallback` | **Refused when any trigger flag is present** (I9); the no-flag path, including `origin/main` and `internal.Must`, is untouched (§4.2.7) |
 | D11 | Cross-repo selection in checkout | **Refused** (I12), by `ResolveSyncSelection` under `SyncSelectionOpts{Mode: ModeCheckout}`; never refused in external mode (§5.2, §5.5) |
 | D12 | Archived selection semantics | **Unified for selection validation** on the metadata flag; execution paths unchanged per mode (§5.5, §5.7) |
-| D13 | `pushFeature` ref defect | **Fixed here** (C2), for external `tws push` and external `tws sync --push` alike (§7.6), and declared as an observable no-flag change on decoupled `Name`/`Branch` entries — push argv, per-entry line, exit code, and remote ref (§4.1 rule 7, §4.5 C2, AC 33). Checkout mode keeps today's path and today's refusal (§3.11, AC 59) |
+| D13 | `pushFeature` ref defect | **Fixed here** (C2), for external `tws push` and external `tws sync --push` alike (§7.6), and declared as an observable no-flag change on decoupled `Name`/`Branch` entries — push argv, per-entry line, and remote ref (not the exit code: the legacy push loop returns `nil`, so today's failure already exits 0) (§4.1 rule 7, §4.5 C2, AC 33). Checkout mode keeps today's path and today's refusal (§3.11, AC 59) |
 | D14 | `no-fetch` and `--push` | **Allowed.** `no-fetch` constrains input refs; `--push` is explicit output. Help and docs say "no automatic network input", never "offline" (§6.2) |
 | D15 | Atomic external state | **Now**, keeping mode `0644` and an identical key set, key order, and values, with the coupled decode-error hardening declared per verb for unreadable state, `--abort` included (C1, §4.1 rule 4, §4.5, §8.6 row 10) |
 | D16 | External `--test` | **Left inert**; changing it is a follow-up (§7.7, §18.4) |
@@ -5640,8 +5654,8 @@ is a decision, taken deliberately, with its reason.
 12. **C2 and C3 are declared no-flag changes, not silent ones.** The analysis treats the
     `pushFeature` ref fix and the `finalizeTransaction` attribution fix as invisible on the frozen
     path. Refined to: each is observable on exactly one declared fixture shape — a decoupled
-    `Name`/`Branch` for C2 in **external** mode (push argv, per-entry line, exit code, remote
-    ref) — checkout `tws push` never reaching a push at all — and a duplicate
+    `Name`/`Branch` for C2 in **external** mode (push argv, per-entry line, remote ref — the
+    exit code is 0 before and after, because the legacy push loop returns `nil`) — checkout `tws push` never reaching a push at all — and a duplicate
     `GitBranch()` for C3 (`stack.yaml` attribution) — and both are reachable from ordinary flag-free
     invocations. Calling them frozen would make §4.1 false in exactly the cases the fixes exist for,
     so they are declared as behavioural exception 3 (§4.1 rule 7, §4.5 C2/C3, §14, AC 33, AC 34),

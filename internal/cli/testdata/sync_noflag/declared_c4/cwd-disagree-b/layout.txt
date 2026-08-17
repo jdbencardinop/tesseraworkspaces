@@ -1,0 +1,2 @@
+tws_root=<ALTROOT>
+metadata_root=<META>

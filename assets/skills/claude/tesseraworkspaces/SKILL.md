@@ -24,7 +24,7 @@ tws <command> [args]
 | `tws add <feature> [-n <branch>] [--open] [--tmux]` | Create feature (and optionally a branch) |
 | `tws new <feature> <branch> [--base <parent>] [--force]` | Create a worktree branch |
 | `tws open [feature] [branch] [--tmux] [--no-agent]` | Open worktree and run agent |
-| `tws sync <feature> [--push] [--verbose] [--continue] [--abort]` | Rebase worktrees in dependency order |
+| `tws sync <feature> [--push] [--verbose] [--continue] [--abort] [--fetch\|--no-fetch] [--full\|--local-only] [--only <entry>\|--from <entry>]` | Rebase worktrees in dependency order, optionally scoped |
 | `tws push <feature> [--dry-run]` | Push all branches with --force-with-lease |
 | `tws export <feature> [--full] [--to-repo] [-o file]` | Export workspace metadata |
 | `tws import <file> [--from-repo <feature>]` | Import workspace from YAML or tarball |
@@ -149,6 +149,8 @@ If `test_command` is configured, it runs after each successful rebase. Validatio
 **Conflict recovery:** When sync hits a conflict, it saves state and prints instructions. After resolving, run `tws sync <feature> --continue`; deferred descendants return to pending and are rebased before completion. If another branch fails, the updated state is preserved. `Sync complete` is printed only after configured parent-child ancestry is current.
 
 **Amend-aware:** If a parent branch was amended, sync uses `--onto` to avoid ghost conflicts from stale SHAs.
+
+Sync modes apply to both workspace modes and are three independent axes: `--fetch`/`--no-fetch` (input refs; external defaults to `fetch`, checkout to `no-fetch`), `--full`/`--local-only` (propagation), and `--only <entry>`/`--from <entry>` (scope, by logical `stack.yaml` name). Running `tws sync <feature>` with no mode flag is unchanged. `--no-fetch` forbids automatic network input only; an explicit `--push` is still allowed. A scoped run drops `git rebase --update-refs`, so unselected branches never move. With `--only` or `--from`, `--push` is strict and resumable: the run stops at the first rejected push, keeps its recovery state, and `--continue` retries only entries that were never pushed. A `scope=all` run pushes the whole feature leniently, as `tws push` does. Do not resume a scoped checkout sync with an older `tws`; abort it instead.
 
 ### Workspace Portability
 
@@ -396,7 +398,7 @@ tws sync auth --abort         # abort rebase and restore original branch
 tws sync auth --push          # push only after complete ancestry + restoration
 ```
 
-Sync refuses dirty/detached repositories and concurrent operations, persists recovery state under `.tws/state/`, supports amend-aware rebases and validation, and restores the original branch on success/abort.
+Sync refuses dirty/detached repositories and concurrent operations, persists recovery state under `.tws/state/`, supports amend-aware rebases and validation, and restores the original branch on success/abort. It must be run from the repository checkout: a cwd inside a linked worktree of the same repository is refused.
 
 Checkout mode supports one branch-owning agent session at a time:
 

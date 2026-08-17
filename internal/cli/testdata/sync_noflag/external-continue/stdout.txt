@@ -1,0 +1,4 @@
+exit: 0
+  [~] child (active)
+Resuming sync with 0 pending branch(es)
+Sync complete.

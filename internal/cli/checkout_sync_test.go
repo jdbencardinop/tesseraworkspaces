@@ -1184,7 +1184,8 @@ func TestCheckoutSync_ExternalSyncUnchanged(t *testing.T) {
 	writeAndCommit(t, parentPath, "parent.txt", "parent-v2\n", "parent v2")
 	parentHead := gitOutput(t, parentPath, "rev-parse", "parent")
 
-	result := syncFeature("external-feature", false)
+	externalPath := internal.FeaturePath("external-feature")
+	result := syncFeature("external-feature", externalSyncLayout{FeaturePath: externalPath, WorktreesRoot: filepath.Join(externalPath, "worktrees")}, false)
 	if !result.Complete {
 		t.Fatalf("external sync incomplete: %+v", result)
 	}

@@ -1,0 +1,7 @@
+exit: 0
+Fetching default repo... done
+  [+] work (active)
+Sync complete.
+
+Pushing...
+  [x] work (push failed)

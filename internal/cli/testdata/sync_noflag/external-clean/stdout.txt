@@ -1,0 +1,9 @@
+exit: 0
+Fetching default repo... done
+    validating root: git --version... ok
+  [+] root (active)
+    validating parent: git --version... ok
+  [+] parent (active)
+    validating child: git --version... ok
+  [+] child (active)
+Sync complete.

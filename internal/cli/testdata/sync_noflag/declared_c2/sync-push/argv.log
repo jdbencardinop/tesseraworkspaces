@@ -1,0 +1,19 @@
+000	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+001	zero	<REPO>	-C <REPO> rev-parse --git-common-dir	
+002	zero	<REPO>	-C <REPO> rev-parse --git-common-dir	
+003	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+004	zero	<REPO>	-C <REPO> rev-parse --git-common-dir	
+005	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+006	zero	<WORKTREES>/work	fetch	
+007	zero	<REPO>	-C <REPO> rev-parse --git-common-dir	
+008	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+009	zero	<REPO>	-C <WORKTREES>/work rev-parse --abbrev-ref HEAD	
+010	zero	<REPO>	rev-parse --abbrev-ref origin/HEAD	origin/main
+011	zero	<REPO>	-C <WORKTREES>/work rev-parse origin/main	
+012	zero	<WORKTREES>/work	rebase --update-refs origin/main	
+013	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+014	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+015	zero	<REPO>	-C <REPO> rev-parse --git-common-dir	
+016	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+017	zero	<REPO>	-C <REPO> rev-parse --git-common-dir	
+018	nonzero	<WORKTREES>/work	push --force-with-lease origin work	

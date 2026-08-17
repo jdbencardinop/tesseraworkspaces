@@ -1,0 +1,38 @@
+000	zero	<LINKED>	rev-parse --show-toplevel	<LINKED>
+001	zero	<LINKED>	-C <LINKED> rev-parse --git-common-dir	
+002	zero	<LINKED>	rev-parse --show-toplevel	<LINKED>
+003	zero	<LINKED>	-C <LINKED> rev-parse --git-common-dir	
+004	zero	<LINKED>	rev-parse --git-path rebase-merge	
+005	zero	<LINKED>	rev-parse --git-path rebase-apply	
+006	zero	<LINKED>	rev-parse --git-path MERGE_HEAD	
+007	zero	<LINKED>	rev-parse --git-path CHERRY_PICK_HEAD	
+008	zero	<LINKED>	rev-parse --git-path REVERT_HEAD	
+009	zero	<LINKED>	status --porcelain	
+010	zero	<LINKED>	symbolic-ref --short HEAD	side
+011	zero	<LINKED>	rev-parse HEAD	
+012	zero	<LINKED>	rev-parse main	
+013	zero	<LINKED>	rev-parse root	
+014	zero	<LINKED>	rev-parse root	
+015	zero	<LINKED>	rev-parse parent	
+016	zero	<LINKED>	rev-parse parent	
+017	zero	<LINKED>	rev-parse child	
+018	zero	<LINKED>	rev-parse main	
+019	zero	<LINKED>	checkout root	
+020	zero	<LINKED>	rebase --no-fork-point main	
+021	zero	<LINKED>	rev-parse HEAD	
+022	zero	<LINKED>	merge-base --is-ancestor addb1298ef23fa15db6c24943b0cf79664e105b6 root	
+023	zero	<LINKED>	rev-parse root	
+024	zero	<LINKED>	checkout parent	
+025	zero	<LINKED>	rebase --no-fork-point root	
+026	zero	<LINKED>	rev-parse HEAD	
+027	zero	<LINKED>	merge-base --is-ancestor 4e4c722af802afbb6d985c2771fc1dd7b766ddc4 parent	
+028	zero	<LINKED>	rev-parse parent	
+029	zero	<LINKED>	checkout child	
+030	zero	<LINKED>	rebase --no-fork-point parent	
+031	zero	<LINKED>	rev-parse HEAD	
+032	zero	<LINKED>	merge-base --is-ancestor 3e520ce4fa98e593026b32488717c84184dbd865 child	
+033	zero	<LINKED>	merge-base --is-ancestor addb1298ef23fa15db6c24943b0cf79664e105b6 root	
+034	zero	<LINKED>	merge-base --is-ancestor 4e4c722af802afbb6d985c2771fc1dd7b766ddc4 parent	
+035	zero	<LINKED>	merge-base --is-ancestor 3e520ce4fa98e593026b32488717c84184dbd865 child	
+036	zero	<LINKED>	checkout side	
+037	zero	<LINKED>	rev-parse HEAD	

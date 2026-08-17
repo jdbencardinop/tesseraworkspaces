@@ -1,0 +1,10 @@
+branches:
+    - name: root
+      base: main
+      last_base_sha: addb1298ef23fa15db6c24943b0cf79664e105b6
+    - name: parent
+      base: root
+      last_base_sha: 4e4c722af802afbb6d985c2771fc1dd7b766ddc4
+    - name: child
+      base: parent
+      last_base_sha: 3e520ce4fa98e593026b32488717c84184dbd865

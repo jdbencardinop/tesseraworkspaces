@@ -334,10 +334,7 @@ func resolveCreationBase(repoRoot, storedRepo string, stack internal.Stack, requ
 }
 
 func sameStackRepo(a, b string) bool {
-	if a == "" && b == "" {
-		return true
-	}
-	return a == b
+	return internal.SameStackRepo(a, b)
 }
 
 func isCheckedOutIn(repoRoot, branch string) bool {

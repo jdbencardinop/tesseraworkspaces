@@ -1405,6 +1405,25 @@ func (b *statusBuilder) buildFeatureSync(feature, featurePath string) (*AgentSta
 		return view, nil
 	}
 
+	// sync-modes: the shared read-only classifier runs before the legacy
+	// os.Stat early return, so guard-only residue, marker cells, and a payload
+	// without a legacy file are all visible to status.
+	st := ClassifyExternalSyncState(featurePath, SyncClassifyOpts{
+		AlwaysReadGuard: true,
+		Alive:           proberAsChecker{b.opts.Proc}.Alive,
+	})
+	switch st.Cell {
+	case 1:
+		if !st.HasGuardFile() {
+			return nil, nil
+		}
+		return b.buildExternalSyncResidue(feature, st), nil
+	case 7, 10:
+		// Delegate to today's projection, unchanged.
+	default:
+		return b.buildExternalSyncCell(feature, st)
+	}
+
 	statePath := SyncStatePath(featurePath)
 	if _, err := os.Stat(statePath); err != nil {
 		return nil, nil
@@ -1436,6 +1455,129 @@ func (b *statusBuilder) buildFeatureSync(feature, featurePath string) (*AgentSta
 			"an external sync state file is present", "")
 	}
 	return view, state
+}
+
+// buildExternalSyncResidue projects a guard file left behind with no sentinel
+// and no payload. It is read-only: nothing is reclaimed and nothing is removed.
+func (b *statusBuilder) buildExternalSyncResidue(feature string, st SyncExternalState) *AgentStatusFeatureSync {
+	view := &AgentStatusFeatureSync{
+		Kind:      "external",
+		Pending:   []string{},
+		Completed: []string{},
+		Skipped:   []string{},
+	}
+	applySyncGuardLiveness(view, st)
+	switch {
+	case st.GuardLive && st.Guard != nil:
+		b.issue(IssueSyncInProgress, SeverityInfo, ScopeFeature, feature, "",
+			fmt.Sprintf("a scoped sync is running (pid %d)", st.Guard.PID), "")
+	case st.Guard != nil:
+		b.issue(IssueSyncStale, SeverityWarning, ScopeFeature, feature, "",
+			fmt.Sprintf("a scoped sync guard from pid %d remains at %s", st.Guard.PID, st.GuardPath),
+			"the next scoped sync reclaims it, or remove "+st.GuardPath)
+	default:
+		b.issue(IssueSyncStale, SeverityWarning, ScopeFeature, feature, "",
+			"a scoped sync guard at "+st.GuardPath+" is unreadable",
+			"the next scoped sync reclaims it, or remove "+st.GuardPath)
+	}
+	return view
+}
+
+// buildExternalSyncCell projects the marker-aware and degenerate cells of the
+// external state matrix. The marker itself is never exposed.
+func (b *statusBuilder) buildExternalSyncCell(feature string, st SyncExternalState) (*AgentStatusFeatureSync, *SyncState) {
+	view := &AgentStatusFeatureSync{
+		Kind:      "external",
+		Pending:   []string{},
+		Completed: []string{},
+		Skipped:   []string{},
+	}
+	var projected *SyncState
+	failed := ""
+	if st.Payload != nil {
+		failed = st.Payload.FailedBranch
+		view.Pending = append([]string{}, st.Payload.Pending...)
+		view.Completed = append([]string{}, st.Payload.Completed...)
+		// The payload's stage is deliberately NOT projected: `stage` is the
+		// checkout transaction's enum, and populating it with external stage
+		// values would add enum values to schema 1 (§11.1 rule 6). The existing
+		// pending/completed/failed/liveness keys already carry everything the
+		// external projection needs.
+		if failed != "" {
+			view.FailedBranch = strPtr(failed)
+		}
+		projected = &SyncState{
+			StartedAt:    st.Payload.StartedAt,
+			FailedBranch: failed,
+			Pending:      append([]string{}, st.Payload.Pending...),
+			Completed:    append([]string{}, st.Payload.Completed...),
+			Skipped:      []string{},
+		}
+	}
+	applySyncGuardLiveness(view, st)
+
+	// A payload that cannot be read is a durable fact about bytes, so it is
+	// reported even under a live guard.
+	if st.PayloadErr != nil || st.PayloadSymlink {
+		view.Liveness = strPtr("invalid")
+		b.issue(IssueSyncStateInvalid, SeverityWarning, ScopeFeature, feature, "",
+			fmt.Sprintf("scoped sync state at %s is unreadable or uses an unsupported version", st.PayloadPath),
+			"inspect "+st.PayloadPath+" and remove it manually")
+		return view, projected
+	}
+
+	if st.GuardLive && st.Guard != nil {
+		b.issue(IssueSyncInProgress, SeverityInfo, ScopeFeature, feature, "",
+			fmt.Sprintf("a scoped sync is in progress (pid %d)", st.Guard.PID), "")
+		return view, projected
+	}
+
+	abortHint := fmt.Sprintf("run: tws sync %s --abort", feature)
+	resumeHint := fmt.Sprintf("run: tws sync %s --continue  or  tws sync %s --abort", feature, feature)
+	switch st.Cell {
+	case 2:
+		b.issue(IssueSyncInvalid, SeverityWarning, ScopeFeature, feature, "",
+			fmt.Sprintf("a scoped sync record survives without its state file; it failed on %s and that rebase was never aborted", failed),
+			resumeHint)
+	case 4:
+		b.issue(IssueSyncStale, SeverityWarning, ScopeFeature, feature, "",
+			"a scoped sync was interrupted either while starting up or while finishing; this cannot be distinguished on disk",
+			abortHint)
+	case 5:
+		b.issue(IssueSyncStale, SeverityWarning, ScopeFeature, feature, "",
+			fmt.Sprintf("a scoped sync is incomplete; it failed on %s", failed),
+			resumeHint)
+	case 8:
+		legacyFailed := ""
+		if st.Legacy != nil {
+			legacyFailed = st.Legacy.FailedBranch
+		}
+		b.issue(IssueSyncInvalid, SeverityWarning, ScopeFeature, feature, "",
+			fmt.Sprintf("two unfinished syncs are recorded: a legacy sync failed on %s and a scoped sync failed on %s", legacyFailed, failed),
+			"inspect "+st.LegacyPath+" and "+st.PayloadPath)
+	case 11:
+		b.issue(IssueSyncStateInvalid, SeverityWarning, ScopeFeature, feature, "",
+			fmt.Sprintf("sync state at %s is unreadable, and a scoped sync record beside it failed on %s", st.LegacyPath, failed),
+			"inspect "+st.LegacyPath+" and "+st.PayloadPath)
+	}
+	return view, projected
+}
+
+// applySyncGuardLiveness populates the existing nullable liveness keys from the
+// classifier's guard facts. No key and no enum value is added.
+func applySyncGuardLiveness(view *AgentStatusFeatureSync, st SyncExternalState) {
+	switch {
+	case st.Guard != nil:
+		view.LockPID = intPtr(st.Guard.PID)
+		view.LockLive = boolPtr(st.GuardLive)
+		if st.GuardLive {
+			view.Liveness = strPtr("live")
+		} else {
+			view.Liveness = strPtr("stale")
+		}
+	case st.GuardErr != nil || st.GuardSymlink:
+		view.Liveness = strPtr("invalid")
+	}
 }
 
 func (b *statusBuilder) buildFeatureTmux(feature, featurePath string) *SessionObservation {

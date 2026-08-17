@@ -150,6 +150,36 @@ tws sync auth                # fetches, then rebases parent→child
                              # archived branches synced via --update-refs or optimistic rebase
 ```
 
+### Sync modes
+
+Three independent axes; no flags keeps today's behaviour exactly.
+
+```sh
+tws sync auth --only auth-models     # scope: exactly one stack entry (logical name)
+tws sync auth --from auth-models     # scope: that entry plus its descendant subtree
+tws sync auth --local-only           # propagation: replay local parent tips only
+tws sync auth --full                 # propagation: advance anchors onto their base (default)
+tws sync auth --no-fetch             # input refs: no automatic network input
+tws sync auth --fetch                # input refs: fetch first (external default)
+```
+
+| Axis | Flags | External default | Checkout default |
+|---|---|---|---|
+| fetch | `--fetch` / `--no-fetch` | `fetch` | `no-fetch` |
+| propagation | `--full` / `--local-only` | `full` | `full` |
+| scope | `--only` / `--from` | `all` | `all` |
+
+- Selectors are logical `stack.yaml` names, never Git branches.
+- `--no-fetch` is an input-ref policy, not an offline mode: `--push` is still allowed.
+- A scoped run drops `--update-refs`, so unselected branches never move.
+- `--only`/`--from` on an archived entry is refused; on an unmaterialized entry it is allowed.
+- Trigger flags on `--continue` require v2 state; against legacy or absent state they are refused.
+- `--abort` cannot be combined with a mode flag: abort is defined by the persisted run.
+- With a scoped mode flag (`--only`/`--from`), `--push` is strict: the run stops at the first rejected push and `--continue` retries only the entries that were never pushed. A `scope=all` run — and plain `tws push` — stays lenient and pushes the whole feature.
+- Checkout `--fetch` refreshes remote-tracking refs once, before the plan is built and before the transaction exists. It is best-effort and deliberately **not** resumable: an interrupted refresh leaves no transaction, so the same command simply re-runs.
+- A checkout sync must be run from the repository checkout or any subdirectory of it. A linked worktree of that repository is refused (`checkout sync operates on <repo> but the current directory belongs to working tree <other>`), so a sync can never mutate the wrong working tree.
+- `tws push` is an **external-mode** command. In a checkout workspace it still refuses with `linked worktrees are not supported in checkout mode`; push checkout branches with `tws sync <feature> --push`.
+
 ## Archive and restore
 
 ```sh

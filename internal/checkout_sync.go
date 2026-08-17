@@ -48,6 +48,7 @@ const (
 
 // CheckoutPlanEntry describes one branch to rebase.
 type CheckoutPlanEntry struct {
+	Name        string `yaml:"name,omitempty"` // logical StackEntry.Name
 	Branch      string `yaml:"branch"`
 	Base        string `yaml:"base"`          // resolved git branch name for base
 	LastBaseSHA string `yaml:"last_base_sha"` // SHA of base at previous sync
@@ -60,6 +61,9 @@ type CheckoutPlanEntry struct {
 
 // CheckoutTransaction is the persisted state of an in-progress checkout sync.
 type CheckoutTransaction struct {
+	// Version — absent means 1 (legacy: no-fetch x full x all).
+	StateVersion int `yaml:"state_version,omitempty"`
+
 	// Identity
 	Feature     string `yaml:"feature"`
 	StartedAt   string `yaml:"started_at"`
@@ -85,6 +89,15 @@ type CheckoutTransaction struct {
 
 	// Completed entries
 	CompletedIndices []int `yaml:"completed_indices,omitempty"`
+
+	// Frozen new-mode decision. All omitempty, so a legacy transaction loaded
+	// from disk round-trips without gaining any of these keys.
+	FetchPolicy       string   `yaml:"fetch_policy,omitempty"`
+	PropagationPolicy string   `yaml:"propagation_policy,omitempty"`
+	ScopeKind         string   `yaml:"scope_kind,omitempty"`
+	ScopeSelector     string   `yaml:"scope_selector,omitempty"`
+	Selected          []string `yaml:"selected,omitempty"`
+	ValidationSource  string   `yaml:"validation_source,omitempty"`
 }
 
 // ---------- Paths ----------
@@ -444,21 +457,39 @@ func (e *RebaseConflictError) Error() string {
 // ---------- Plan builder ----------
 
 // BuildCheckoutPlan creates the rebase plan from the stack, resolving SHAs.
-func BuildCheckoutPlan(repoDir string, stack Stack) ([]CheckoutPlanEntry, error) {
+//
+// A zero selection means "the whole stack" — the frozen no-flag path. With a
+// selection it plans only the selected entries, preserving TopoSort order and
+// every existing skip rule, and under local-only it excludes anchors entirely.
+func BuildCheckoutPlan(repoDir string, stack Stack, sel SyncSelection) ([]CheckoutPlanEntry, error) {
 	sorted, err := TopoSort(stack)
 	if err != nil {
 		return nil, err
 	}
+	scoped := sel.Names != nil
+	localOnly := sel.Policy.Propagation == SyncPropagationLocalOnly
 
 	var plan []CheckoutPlanEntry
 	for _, entry := range sorted {
 		if entry.Archived {
 			continue
 		}
+		if scoped && !sel.Names[entry.Name] {
+			continue
+		}
+		role := sel.Role(entry.Name)
+		if scoped && localOnly && role == SyncRoleAnchor {
+			continue
+		}
 		branch := entry.GitBranch()
 		base := entry.Base
 		if base == "" {
 			continue // root base uses current default; skip
+		}
+		if scoped && localOnly && role == SyncRolePropagated {
+			if parent := GetBranch(stack, entry.Base); parent.Name != "" {
+				base = parent.GitBranch()
+			}
 		}
 
 		newBaseSHA, err := gitResolveRef(repoDir, base)
@@ -472,6 +503,7 @@ func BuildCheckoutPlan(repoDir string, stack Stack) ([]CheckoutPlanEntry, error)
 		}
 
 		plan = append(plan, CheckoutPlanEntry{
+			Name:        entry.Name,
 			Branch:      branch,
 			Base:        base,
 			LastBaseSHA: entry.LastBaseSHA,
@@ -480,6 +512,31 @@ func BuildCheckoutPlan(repoDir string, stack Stack) ([]CheckoutPlanEntry, error)
 		})
 	}
 	return plan, nil
+}
+
+// printSyncModeHeader prints the sync-modes header. Its bytes are identical to
+// package cli's printSyncModeHeader, which serves the external half.
+func printSyncModeHeader(p SyncRunPolicy) {
+	fmt.Printf("Sync mode: fetch=%s propagation=%s scope=%s\n", p.Fetch, p.Propagation, p.ScopeLabel())
+}
+
+// printLocalOnlyNoOp prints one `[-]` line per selected anchor, then
+// `Nothing to propagate.` only when the plan is empty. The literal must stay
+// byte-identical to package cli's formatSyncStatus rendering.
+func printLocalOnlyNoOp(sel SyncSelection, plan []CheckoutPlanEntry) {
+	if sel.Policy.Propagation != SyncPropagationLocalOnly {
+		return
+	}
+	anchors := sel.Anchors()
+	if len(anchors) == 0 {
+		return
+	}
+	for _, anchor := range anchors {
+		fmt.Printf("  [-] %s (no in-stack parent edge to propagate)\n", anchor.Name)
+	}
+	if len(plan) == 0 {
+		fmt.Println("Nothing to propagate.")
+	}
 }
 
 // ---------- Transaction executor ----------
@@ -492,6 +549,14 @@ type CheckoutSyncOpts struct {
 	Push        bool
 	TestCommand string
 	Verbose     bool
+
+	// Frozen sync-modes decision. A zero Policy with NewMode == false is the
+	// legacy default (no-fetch x full x all).
+	Policy   SyncRunPolicy
+	NewMode  bool
+	Continue bool            // --continue was supplied
+	Abort    bool            // --abort was supplied
+	Changed  map[string]bool // "fetch","no-fetch","full","local-only","only","from","push"
 }
 
 // RunCheckoutSync executes the full checkout-sync transaction.
@@ -520,23 +585,67 @@ func RunCheckoutSync(opts CheckoutSyncOpts) error {
 		return err
 	}
 
+	// New-mode read-only preflight (I9, I10-I13, I14) — before the lock, so a
+	// refusal leaves no lock, no transaction, and no write of any kind.
+	var preloaded *Stack
+	var sel SyncSelection
+	if opts.NewMode {
+		stack, loadErr := LoadStack(opts.FeaturePath)
+		if loadErr != nil {
+			return fmt.Errorf("sync modes require a stack; feature %q has no readable stack.yaml", opts.Feature)
+		}
+		sel, err = ResolveSyncSelection(stack, opts.Policy, SyncSelectionOpts{
+			Mode:    ModeCheckout,
+			NewMode: true,
+			Feature: opts.Feature,
+		})
+		if err != nil {
+			return err
+		}
+		if err := verifyCheckoutBasesLocally(opts, stack, sel); err != nil {
+			return err
+		}
+		preloaded = &stack
+	}
+
 	// Lock
 	if err := AcquireCheckoutLock(opts.FeaturePath); err != nil {
 		return err
 	}
 
+	if opts.NewMode {
+		printSyncModeHeader(opts.Policy)
+		if opts.Policy.Fetch == SyncFetchEnabled {
+			fmt.Printf("Fetching %s... ", "default repo")
+			if fetchErr := RunSilentDir(opts.RepoDir, "git", "fetch"); fetchErr != nil {
+				fmt.Println("failed")
+			} else {
+				fmt.Println("done")
+			}
+		}
+	}
+
 	// Load stack
-	stack, err := LoadStack(opts.FeaturePath)
-	if err != nil {
-		ReleaseCheckoutLock(opts.FeaturePath)
-		return fmt.Errorf("load stack: %w", err)
+	var stack Stack
+	if preloaded != nil {
+		stack = *preloaded
+	} else {
+		stack, err = LoadStack(opts.FeaturePath)
+		if err != nil {
+			ReleaseCheckoutLock(opts.FeaturePath)
+			return fmt.Errorf("load stack: %w", err)
+		}
 	}
 
 	// Build plan
-	plan, err := BuildCheckoutPlan(opts.RepoDir, stack)
+	plan, err := BuildCheckoutPlan(opts.RepoDir, stack, sel)
 	if err != nil {
 		ReleaseCheckoutLock(opts.FeaturePath)
 		return fmt.Errorf("build plan: %w", err)
+	}
+
+	if opts.NewMode {
+		printLocalOnlyNoOp(sel, plan)
 	}
 
 	if len(plan) == 0 {
@@ -558,6 +667,18 @@ func RunCheckoutSync(opts CheckoutSyncOpts) error {
 		CurrentIndex:   0,
 		Stage:          StagePlanned,
 	}
+	if opts.NewMode {
+		tx.StateVersion = CheckoutTransactionVersion
+		tx.FetchPolicy = string(opts.Policy.Fetch)
+		tx.PropagationPolicy = string(opts.Policy.Propagation)
+		tx.ScopeKind = string(opts.Policy.ScopeKind)
+		tx.ScopeSelector = opts.Policy.Selector
+		tx.Selected = sel.SelectedNames()
+		tx.ValidationSource = "none"
+		if opts.TestCommand != "" {
+			tx.ValidationSource = "flag"
+		}
+	}
 
 	// Persist BEFORE switching
 	if err := SaveCheckoutTransaction(opts.FeaturePath, tx); err != nil {
@@ -568,11 +689,51 @@ func RunCheckoutSync(opts CheckoutSyncOpts) error {
 	return executeTransaction(opts, tx)
 }
 
+// verifyCheckoutBasesLocally is the checkout half of the I14 no-fetch preflight.
+func verifyCheckoutBasesLocally(opts CheckoutSyncOpts, stack Stack, sel SyncSelection) error {
+	if opts.Policy.Fetch != SyncFetchDisabled {
+		return nil
+	}
+	localOnly := opts.Policy.Propagation == SyncPropagationLocalOnly
+	for _, entry := range sel.Entries {
+		if entry.Archived || entry.Base == "" {
+			continue
+		}
+		ref := entry.Base
+		if entry.Role == SyncRoleAnchor {
+			if localOnly {
+				continue
+			}
+		} else if parent := GetBranch(stack, entry.Base); parent.Name != "" {
+			ref = parent.GitBranch()
+		}
+		if err := VerifyGitRef(opts.RepoDir, ref); err != nil {
+			return fmt.Errorf("base %q for stack entry %q does not resolve locally; drop --no-fetch or fetch manually first", ref, entry.Name)
+		}
+	}
+	return nil
+}
+
 // ContinueCheckoutSync resumes a previously interrupted transaction.
 func ContinueCheckoutSync(opts CheckoutSyncOpts) error {
 	tx, err := LoadCheckoutTransaction(opts.FeaturePath)
 	if err != nil {
 		return fmt.Errorf("no transaction to continue: %w", err)
+	}
+	if tx.StateVersion > CheckoutTransactionVersion {
+		return fmt.Errorf("checkout sync transaction state version %d is newer than %d; upgrade tws or remove %s",
+			tx.StateVersion, CheckoutTransactionVersion, CheckoutTransactionPath(opts.FeaturePath))
+	}
+
+	if tx.StateVersion >= CheckoutTransactionVersion {
+		if err := checkoutContinueMismatches(opts, tx); err != nil {
+			return err
+		}
+		if err := checkoutSelectedStillPresent(opts, tx); err != nil {
+			return err
+		}
+	} else if opts.Push && !tx.Push {
+		return fmt.Errorf("cannot add --push to an existing transaction that was started without it; persisted push=%v wins", tx.Push)
 	}
 
 	// For continue, we forcibly reclaim the lock (we own the transaction)
@@ -581,15 +742,73 @@ func ContinueCheckoutSync(opts CheckoutSyncOpts) error {
 	}
 	tx.LockPID = os.Getpid()
 
-	// Validate persisted invocation context
-	if opts.Push && !tx.Push {
-		return fmt.Errorf("cannot add --push to an existing transaction that was started without it; persisted push=%v wins", tx.Push)
-	}
 	// Use persisted values
 	opts.Push = tx.Push
 	opts.TestCommand = tx.TestCommand
 
+	if tx.StateVersion >= CheckoutTransactionVersion {
+		printSyncModeHeader(transactionPolicy(tx))
+	}
+
 	return resumeTransaction(opts, tx)
+}
+
+// transactionPolicy reads the frozen decision back out of a v2 transaction.
+func transactionPolicy(tx *CheckoutTransaction) SyncRunPolicy {
+	return SyncRunPolicy{
+		Fetch:       SyncFetchPolicy(tx.FetchPolicy),
+		Propagation: SyncPropagationPolicy(tx.PropagationPolicy),
+		ScopeKind:   SyncScopeKind(tx.ScopeKind),
+		Selector:    tx.ScopeSelector,
+	}
+}
+
+// checkoutContinueMismatches applies §10.5 rules 2, 3, and 5 to a v2 resume.
+func checkoutContinueMismatches(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
+	changed := opts.Changed
+	persisted := transactionPolicy(tx)
+	if changed["fetch"] || changed["no-fetch"] {
+		if opts.Policy.Fetch != persisted.Fetch {
+			return checkoutContinueMismatch("fetch", string(persisted.Fetch), string(opts.Policy.Fetch))
+		}
+	}
+	if changed["full"] || changed["local-only"] {
+		if opts.Policy.Propagation != persisted.Propagation {
+			return checkoutContinueMismatch("propagation", string(persisted.Propagation), string(opts.Policy.Propagation))
+		}
+	}
+	if changed["only"] || changed["from"] {
+		if opts.Policy.ScopeLabel() != persisted.ScopeLabel() {
+			return checkoutContinueMismatch("scope", persisted.ScopeLabel(), opts.Policy.ScopeLabel())
+		}
+	}
+	if changed["push"] && opts.Push != tx.Push {
+		return checkoutContinueMismatch("push", fmt.Sprintf("%v", tx.Push), fmt.Sprintf("%v", opts.Push))
+	}
+	return nil
+}
+
+func checkoutContinueMismatch(axis, started, requested string) error {
+	return fmt.Errorf("cannot change %s on --continue: the run was started with %s=%s and this invocation requests %s", axis, axis, started, requested)
+}
+
+// checkoutSelectedStillPresent enforces §10.5 rule 7.
+func checkoutSelectedStillPresent(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
+	if len(tx.Selected) == 0 {
+		return nil
+	}
+	stack, err := LoadStack(opts.FeaturePath)
+	if err != nil {
+		// A v2 resume cannot verify its selection without the stack, and
+		// silently proceeding would resume a scope nothing can confirm.
+		return fmt.Errorf("load stack: %w", err)
+	}
+	for _, name := range tx.Selected {
+		if !HasBranch(stack, name) {
+			return fmt.Errorf("selected stack entry %q no longer exists in stack; use --abort", name)
+		}
+	}
+	return nil
 }
 
 // AbortCheckoutSync safely aborts and restores original state.
@@ -597,6 +816,12 @@ func AbortCheckoutSync(opts CheckoutSyncOpts) error {
 	tx, err := LoadCheckoutTransaction(opts.FeaturePath)
 	if err != nil {
 		return fmt.Errorf("no transaction to abort: %w", err)
+	}
+	// Deferred I7: without a trigger flag, --continue --abort is only refused
+	// against new-mode state. A legacy transaction keeps today's behaviour,
+	// where --abort wins and --continue is ignored.
+	if opts.Continue && tx.StateVersion >= CheckoutTransactionVersion {
+		return fmt.Errorf("--continue and --abort are mutually exclusive")
 	}
 
 	if err := forceAcquireCheckoutLock(opts.FeaturePath); err != nil {
@@ -941,6 +1166,15 @@ func finalizeTransaction(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 	}
 	for _, pe := range tx.Plan {
 		for i := range stack.Branches {
+			// Attribute by logical Name when the plan carries it (C3); an old
+			// transaction with no name falls back to the first GitBranch match.
+			if pe.Name != "" {
+				if stack.Branches[i].Name == pe.Name {
+					stack.Branches[i].LastBaseSHA = pe.NewBaseSHA
+					break
+				}
+				continue
+			}
 			if stack.Branches[i].GitBranch() == pe.Branch {
 				stack.Branches[i].LastBaseSHA = pe.NewBaseSHA
 				break

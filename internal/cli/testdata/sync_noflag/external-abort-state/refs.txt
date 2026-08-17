@@ -1,0 +1,6 @@
+refs/heads/child 744cd8e5a6c875a74091e30654a7da6c9fd02c18
+refs/heads/main b79744b9fd8e1e4e82cdd894394d460a346f58be
+refs/heads/parent 9ac7b63b7cf2baff4284513e9520088ec066b841
+refs/heads/root 77f69d0867921d814ac63e94103042b7517cf8b3
+refs/remotes/origin/HEAD b79744b9fd8e1e4e82cdd894394d460a346f58be
+refs/remotes/origin/main b79744b9fd8e1e4e82cdd894394d460a346f58be

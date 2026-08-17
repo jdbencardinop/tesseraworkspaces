@@ -1,0 +1,6 @@
+exit: 1
+Resuming sync with 2 pending branch(es)
+  [+] root (active)
+  [+] parent (active)
+Sync incomplete; stale stack edges remain:
+  [!] child does not contain parent parent

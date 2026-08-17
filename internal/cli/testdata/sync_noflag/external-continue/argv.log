@@ -1,0 +1,17 @@
+000	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+001	zero	<REPO>	-C <REPO> rev-parse --git-common-dir	
+002	zero	<REPO>	-C <REPO> rev-parse --git-common-dir	
+003	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+004	zero	<REPO>	-C <REPO> rev-parse --git-common-dir	
+005	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+006	zero	<REPO>	-C <WORKTREES>/child rev-parse --git-dir	
+007	nonzero	<REPO>	-C <WORKTREES>/child rebase --show-current-patch	
+008	zero	<REPO>	-C <REPO> rev-parse --git-common-dir	
+009	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+010	zero	<WORKTREES>/child	merge-base --is-ancestor parent child	
+011	zero	<REPO>	-C <REPO> rev-parse --git-common-dir	
+012	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+013	zero	<WORKTREES>/parent	merge-base --is-ancestor root parent	
+014	zero	<REPO>	-C <REPO> rev-parse --git-common-dir	
+015	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+016	zero	<WORKTREES>/child	merge-base --is-ancestor parent child	

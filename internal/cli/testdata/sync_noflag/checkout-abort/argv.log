@@ -1,0 +1,8 @@
+000	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+001	zero	<REPO>	-C <REPO> rev-parse --git-common-dir	
+002	zero	<REPO>	rev-parse --show-toplevel	<REPO>
+003	zero	<REPO>	-C <REPO> rev-parse --git-common-dir	
+004	zero	<REPO>	rev-parse --git-path rebase-merge	
+005	zero	<REPO>	rebase --abort	
+006	zero	<REPO>	checkout main	
+007	zero	<REPO>	rev-parse HEAD	

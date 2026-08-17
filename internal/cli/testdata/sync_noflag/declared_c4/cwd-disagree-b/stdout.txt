@@ -1,0 +1,6 @@
+exit: 0
+Fetching default repo... done
+  [+] root (active)
+  [+] parent (active)
+  [+] child (active)
+Sync complete.

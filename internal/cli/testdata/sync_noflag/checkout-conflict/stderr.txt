@@ -1,0 +1,2 @@
+exit: 1
+conflict rebasing child: resolve then --continue

@@ -54,7 +54,21 @@ tws sync <feature> --push         # sync + push
 tws sync <feature> --continue     # resume after conflict
 tws push <feature>                # push all branches
 tws push <feature> --dry-run      # preview pushes
+
+# Sync modes — three independent axes, no flags keeps today's behaviour
+tws sync <feature> --only <entry>     # scope: one logical stack entry
+tws sync <feature> --from <entry>     # scope: that entry and its descendants
+tws sync <feature> --local-only       # propagation: local parent tips only, never advance a root
+tws sync <feature> --no-fetch         # input refs: no automatic network input (--push still allowed)
 ```
+
+Selectors are logical `stack.yaml` names, never Git branches. A scoped run drops
+`--update-refs`, so it never moves a branch outside the selection. Incompatible
+combinations are refused before any fetch, lock, or rebase. With a scoped flag
+(`--only`/`--from`), `--push` is strict: the run stops at the first rejected push
+and `--continue` retries only the entries that were never pushed; a `scope=all`
+run pushes the whole feature leniently, as `tws push` does. Two concurrent syncs
+against one feature remain unsafe.
 
 ### Manage worktrees
 ```sh
