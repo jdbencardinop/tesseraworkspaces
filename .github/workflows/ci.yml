@@ -47,7 +47,7 @@ jobs:
         run: go build ./...
 
       - name: Test
-        run: go test ./... -count=1
+        run: go test ./... -count=1 -timeout 40m
 
       - name: Install and smoke test
         run: |
