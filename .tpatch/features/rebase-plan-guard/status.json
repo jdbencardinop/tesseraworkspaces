@@ -5,8 +5,8 @@
   "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-08-18T04:26:29Z",
-  "updated_at": "2026-08-24T21:21:58Z",
-  "last_command": "record",
+  "updated_at": "2026-08-24T21:30:47Z",
+  "last_command": "verify",
   "notes": "landed at 2026-08-24T21:23:26Z",
   "apply": {
     "completed_at": "2026-08-24T21:21:26Z",
@@ -35,5 +35,16 @@
       "slug": "tiered-skill-system",
       "kind": "soft"
     }
-  ]
+  ],
+  "verify": {
+    "verified_at": "2026-08-24T21:30:46Z",
+    "passed": false,
+    "recipe_hash_at_verify": "1355413f4c100bf1479233628176af7255f2fb67c035276fe1f889655fd2e41c",
+    "patch_hash_at_verify": "8455e9e9eb531205856f16430d2ba8a3672c1e1e969031ea592a1e6a8badbad1",
+    "parent_snapshot": {
+      "amend-aware-rebase": "applied",
+      "stack-status": "applied",
+      "sync-modes": "applied"
+    }
+  }
 }
