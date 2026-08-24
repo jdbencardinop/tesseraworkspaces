@@ -1,0 +1,45 @@
+Rebase the feature's branches in dependency order.
+
+--plan describes the rebase this invocation would perform and then exits. It moves
+no branch, rewrites no working tree, and writes no tws runtime state. It is not
+Git-write-free: a plan fetches exactly where the run it describes fetches — an
+external plan fetches by default, a checkout plan only with --fetch — and may
+update remote-tracking refs, FETCH_HEAD, tags and covered local branches. Add
+--no-fetch for a fully local preview — that previews a different, new-mode route,
+not the route a bare "tws sync <feature>" takes.
+
+--max-replay-per-entry and --max-replay-total bound the work of this invocation
+only — the whole plan on a fresh run, the remaining work on --continue — and are
+never cumulative across resumes. --approve-plan takes the fingerprint printed by
+--plan and requires at least one of those limits.
+
+A guarded run — one carrying a replay limit or --approve-plan — records its limits
+in state_version 3 recovery state, so an older tws release refuses to resume it
+instead of resuming it without the guard. When the guard itself refuses, the run
+exits 1 and writes one "plan-guard: <kind>: <detail>" line on stderr, before any
+branch has moved unless that line says "state-preserved:". Refusals tws already
+performs — a dirty tree, a held lock, a base that does not resolve locally, an
+incomplete previous run — keep their own wording, exit 1 without that line, and
+are never marked.
+
+Usage:
+  tws sync <feature> [flags]
+
+Flags:
+      --abort                      Discard sync state and start fresh
+      --approve-plan string        Approve the exact plan with the fingerprint printed by --plan (requires a replay limit)
+      --continue                   Resume after conflict resolution
+      --fetch                      Fetch before planning (external default)
+      --from string                Sync one stack entry and its descendant closure, by logical name
+      --full                       Advance anchors onto their configured base (default)
+  -h, --help                       help for sync
+      --json                       Emit the plan document as JSON on stdout (requires --plan)
+      --local-only                 Replay local parent tips into children; never advance an anchor
+      --max-replay-per-entry int   Refuse before rebasing if any entry of this invocation replays more than N candidates (this invocation only; a guarded run records its limits in recovery state older tws releases refuse to resume)
+      --max-replay-total int       Refuse before rebasing if this invocation replays more than N candidates in total (this invocation only; a guarded run records its limits in recovery state older tws releases refuse to resume)
+      --no-fetch                   Plan and rebase from local refs only; no automatic network input (checkout default)
+      --only string                Sync exactly one stack entry by its logical name
+      --plan                       Describe the rebase this invocation would perform, then exit; moves no branch, working tree or tws state, but still fetches wherever the route it describes fetches (see --no-fetch)
+      --push                       Push all branches after syncing
+      --test string                Validation command to run after each rebase (checkout mode)
+  -v, --verbose                    Show full git fetch output

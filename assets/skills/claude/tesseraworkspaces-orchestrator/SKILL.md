@@ -60,6 +60,9 @@ tws sync <feature> --only <entry>     # scope: one logical stack entry
 tws sync <feature> --from <entry>     # scope: that entry and its descendants
 tws sync <feature> --local-only       # propagation: local parent tips only, never advance a root
 tws sync <feature> --no-fetch         # input refs: no automatic network input (--push still allowed)
+
+# Plan before a wide sync
+tws sync <feature> --plan --json --max-replay-per-entry <n>   # preview: old base, new base, candidates per entry
 ```
 
 Selectors are logical `stack.yaml` names, never Git branches. A scoped run drops
@@ -69,6 +72,31 @@ combinations are refused before any fetch, lock, or rebase. With a scoped flag
 and `--continue` retries only the entries that were never pushed; a `scope=all`
 run pushes the whole feature leniently, as `tws push` does. Two concurrent syncs
 against one feature remain unsafe.
+
+**Plan before a wide sync.** Run `--plan` first and read its `entries[]` rows
+before rebasing several branches at once: each row's old base, new base, and
+`candidates` count — an upper bound, never a promise of what gets applied —
+shows which entries are about to move a lot. Use the rows to narrow scope with
+`--only <entry>` or `--from <entry>` instead of letting a wide run touch
+entries nobody asked about. `--plan` is not a network no-op: it fetches
+exactly where the run it describes fetches (external by default; a checkout
+plan only under `--fetch`), and it exits `0` even when it describes a
+refusal, so decide from `runnable && !guard.would_refuse &&
+guard.execute_blocked_by == [] && refusal.kind == null`, never from its exit
+status. Broadcast the plan with `tws decide <feature> "<summary of the
+plan>" --type review` (or `--type breaking` for a base change) before
+executing, so worktree agents see the rebase coming. To execute, extract the
+fingerprint (`sed -n 's/^Approval fingerprint: //p'`, never `tail -1`) and
+re-run with the same limit (`--max-replay-per-entry <n>` bounds one entry,
+`--max-replay-total <n>` bounds the whole invocation) and
+`--approve-plan <fingerprint>` — one of those two limits is required on every
+route, `--plan` included, so a plan with no limit mints no fingerprint and
+there is no limitless approval; a refused
+guard exits `1` with one `plan-guard: <kind>: <detail>` stderr line — a
+`state-preserved: ` prefix on the detail means something on disk outlives the
+refusal — while a refusal tws already performs (dirty tree, held lock,
+unresolvable base, incomplete previous run) keeps its own wording and carries
+no marker.
 
 ### Manage worktrees
 ```sh

@@ -180,6 +180,35 @@ tws sync auth --fetch                # input refs: fetch first (external default
 - A checkout sync must be run from the repository checkout or any subdirectory of it. A linked worktree of that repository is refused (`checkout sync operates on <repo> but the current directory belongs to working tree <other>`), so a sync can never mutate the wrong working tree.
 - `tws push` is an **external-mode** command. In a checkout workspace it still refuses with `linked worktrees are not supported in checkout mode`; push checkout branches with `tws sync <feature> --push`.
 
+### Plan and guard
+
+```sh
+tws sync auth --plan                                   # preview only: no branch moves, no state is written
+tws sync auth --plan --max-replay-per-entry 10          # bound the previewed run's replay work
+tws sync auth --max-replay-per-entry 10 --approve-plan <fingerprint>   # execute the approved plan
+```
+
+Two full round trips — always pair `--approve-plan` with the same limit the plan carried:
+
+```sh
+# legacy external route — the run a bare `tws sync auth` performs
+tws sync auth --plan --json --max-replay-per-entry 10
+tws sync auth --approve-plan <fingerprint> --max-replay-per-entry 10
+
+# explicit new-mode no-fetch route — stable and fully local
+tws sync auth --plan --no-fetch --json --max-replay-per-entry 10
+tws sync auth --no-fetch --approve-plan <fingerprint> --max-replay-per-entry 10
+```
+
+- `--plan` renders each entry's old base, new base, and `candidates` count and exits before rebasing anything — but it still fetches exactly where the run it describes fetches: an external plan fetches by default, a checkout plan only under `--fetch`, and `--plan --continue` never fetches. `--plan --no-fetch` previews a different, fully local route.
+- `candidates` is an upper bound, never a promise of what gets applied.
+- `--max-replay-per-entry <n>` / `--max-replay-total <n>` bound only this invocation's work and refuse before rebasing if exceeded; they are never cumulative across resumes.
+- `--approve-plan <fingerprint>` re-supplies the 64-hex fingerprint `--plan` printed, and requires at least one of those limits on every route, `--plan` included. A plan paired with `--approve-plan` but no limit mints no fingerprint — that pairing is a documentation bug, never a valid workflow.
+- Extract the fingerprint explicitly — `sed -n 's/^Approval fingerprint: //p'` — never pipe `tail -1` into `--approve-plan`.
+- Admission for the guarded run is one predicate: `runnable && !guard.would_refuse && guard.execute_blocked_by == [] && refusal.kind == null`. Branch on it, never on `--plan`'s own exit status — a plan-only run exits `0` even when it describes a refusal.
+- A guarded refusal exits `1` and writes exactly one `plan-guard: <kind>: <detail>` line on stderr; a detail beginning `state-preserved: ` means something on disk outlives the refusal. A refusal tws already performs — a dirty tree, a held lock, an unresolvable base, an incomplete previous run — keeps its own wording, exits `1`, and is never marked.
+- A guarded run's limits are recorded in recovery state, so an older tws release refuses to resume it rather than silently dropping the guard.
+
 ## Archive and restore
 
 ```sh

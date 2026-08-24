@@ -2,13 +2,17 @@
   "id": "rebase-plan-guard",
   "slug": "rebase-plan-guard",
   "title": "Add a pre-mutation rebase plan guard to tws sync in external and checkout workspaces. Before any selected branch is rebased, show the configured base, recorded old cutoff, current new-base ref and SHA, replay strategy, and replay commit count or an explicit unknown state; then prevent surprising broad or indeterminate rebases through a deterministic interactive and non-interactive contract. The plan must honor fetch/no-fetch, full/local-only, all/only/from, archived and missing entries, persisted continuation state, logical-name versus Git-branch identity, and existing LastBaseSHA amend-aware semantics. Include the merged-parent case where master is A-B-prime-D and PR2 is A-B-C: expose old cutoff B, new base D, and replay C before mutation. Preserve no-flag compatibility deliberately. Keep safe reparent/restack mutation, patch-id or tpatch change-equivalence inference, multi-parent composition, and remote PR retargeting out of scope.",
-  "state": "implementing",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-08-18T04:26:29Z",
-  "updated_at": "2026-08-24T20:38:48Z",
-  "last_command": "implement",
-  "notes": "Phase advanced manually (--manual); artifact authored at artifacts/apply-recipe.json",
-  "apply": {},
+  "updated_at": "2026-08-24T21:21:58Z",
+  "last_command": "record",
+  "notes": "landed at 2026-08-24T21:23:26Z",
+  "apply": {
+    "completed_at": "2026-08-24T21:21:26Z",
+    "base_commit": "e0bd2b1421d8acfaf6e9ac506f8c0a3b3f742995",
+    "has_patch": true
+  },
   "reconcile": {},
   "depends_on": [
     {

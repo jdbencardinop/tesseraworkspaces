@@ -24,13 +24,20 @@ Current shipped checkout slices:
 11. sync modes (`tws sync <feature>` with `--fetch`/`--no-fetch`,
     `--full`/`--local-only`, and `--only`/`--from`) carrying the frozen mode,
     scope, push, validation, and recovery decision through `--continue` and
-    `--abort` in both workspace modes, with the no-flag run unchanged.
+    `--abort` in both workspace modes, with the no-flag run unchanged;
+12. rebase plan guard: a preview-and-approve workflow for stack sync that
+    shows the old base, new base, and a replay-candidate count per entry
+    before anything moves, refuses execution above an operator-set replay
+    bound without an approval matching the previewed plan's fingerprint,
+    records a guarded run's bound in recovery state so an older release
+    refuses to resume it unguarded, and reports a guard refusal as one
+    distinguishable line separate from every refusal tws already performed.
 
 The opt-in global workspace registry is also shipped for stable cross-repository
 discovery, health checks, and moved-target repair.
 
-Next roadmap feature: **rebase plan guard** — show the old base, new base, and
-replay count, and stop surprising broad rebases before they start.
+Next roadmap feature: **safe reparent/restack** — update Git and metadata
+atomically for a single-parent stack.
 See [`roadmap.md`](roadmap.md).
 
 ## Tpatch workflow
@@ -96,6 +103,9 @@ After landing, rerun full gates and check a clean tree before push/tag.
 - Persist transaction/session state atomically before irreversible Git actions.
 - Metadata changes happen only after Git success, with rollback where practical.
 - Never use `git reset --hard`, force push, or destructive cleanup as a shortcut.
+- A destructive recovery command must name exactly what it clears or discards;
+  it must never restore or resume state on the caller's behalf, and it must
+  never claim to have removed something it did not find.
 - Use `--force-with-lease` for rewritten branches.
 - Keep external and checkout mode dispatch explicit; do not infer checkout mode merely from `.tws/` existence.
 - Preserve external-mode paths and behavior with regression tests.

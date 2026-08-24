@@ -3,6 +3,7 @@ package internal
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -98,6 +99,12 @@ type CheckoutTransaction struct {
 	ScopeSelector     string   `yaml:"scope_selector,omitempty"`
 	Selected          []string `yaml:"selected,omitempty"`
 	ValidationSource  string   `yaml:"validation_source,omitempty"`
+
+	// Guarded envelope extension (§13.1, §13.6). Absent on every unguarded
+	// transaction, so an unguarded run's on-disk bytes are unchanged.
+	MaxReplayPerEntry *int   `yaml:"max_replay_per_entry,omitempty"`
+	MaxReplayTotal    *int   `yaml:"max_replay_total,omitempty"`
+	Route             string `yaml:"route,omitempty"`
 }
 
 // ---------- Paths ----------
@@ -131,6 +138,9 @@ func LoadCheckoutTransaction(featurePath string) (*CheckoutTransaction, error) {
 }
 
 func SaveCheckoutTransaction(featurePath string, tx *CheckoutTransaction) error {
+	if err := syncIOFault(SyncIOWriteTransaction, CheckoutTransactionPath(featurePath)); err != nil {
+		return err
+	}
 	data, err := yaml.Marshal(tx)
 	if err != nil {
 		return err
@@ -173,6 +183,98 @@ func DeleteCheckoutTransaction(featurePath string) {
 func HasCheckoutTransaction(featurePath string) bool {
 	_, err := os.Stat(CheckoutTransactionPath(featurePath))
 	return err == nil
+}
+
+// ---------- Route/guard derivation (§13.6) ----------
+
+// txNewMode answers "is this persisted transaction a new-mode run?" nil-safe.
+// A nil transaction is never new-mode, an explicit route decides outright,
+// and an absent or unknown route falls back to the version — so for every
+// transaction a shipped binary could have written, this reproduces the
+// shipped tx.StateVersion >= CheckoutTransactionVersion comparison exactly
+// (§13.6 rule 4).
+func txNewMode(tx *CheckoutTransaction) bool {
+	if tx == nil {
+		return false
+	}
+	switch tx.Route {
+	case RouteNewMode:
+		return true
+	case RouteLegacy:
+		return false
+	default:
+		return tx.StateVersion >= CheckoutTransactionVersion
+	}
+}
+
+// TransactionNewMode is the exported wrapper package cli calls. Both are
+// nil-safe by construction, so no caller needs a nil check of its own.
+func TransactionNewMode(tx *CheckoutTransaction) bool { return txNewMode(tx) }
+
+// checkoutRecoveryIsNewMode answers "is this persisted transaction a new-mode
+// run?" for both recovery verbs (--continue and --abort). It is exactly
+// txNewMode under a name that says why it is being asked.
+func checkoutRecoveryIsNewMode(tx *CheckoutTransaction) bool { return txNewMode(tx) }
+
+// checkoutRecoveryIsGuarded answers "was this persisted transaction born
+// guarded?". It is nil-safe by construction: an absent transaction is never
+// guarded. It is deliberately NOT routed through txNewMode: route decides
+// legacy-vs-new-mode semantics, version decides whether a guard was armed at
+// birth, and a route: legacy v3 transaction is guarded (§13.6 rule 4d).
+func checkoutRecoveryIsGuarded(tx *CheckoutTransaction) bool {
+	return tx != nil && tx.StateVersion >= CheckoutTransactionGuardedVersion
+}
+
+// TransactionGuarded is the exported wrapper package cli's dispatch calls.
+func TransactionGuarded(tx *CheckoutTransaction) bool { return checkoutRecoveryIsGuarded(tx) }
+
+// CheckoutTriggersNeedV2 keeps all three shipped arms: an unreadable or
+// absent transaction refuses exactly as it does today, and the version
+// comparison is replaced by — and only by — the route derivation. It takes
+// the transaction the --continue arm already loaded, so the arm performs
+// exactly one LoadCheckoutTransaction rather than one per predicate (§13.6
+// rule 4a).
+func CheckoutTriggersNeedV2(tx *CheckoutTransaction, loadErr error) bool {
+	return loadErr != nil || tx == nil || !TransactionNewMode(tx)
+}
+
+// upgradeGuardedCheckoutTransaction is the §13.2a checkout upgrade: called
+// from a guarded ContinueCheckoutSync arm immediately below the guard seam
+// and above resumeTransaction. It sets StateVersion, the INHERITED Route
+// (txNewMode(tx) on the value as loaded) and the two limit pointers on the
+// in-memory transaction, leaves TestCommand and every other member untouched,
+// calls the shipped SaveCheckoutTransaction once, and is a no-op returning
+// nil when tx is nil or already guarded (including an already-v3
+// transaction) — it is the only site that re-versions an existing
+// transaction.
+//
+// Signature note: spec.md §13.2a's own draft gives this a third parameter
+// `limits PlanGuardLimits`. PlanGuardLimits is one of the symbols explicitly
+// reserved for the later agent's internal/rebase_plan_guard.go and is not yet
+// declared anywhere in this tree, so this function takes the two limit
+// pointers directly instead. Once PlanGuardLimits exists, its call site can
+// pass its two members positionally, or this signature can be widened.
+func upgradeGuardedCheckoutTransaction(featurePath string, tx *CheckoutTransaction, maxPerEntry, maxTotal *int) error {
+	if tx == nil || checkoutRecoveryIsGuarded(tx) {
+		return nil
+	}
+	inheritedNewMode := txNewMode(tx)
+	tx.StateVersion = CheckoutTransactionGuardedVersion
+	if inheritedNewMode {
+		tx.Route = RouteNewMode
+	} else {
+		tx.Route = RouteLegacy
+	}
+	if maxPerEntry != nil {
+		tx.MaxReplayPerEntry = maxPerEntry
+	}
+	if maxTotal != nil {
+		tx.MaxReplayTotal = maxTotal
+	}
+	if err := SaveCheckoutTransaction(featurePath, tx); err != nil {
+		return fmt.Errorf("persist transaction: %w", err)
+	}
+	return nil
 }
 
 // ---------- Lock management ----------
@@ -456,21 +558,24 @@ func (e *RebaseConflictError) Error() string {
 
 // ---------- Plan builder ----------
 
-// BuildCheckoutPlan creates the rebase plan from the stack, resolving SHAs.
+// buildCheckoutPlanFrom is the order-taking body of BuildCheckoutPlan. It
+// NEVER sorts: order is the one TopoSort result of this invocation, and it is
+// exactly what the shipped body iterated over.
 //
-// A zero selection means "the whole stack" — the frozen no-flag path. With a
-// selection it plans only the selected entries, preserving TopoSort order and
-// every existing skip rule, and under local-only it excludes anchors entirely.
-func BuildCheckoutPlan(repoDir string, stack Stack, sel SyncSelection) ([]CheckoutPlanEntry, error) {
-	sorted, err := TopoSort(stack)
-	if err != nil {
-		return nil, err
-	}
+// D1 fix (§9.2): any in-stack parent — any entry.Base for which
+// GetBranch(stack, entry.Base) returns a named entry — now resolves through
+// parent.GitBranch() on EVERY scope and EVERY propagation arm, not only the
+// scoped local-only propagated arm the shipped body special-cased. A literal
+// (non-stack-entry) base stays literal and keeps its gitResolveRef behaviour.
+// StackEntry.Repo is still not consulted: no sameStackRepo conjunct is added,
+// GetBranch matches on logical Name alone, exactly as the shipped arm did —
+// checkout's one-physical-checkout posture is preserved verbatim.
+func buildCheckoutPlanFrom(repoDir string, stack Stack, order []StackEntry, sel SyncSelection) ([]CheckoutPlanEntry, error) {
 	scoped := sel.Names != nil
 	localOnly := sel.Policy.Propagation == SyncPropagationLocalOnly
 
 	var plan []CheckoutPlanEntry
-	for _, entry := range sorted {
+	for _, entry := range order {
 		if entry.Archived {
 			continue
 		}
@@ -486,10 +591,8 @@ func BuildCheckoutPlan(repoDir string, stack Stack, sel SyncSelection) ([]Checko
 		if base == "" {
 			continue // root base uses current default; skip
 		}
-		if scoped && localOnly && role == SyncRolePropagated {
-			if parent := GetBranch(stack, entry.Base); parent.Name != "" {
-				base = parent.GitBranch()
-			}
+		if parent := GetBranch(stack, entry.Base); parent.Name != "" {
+			base = parent.GitBranch()
 		}
 
 		newBaseSHA, err := gitResolveRef(repoDir, base)
@@ -514,10 +617,32 @@ func BuildCheckoutPlan(repoDir string, stack Stack, sel SyncSelection) ([]Checko
 	return plan, nil
 }
 
-// printSyncModeHeader prints the sync-modes header. Its bytes are identical to
-// package cli's printSyncModeHeader, which serves the external half.
+// BuildCheckoutPlan creates the rebase plan from the stack, resolving SHAs.
+//
+// A zero selection means "the whole stack" — the frozen no-flag path. With a
+// selection it plans only the selected entries, preserving TopoSort order and
+// every existing skip rule, and under local-only it excludes anchors entirely.
+//
+// BuildCheckoutPlan keeps its shipped signature, its shipped error and its
+// shipped position: it is the sort's owner on the unguarded executing route.
+func BuildCheckoutPlan(repoDir string, stack Stack, sel SyncSelection) ([]CheckoutPlanEntry, error) {
+	sorted, err := TopoSort(stack)
+	if err != nil {
+		return nil, err
+	}
+	return buildCheckoutPlanFrom(repoDir, stack, sorted, sel)
+}
+
+// printSyncModeHeaderTo prints the sync-modes header to w. Its bytes are
+// identical to package cli's printSyncModeHeader, which serves the external
+// half.
+func printSyncModeHeaderTo(w io.Writer, p SyncRunPolicy) {
+	fmt.Fprintf(w, "Sync mode: fetch=%s propagation=%s scope=%s\n", p.Fetch, p.Propagation, p.ScopeLabel()) //nolint:errcheck
+}
+
+// printSyncModeHeader prints the sync-modes header to stdout.
 func printSyncModeHeader(p SyncRunPolicy) {
-	fmt.Printf("Sync mode: fetch=%s propagation=%s scope=%s\n", p.Fetch, p.Propagation, p.ScopeLabel())
+	printSyncModeHeaderTo(os.Stdout, p)
 }
 
 // printLocalOnlyNoOp prints one `[-]` line per selected anchor, then
@@ -557,6 +682,132 @@ type CheckoutSyncOpts struct {
 	Continue bool            // --continue was supplied
 	Abort    bool            // --abort was supplied
 	Changed  map[string]bool // "fetch","no-fetch","full","local-only","only","from","push"
+
+	// PlanGuard carries the plan-guard control flags. It is a separate field,
+	// never merged into Changed.
+	PlanGuard CheckoutPlanGuard
+
+	// guard is the guarded execution route's own JIT revalidation carrier,
+	// set by RunCheckoutSync/ContinueCheckoutSync immediately before they
+	// hand off to executeTransaction/resumeTransaction. It is nil on every
+	// unguarded run: every JIT seam is itself gated on guard != nil, so a
+	// nil guard leaves every shipped byte and process untouched.
+	guard *checkoutPlanGuardRun
+}
+
+// ---------------------------------------------------------------------------
+// checkoutPlanGuardRun — the checkout executor's own JIT revalidation carrier
+// (mirrors internal/cli/sync_plan_guard.go's planGuardRun for the checkout
+// route, which cannot import package cli's copy since internal must never
+// import internal/cli).
+// ---------------------------------------------------------------------------
+
+// checkoutPlanGuardRun is the guarded checkout executor's own JIT
+// revalidation state: the approved plan's per-entry rows (keyed by name),
+// the effective limits, the running replay total THIS invocation has
+// accumulated, and whether state has already been preserved by an earlier
+// invocation's own progress (or this invocation's own lock reclaim). A nil
+// *checkoutPlanGuardRun is the unguarded path throughout RunCheckoutSync/
+// ContinueCheckoutSync/processBranch/resumeFromSwitched: every JIT seam is
+// itself gated on guard != nil, so a nil guard leaves every shipped byte and
+// process untouched.
+type checkoutPlanGuardRun struct {
+	req            RebasePlanRequest
+	approved       map[string]PlanEntry
+	limits         PlanGuardLimits
+	replayedTotal  int
+	statePreserved bool
+}
+
+// newCheckoutPlanGuardRun builds the carrier from the already-built,
+// already-evaluated plan. Its limits are the document's OWN
+// plan.Guard.Limits — the same reconciled per-entry/total values
+// RevalidatePlanGuardEntry must enforce against — never re-resolved a second
+// time from opts. statePreserved starts true only for a --continue, which
+// has already reclaimed the lock (and, for an armed resume, already
+// persisted the guarded transaction) before this carrier is ever built; it
+// starts false for a fresh run and flips true after this invocation's own
+// first successful revalidate.
+func newCheckoutPlanGuardRun(req RebasePlanRequest, plan RebasePlan, statePreserved bool) *checkoutPlanGuardRun {
+	approved := make(map[string]PlanEntry, len(plan.Entries))
+	for _, e := range plan.Entries {
+		approved[e.Name] = e
+	}
+	limits := PlanGuardLimits{PerEntry: plan.Guard.Limits.MaxReplayPerEntry, Total: plan.Guard.Limits.MaxReplayTotal}
+	return &checkoutPlanGuardRun{req: req, approved: approved, limits: limits, statePreserved: statePreserved}
+}
+
+// revalidate re-verifies one entry immediately before its rebase runs,
+// through RevalidatePlanGuardEntry alone — never RevalidatePlanEntry
+// directly. A name absent from the approved plan never blocks: there is
+// nothing approved to compare against, so revalidation has nothing to say
+// about it. A nil receiver is always a no-op, so every JIT call site can
+// call this unconditionally. The running replay total accumulates the count
+// the seam FRESHLY resolved, never the approved row's own recorded value:
+// an `upstream-deferred` row is approved with a null count, so accumulating
+// the approved value would add zero for exactly the rows §10.4's deferral
+// policy exists to re-measure.
+func (g *checkoutPlanGuardRun) revalidate(name string) error {
+	if g == nil {
+		return nil
+	}
+	approved, ok := g.approved[name]
+	if !ok {
+		return nil
+	}
+	res, err := RevalidatePlanGuardEntry(RevalidatePlanGuardEntryRequest{
+		Request:        g.req,
+		Approved:       approved,
+		Limits:         g.limits,
+		ReplayedTotal:  g.replayedTotal,
+		StatePreserved: g.statePreserved,
+	})
+	if err != nil {
+		return err
+	}
+	g.replayedTotal += res.CandidateCount
+	g.statePreserved = true
+	return nil
+}
+
+// fetchCheckoutRepoTo runs the checkout route's single fetch and writes its
+// "Fetching ... done/failed" line to w, returning what it observed rather
+// than a bare error, so a caller building a plan document can describe its
+// own fetch.
+func fetchCheckoutRepoTo(w io.Writer, ctx PlanFetchContext) PlanFetchOutcome {
+	fmt.Fprintf(w, "Fetching %s... ", "default repo") //nolint:errcheck
+	err := RunSilentDir(ctx.Root, "git", "fetch")
+	ok := err == nil
+	if ok {
+		fmt.Fprintln(w, "done") //nolint:errcheck
+	} else {
+		fmt.Fprintln(w, "failed") //nolint:errcheck
+	}
+	candidates := ctx.Candidates
+	if candidates == nil {
+		candidates = []PlanFetchCandidate{}
+	}
+	return PlanFetchOutcome{
+		Applies:   true,
+		Attempted: true,
+		Repos: []PlanFetchRepoResult{{
+			RepoToken:         ctx.RepoToken,
+			ContextRoot:       ctx.Root,
+			ContextCommonDir:  ctx.CommonDir,
+			ContextSource:     ctx.Source,
+			ContextCandidates: candidates,
+			Effect:            ctx.Effect,
+			Attempted:         true,
+			OK:                ok,
+		}},
+	}
+}
+
+// fetchCheckoutRepo is the shipped call site's discarding wrapper: it writes
+// to os.Stdout and passes a zero PlanFetchContext beyond Root, exactly the
+// fetch the shipped body always performed.
+func fetchCheckoutRepo(repoDir string) PlanFetchOutcome {
+	return fetchCheckoutRepoTo(os.Stdout, PlanFetchContext{Root: repoDir})
 }
 
 // RunCheckoutSync executes the full checkout-sync transaction.
@@ -585,11 +836,17 @@ func RunCheckoutSync(opts CheckoutSyncOpts) error {
 		return err
 	}
 
+	guarded := opts.PlanGuard.Guarded()
+
 	// New-mode read-only preflight (I9, I10-I13, I14) — before the lock, so a
-	// refusal leaves no lock, no transaction, and no write of any kind.
+	// refusal leaves no lock, no transaction, and no write of any kind. A
+	// guarded run takes its own, wider InspectCheckoutPlan-driven ladder
+	// below instead, which also covers a guarded LEGACY run the same way:
+	// a guarded checkout run and a --plan of the same invocation decide
+	// state.* from one producer (§12.2d rule 5).
 	var preloaded *Stack
 	var sel SyncSelection
-	if opts.NewMode {
+	if opts.NewMode && !guarded {
 		stack, loadErr := LoadStack(opts.FeaturePath)
 		if loadErr != nil {
 			return fmt.Errorf("sync modes require a stack; feature %q has no readable stack.yaml", opts.Feature)
@@ -608,6 +865,32 @@ func RunCheckoutSync(opts CheckoutSyncOpts) error {
 		preloaded = &stack
 	}
 
+	// Guarded fresh route's own inspection + hand-check ladder (§12.2d fresh
+	// arm), run above the lock so a refusal here leaves no lock, no
+	// transaction, and no write of any kind. InspectCheckoutPlan is the same
+	// producer PlanCheckoutRebase's --plan route already uses.
+	var insp CheckoutPlanInspection
+	if guarded {
+		insp = InspectCheckoutPlan(CheckoutPlanInspectionRequest{Opts: opts})
+		switch {
+		case insp.StackErr != nil:
+			if opts.NewMode {
+				return fmt.Errorf("sync modes require a stack; feature %q has no readable stack.yaml", opts.Feature)
+			}
+			return fmt.Errorf("load stack: %w", insp.StackErr)
+		case insp.SortErr != nil:
+			if !opts.NewMode {
+				return fmt.Errorf("build plan: %w", insp.SortErr)
+			}
+			return insp.SortErr
+		case insp.SelectionErr != nil:
+			return insp.SelectionErr
+		case insp.BasePreflight.Failed:
+			return errors.New(insp.BasePreflight.Detail)
+		}
+		sel = insp.Selection
+	}
+
 	// Lock
 	if err := AcquireCheckoutLock(opts.FeaturePath); err != nil {
 		return err
@@ -615,21 +898,39 @@ func RunCheckoutSync(opts CheckoutSyncOpts) error {
 
 	if opts.NewMode {
 		printSyncModeHeader(opts.Policy)
+	}
+
+	// Fetch: a guarded run measures its own fetch context from insp (the
+	// same FetchPlan/Gates/BasePreflight/State facts the --plan route
+	// already reports) and reports the outcome to the guard-evaluation
+	// document; an unguarded new-mode run keeps its shipped bare call.
+	var fetchOutcome PlanFetchOutcome
+	switch {
+	case guarded:
+		if opts.Policy.Fetch == SyncFetchEnabled && insp.FetchPlan.Applies && len(insp.FetchPlan.Blockers) == 0 &&
+			checkoutRowsAvailable(insp) && !checkoutGatesFailed(insp.Gates) && !insp.BasePreflight.Failed && !insp.State.LiveForeignLock() {
+			fetchOutcome = fetchCheckoutRepoTo(os.Stdout, PlanFetchContext{
+				RepoToken:  "",
+				Root:       opts.RepoDir,
+				CommonDir:  insp.FetchPlan.Contexts[0].CommonDir,
+				Source:     "workspace-repo-root",
+				Candidates: insp.FetchPlan.Contexts[0].Candidates,
+			})
+		}
+	case opts.NewMode:
 		if opts.Policy.Fetch == SyncFetchEnabled {
-			fmt.Printf("Fetching %s... ", "default repo")
-			if fetchErr := RunSilentDir(opts.RepoDir, "git", "fetch"); fetchErr != nil {
-				fmt.Println("failed")
-			} else {
-				fmt.Println("done")
-			}
+			fetchCheckoutRepo(opts.RepoDir)
 		}
 	}
 
 	// Load stack
 	var stack Stack
-	if preloaded != nil {
+	switch {
+	case guarded:
+		stack = insp.Stack
+	case preloaded != nil:
 		stack = *preloaded
-	} else {
+	default:
 		stack, err = LoadStack(opts.FeaturePath)
 		if err != nil {
 			ReleaseCheckoutLock(opts.FeaturePath)
@@ -637,8 +938,16 @@ func RunCheckoutSync(opts CheckoutSyncOpts) error {
 		}
 	}
 
-	// Build plan
-	plan, err := BuildCheckoutPlan(opts.RepoDir, stack, sel)
+	// Build plan. A guarded run rebuilds from insp.Order (the sort this run
+	// already performed above the lock) rather than re-sorting; an
+	// unguarded run keeps its shipped BuildCheckoutPlan call, which sorts
+	// the stack itself.
+	var plan []CheckoutPlanEntry
+	if guarded {
+		plan, err = buildCheckoutPlanFrom(opts.RepoDir, stack, insp.Order, sel)
+	} else {
+		plan, err = BuildCheckoutPlan(opts.RepoDir, stack, sel)
+	}
 	if err != nil {
 		ReleaseCheckoutLock(opts.FeaturePath)
 		return fmt.Errorf("build plan: %w", err)
@@ -651,6 +960,25 @@ func RunCheckoutSync(opts CheckoutSyncOpts) error {
 	if len(plan) == 0 {
 		ReleaseCheckoutLock(opts.FeaturePath)
 		return nil
+	}
+
+	// Guard seam (§13.2a, §13.6): build the guard-evaluation document from
+	// the SAME insp/fetchOutcome this run already produced, then evaluate
+	// it — after the plan build, before SaveCheckoutTransaction, so a
+	// refusal here has moved no branch and written no transaction.
+	var guardRun *checkoutPlanGuardRun
+	if guarded {
+		req := checkoutPlanRequest(opts, insp, fetchOutcome)
+		guardPlan, berr := BuildRebasePlan(req)
+		if berr != nil {
+			ReleaseCheckoutLock(opts.FeaturePath)
+			return berr
+		}
+		if gerr := EvaluatePlanGuard(guardPlan, opts.PlanGuard); gerr != nil {
+			ReleaseCheckoutLock(opts.FeaturePath)
+			return gerr
+		}
+		guardRun = newCheckoutPlanGuardRun(req, guardPlan, false)
 	}
 
 	// Create transaction
@@ -679,6 +1007,12 @@ func RunCheckoutSync(opts CheckoutSyncOpts) error {
 			tx.ValidationSource = "flag"
 		}
 	}
+	if guarded {
+		tx.StateVersion = CheckoutTransactionGuardedVersion
+		tx.Route = checkoutEffectiveRoute(opts, nil)
+		tx.MaxReplayPerEntry = opts.PlanGuard.MaxPerEntry
+		tx.MaxReplayTotal = opts.PlanGuard.MaxTotal
+	}
 
 	// Persist BEFORE switching
 	if err := SaveCheckoutTransaction(opts.FeaturePath, tx); err != nil {
@@ -686,30 +1020,43 @@ func RunCheckoutSync(opts CheckoutSyncOpts) error {
 		return fmt.Errorf("persist transaction: %w", err)
 	}
 
+	opts.guard = guardRun
 	return executeTransaction(opts, tx)
+}
+
+// firstUnresolvedCheckoutBase is the locator half of the checkout I14
+// preflight (§10.7): the shipped loop, the shipped skip conjuncts, the
+// shipped base resolution and the shipped VerifyGitRef probe, in the shipped
+// order, stopping at the first failure and returning it rather than
+// composing a sentence.
+func firstUnresolvedCheckoutBase(opts CheckoutSyncOpts, stack Stack, sel SyncSelection) (entry, ref string, found bool) {
+	if opts.Policy.Fetch != SyncFetchDisabled {
+		return "", "", false
+	}
+	localOnly := opts.Policy.Propagation == SyncPropagationLocalOnly
+	for _, e := range sel.Entries {
+		if e.Archived || e.Base == "" {
+			continue
+		}
+		r := e.Base
+		if e.Role == SyncRoleAnchor {
+			if localOnly {
+				continue
+			}
+		} else if parent := GetBranch(stack, e.Base); parent.Name != "" {
+			r = parent.GitBranch()
+		}
+		if err := VerifyGitRef(opts.RepoDir, r); err != nil {
+			return e.Name, r, true
+		}
+	}
+	return "", "", false
 }
 
 // verifyCheckoutBasesLocally is the checkout half of the I14 no-fetch preflight.
 func verifyCheckoutBasesLocally(opts CheckoutSyncOpts, stack Stack, sel SyncSelection) error {
-	if opts.Policy.Fetch != SyncFetchDisabled {
-		return nil
-	}
-	localOnly := opts.Policy.Propagation == SyncPropagationLocalOnly
-	for _, entry := range sel.Entries {
-		if entry.Archived || entry.Base == "" {
-			continue
-		}
-		ref := entry.Base
-		if entry.Role == SyncRoleAnchor {
-			if localOnly {
-				continue
-			}
-		} else if parent := GetBranch(stack, entry.Base); parent.Name != "" {
-			ref = parent.GitBranch()
-		}
-		if err := VerifyGitRef(opts.RepoDir, ref); err != nil {
-			return fmt.Errorf("base %q for stack entry %q does not resolve locally; drop --no-fetch or fetch manually first", ref, entry.Name)
-		}
+	if entry, ref, found := firstUnresolvedCheckoutBase(opts, stack, sel); found {
+		return fmt.Errorf("base %q for stack entry %q does not resolve locally; drop --no-fetch or fetch manually first", ref, entry)
 	}
 	return nil
 }
@@ -720,12 +1067,12 @@ func ContinueCheckoutSync(opts CheckoutSyncOpts) error {
 	if err != nil {
 		return fmt.Errorf("no transaction to continue: %w", err)
 	}
-	if tx.StateVersion > CheckoutTransactionVersion {
+	if tx.StateVersion > CheckoutTransactionGuardedVersion {
 		return fmt.Errorf("checkout sync transaction state version %d is newer than %d; upgrade tws or remove %s",
-			tx.StateVersion, CheckoutTransactionVersion, CheckoutTransactionPath(opts.FeaturePath))
+			tx.StateVersion, CheckoutTransactionGuardedVersion, CheckoutTransactionPath(opts.FeaturePath))
 	}
 
-	if tx.StateVersion >= CheckoutTransactionVersion {
+	if TransactionNewMode(tx) {
 		if err := checkoutContinueMismatches(opts, tx); err != nil {
 			return err
 		}
@@ -736,20 +1083,58 @@ func ContinueCheckoutSync(opts CheckoutSyncOpts) error {
 		return fmt.Errorf("cannot add --push to an existing transaction that was started without it; persisted push=%v wins", tx.Push)
 	}
 
+	// Guarded continuation's own inspection (§12.2d continuation arm): the
+	// same InspectCheckoutPlan the --plan route uses, called before the lock
+	// reclaim below so the guard seam it feeds reads the identical snapshot
+	// a --plan of this same invocation would have read. Its continuation
+	// arm sorts nothing and resolves no selection of its own (§13.7 rule 2).
+	guarded := opts.PlanGuard.Guarded()
+	var insp CheckoutPlanInspection
+	if guarded {
+		insp = InspectCheckoutPlan(CheckoutPlanInspectionRequest{Opts: opts})
+	}
+
 	// For continue, we forcibly reclaim the lock (we own the transaction)
 	if err := forceAcquireCheckoutLock(opts.FeaturePath); err != nil {
 		return err
 	}
 	tx.LockPID = os.Getpid()
 
+	// Guard seam (§13.2a, §13.6 rule 4d): below the lock, in its shipped
+	// continuation position. The lock is already reclaimed by this point,
+	// so any refusal here always has StatePreserved: true.
+	var guardRun *checkoutPlanGuardRun
+	if guarded {
+		req := checkoutPlanRequest(opts, insp, PlanFetchOutcome{})
+		guardPlan, berr := BuildRebasePlan(req)
+		if berr != nil {
+			return berr
+		}
+		if gerr := EvaluatePlanGuard(guardPlan, opts.PlanGuard); gerr != nil {
+			var refusal *PlanGuardRefusalError
+			if errors.As(gerr, &refusal) {
+				refusal.StatePreserved = true
+			}
+			return gerr
+		}
+		guardRun = newCheckoutPlanGuardRun(req, guardPlan, true)
+
+		// Armed resume of a version-less/v2 transaction persists its
+		// limits (§13.2a); a no-op when tx is already guarded.
+		if err := upgradeGuardedCheckoutTransaction(opts.FeaturePath, tx, opts.PlanGuard.MaxPerEntry, opts.PlanGuard.MaxTotal); err != nil {
+			return err
+		}
+	}
+
 	// Use persisted values
 	opts.Push = tx.Push
 	opts.TestCommand = tx.TestCommand
 
-	if tx.StateVersion >= CheckoutTransactionVersion {
+	if TransactionNewMode(tx) {
 		printSyncModeHeader(transactionPolicy(tx))
 	}
 
+	opts.guard = guardRun
 	return resumeTransaction(opts, tx)
 }
 
@@ -820,7 +1205,7 @@ func AbortCheckoutSync(opts CheckoutSyncOpts) error {
 	// Deferred I7: without a trigger flag, --continue --abort is only refused
 	// against new-mode state. A legacy transaction keeps today's behaviour,
 	// where --abort wins and --continue is ignored.
-	if opts.Continue && tx.StateVersion >= CheckoutTransactionVersion {
+	if opts.Continue && checkoutRecoveryIsNewMode(tx) {
 		return fmt.Errorf("--continue and --abort are mutually exclusive")
 	}
 
@@ -931,6 +1316,16 @@ func resumeTransaction(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 }
 
 func resumeFromSwitched(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
+	// JIT guard revalidation seam: this invocation is about to run its own
+	// first Git command (the rebase) for the current entry, having resumed
+	// past the branch-switch step processBranch's own seam already covers
+	// in a fresh invocation. A nil guard (every unguarded run) is always a
+	// no-op.
+	entry := tx.Plan[tx.CurrentIndex]
+	if err := opts.guard.revalidate(entry.Name); err != nil {
+		return err
+	}
+
 	// Still need to rebase the current entry, then continue
 	if err := doRebase(opts, tx); err != nil {
 		return err
@@ -1028,6 +1423,15 @@ func processBranch(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 		return fmt.Errorf("re-resolve base %q: %w", entry.Base, err)
 	}
 	entry.NewBaseSHA = newBaseSHA
+
+	// JIT guard revalidation seam: re-measure this entry against current
+	// Git state immediately before its own first Git command in this
+	// invocation runs, so drift between admission and execution refuses
+	// rather than silently replaying a stale decision (§10, §11.8). A nil
+	// guard (every unguarded run) is always a no-op.
+	if err := opts.guard.revalidate(entry.Name); err != nil {
+		return err
+	}
 
 	// StepHook: planned
 	if StepHook != nil {

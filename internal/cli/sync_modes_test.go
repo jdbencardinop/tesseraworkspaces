@@ -226,7 +226,7 @@ func TestSyncModes_HelpFlagBlockIsAlphabetical(t *testing.T) {
 		}
 		names = append(names, m[1])
 	}
-	want := []string{"abort", "continue", "fetch", "from", "full", "local-only", "no-fetch", "only", "push", "test", "verbose"}
+	want := []string{"abort", "approve-plan", "continue", "fetch", "from", "full", "json", "local-only", "max-replay-per-entry", "max-replay-total", "no-fetch", "only", "plan", "push", "test", "verbose"}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Fatalf("help flag block = %v, want %v", names, want)
 	}

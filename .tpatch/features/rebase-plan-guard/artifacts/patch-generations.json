@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "feature": "rebase-plan-guard",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_268271dd0d14",
+      "kind": "record",
+      "patch_sha256": "8455e9e9eb531205856f16430d2ba8a3672c1e1e969031ea592a1e6a8badbad1",
+      "git_patch_id": "3bfb484ec38fcf1c475dc78afb21b008d491763d",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "1355413f4c100bf1479233628176af7255f2fb67c035276fe1f889655fd2e41c",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "",
+      "base_commit": "e0bd2b1421d8acfaf6e9ac506f8c0a3b3f742995",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "CHANGELOG.md",
+        "README.md",
+        "assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md",
+        "assets/skills/claude/tesseraworkspaces/SKILL.md",
+        "assets/skills/copilot/tws.prompt.md",
+        "docs/cheatsheet.md",
+        "docs/engineering-workflow.md",
+        "docs/roadmap.md",
+        "internal/checkout_sync.go",
+        "internal/checkout_sync_plan_test.go",
+        "internal/cli/checkout_sync.go",
+        "internal/cli/checkout_sync_modes_test.go",
+        "internal/cli/checkout_sync_test.go",
+        "internal/cli/sync.go",
+        "internal/cli/sync_downgrade_test.go",
+        "internal/cli/sync_guarded_state_test.go",
+        "internal/cli/sync_helpers.go",
+        "internal/cli/sync_modes.go",
+        "internal/cli/sync_modes_test.go",
+        "internal/cli/sync_plan_docs_test.go",
+        "internal/cli/sync_plan_guard.go",
+        "internal/cli/sync_plan_guard_test.go",
+        "internal/cli/sync_plan_integration_test.go",
+        "internal/cli/sync_plan_test.go",
+        "internal/cli/sync_recovery_test.go",
+        "internal/cli/sync_scoped_test.go",
+        "internal/cli/testdata/rebase_plan/sync_help.txt",
+        "internal/exec.go",
+        "internal/exec_clean_test.go",
+        "internal/git_capability.go",
+        "internal/git_capability_test.go",
+        "internal/rebase_plan.go",
+        "internal/rebase_plan_build.go",
+        "internal/rebase_plan_fingerprint.go",
+        "internal/rebase_plan_fingerprint_test.go",
+        "internal/rebase_plan_guard.go",
+        "internal/rebase_plan_probe.go",
+        "internal/rebase_plan_probe_test.go",
+        "internal/rebase_plan_render.go",
+        "internal/rebase_plan_render_test.go",
+        "internal/rebase_plan_state.go",
+        "internal/rebase_plan_state_test.go",
+        "internal/rebase_plan_test.go",
+        "internal/rebase_planner.go",
+        "internal/rebase_planner_test.go",
+        "internal/sync_run_state.go",
+        "internal/sync_selection.go",
+        "internal/syncstate.go"
+      ],
+      "dependencies": [
+        {
+          "slug": "amend-aware-rebase",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "skill-distribution",
+          "kind": "soft",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "stack-status",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "f4a7ac2a9cb16fe98fdcf799a556ed87921b9b911edcb7bc0e6426cc880d6518",
+          "parent_recipe_sha256": "952a51e35809c68b63649d54b25594fb5004600db6135b31115b4cf3eb8fe54d"
+        },
+        {
+          "slug": "sync-modes",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "1a5fc776c599ea2bca58d47cfa405f90045afabd7367b3c2379484eefd9f8999",
+          "parent_recipe_sha256": "3a59ea8344f3c47d6d18a1ef80e54f146c18a1679d5cfb9af43534432f41344c"
+        },
+        {
+          "slug": "tiered-skill-system",
+          "kind": "soft",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        }
+      ],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}

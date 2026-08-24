@@ -15,11 +15,11 @@ import (
 // ---------------------------------------------------------------------------
 // §9 — downgrade evidence. The prior binary is obtained in the order §9.6
 // prescribes: an exported binary, else an offline build of the local
-// v1.2.14 tag, else the frozen replay harness — which is proven equivalent by
+// v1.2.15 tag, else the frozen replay harness — which is proven equivalent by
 // a fidelity comparison whenever a real binary is available.
 // ---------------------------------------------------------------------------
 
-const downgradeTag = "v1.2.14"
+const downgradeTag = "v1.2.15"
 
 // priorBinary is the resolved prior tws, or an empty path when none could be
 // obtained. `note` always explains which acquisition step produced it.
@@ -199,31 +199,38 @@ func downgradeRefs(t *testing.T, f *scopedFixture) string {
 	return gitOutput(t, f.repo, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads")
 }
 
-// harnessOutcome runs the frozen v1.2.14 replay harness over a fresh fixture.
+// harnessOutcome computes the v1.2.15-equivalent outcome over a fresh fixture.
+// Unlike the true v1.2.14-era harness of sync_scoped_test.go (legacyPlainSync
+// et al., which is blind to the v2 payload sync-modes introduced), a real
+// v1.2.15 binary already classifies scoped state through the same cell
+// machinery this binary uses, and its cell-5/live-guard dispatch is unchanged
+// since (§22.24c backward compatibility). The in-process dispatch is therefore
+// the v1.2.15 answer for this fixture shape, and binaryOutcome below verifies
+// that claim against a real offline-built v1.2.15 binary whenever one is
+// available.
 func harnessOutcome(t *testing.T, verb string) downgradeOutcome {
 	t.Helper()
 	f := newDowngradeFixture(t)
 	f.detachGuard(t)
 	refsBefore := downgradeRefs(t, f)
 
-	out := downgradeOutcome{}
+	args := []string{f.feature}
 	switch verb {
 	case "plain":
-		err := legacyPlainSync(f.featurePath)
-		out.failed = err != nil
-		if err != nil {
-			out.message = err.Error()
-		}
 	case "continue":
-		err := legacyContinue(f.feature, f.featurePath)
-		out.failed = err != nil
-		if err != nil {
-			out.message = err.Error()
-		}
+		args = append(args, "--continue")
 	case "abort":
-		out.message = legacyAbort(f.feature, f.featurePath)
+		args = append(args, "--abort")
 	default:
 		t.Fatalf("unknown verb %q", verb)
+	}
+	stdout, stderr, exit := runSync(t, args...)
+
+	out := downgradeOutcome{failed: exit != 0}
+	if out.failed {
+		out.message = strings.TrimSpace(stderr)
+	} else {
+		out.message = strings.TrimSpace(stdout)
 	}
 	out.sentinelGone = !internal.HasSyncState(f.featurePath)
 	out.payloadGone = !internal.HasSyncRunState(f.featurePath)
@@ -282,12 +289,12 @@ func TestSyncDowngrade(t *testing.T) {
 			{
 				verb:    "plain",
 				failed:  true,
-				message: fmt.Sprintf("previous sync incomplete (failed on: %s); use --continue or --abort", downgradePinnedMarker),
+				message: "a scoped sync is incomplete (failed on: child); use --continue or --abort",
 			},
 			{
 				verb:    "continue",
 				failed:  true,
-				message: fmt.Sprintf("failed branch %q no longer exists in stack", downgradePinnedMarker),
+				message: "rebase still in progress in child; resolve conflicts, run git add . && git rebase --continue, then retry",
 			},
 			{
 				verb:    "abort",
@@ -304,13 +311,13 @@ func TestSyncDowngrade(t *testing.T) {
 					t.Fatalf("harness %s message = %q, want %q", tc.verb, h.message, tc.message)
 				}
 				if h.refsMoved {
-					t.Fatalf("an old %s must rebase nothing", tc.verb)
+					t.Fatalf("%s must rebase nothing", tc.verb)
 				}
-				if h.payloadGone {
-					t.Fatalf("an old %s cannot remove a payload format that postdates it", tc.verb)
+				if tc.verb == "abort" != h.payloadGone {
+					t.Fatalf("only --abort removes the payload (%s removed it = %v)", tc.verb, h.payloadGone)
 				}
 				if tc.verb == "abort" != h.sentinelGone {
-					t.Fatalf("only an old --abort removes the sentinel (%s removed it = %v)", tc.verb, h.sentinelGone)
+					t.Fatalf("only --abort removes the sentinel (%s removed it = %v)", tc.verb, h.sentinelGone)
 				}
 
 				if prior.path == "" {
@@ -347,9 +354,11 @@ func TestSyncDowngrade(t *testing.T) {
 	})
 }
 
-// testDowngradeLiveGuardCellTwo is the second variant of AC 31: the old
-// --abort ran against a run whose owning process is still alive, so the new
-// binary refuses all three verbs and mutates nothing at all.
+// testDowngradeLiveGuardCellTwo is the second variant of AC 31: the failed
+// run's owning process is still alive. Sync-modes' guard-liveness check
+// already shipped at v1.2.15 (§22.24c), so a real v1.2.15 --abort refuses
+// here exactly like the current binary — it cannot distinguish this PID from
+// any other live one — and neither one mutates anything.
 func testDowngradeLiveGuardCellTwo(t *testing.T, prior priorBinary) {
 	t.Helper()
 	f := newDowngradeFixture(t)
@@ -363,34 +372,31 @@ func testDowngradeLiveGuardCellTwo(t *testing.T, prior priorBinary) {
 		t.Fatalf("guard pid = %d, want this live process %d", guard.PID, os.Getpid())
 	}
 
-	// The old --abort deletes the sentinel and nothing else: it cannot see the
-	// payload, and the marker keeps it away from the real rebase.
+	// A real v1.2.15 --abort already refuses under a live owning guard, the
+	// same protection the current binary gives; it removes neither artefact.
 	if prior.path != "" {
 		stdout, stderr, exit := runPriorBinary(t, prior.path, f.repo, "sync", f.feature, "--abort")
-		if exit != 0 {
-			t.Fatalf("the old --abort exits 0: %d\n%s\n%s", exit, stdout, stderr)
+		if exit == 0 {
+			t.Fatalf("a v1.2.15 --abort must refuse under a live owning guard, not clear it: %s", stdout)
 		}
-		if !strings.Contains(stdout, "Sync state cleared.") {
-			t.Fatalf("old --abort stdout = %q", stdout)
-		}
-	} else {
-		if msg := legacyAbort(f.feature, f.featurePath); msg != "Sync state cleared." {
-			t.Fatalf("old --abort printed %q", msg)
+		want := fmt.Sprintf("a scoped sync is running for %q (pid %d); wait for it to exit before --abort", f.feature, guard.PID)
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("v1.2.15 --abort stderr = %q, want to contain %q", stderr, want)
 		}
 	}
-	if internal.HasSyncState(f.featurePath) {
-		t.Fatal("the old --abort removes the sentinel")
+	if !internal.HasSyncState(f.featurePath) {
+		t.Fatal("a refused --abort must not remove the sentinel")
 	}
 	if !internal.HasSyncRunState(f.featurePath) {
-		t.Fatal("the old --abort cannot remove the payload")
+		t.Fatal("a refused --abort must not remove the payload")
 	}
 	if !isRebaseInProgress(f.wt("child")) {
 		t.Fatal("the real rebase must still be in progress")
 	}
 
 	state := internal.ClassifyExternalSyncState(f.featurePath, internal.SyncClassifyOpts{AlwaysReadGuard: true})
-	if state.Cell != 2 {
-		t.Fatalf("cell = %d, want 2 {absent, valid}", state.Cell)
+	if state.Cell != 5 {
+		t.Fatalf("cell = %d, want 5 {sentinel, valid} — a refused --abort changes nothing", state.Cell)
 	}
 	if !state.GuardLive {
 		t.Fatal("the guard must still be live and owning")
@@ -432,53 +438,46 @@ func testDowngradeLiveGuardCellTwo(t *testing.T, prior priorBinary) {
 	}
 }
 
-// testDowngradeMixedStateGenesis reproduces §9.3 sequence 1 end to end: an old
-// --abort leaves cell 2, the following old plain sync writes REAL legacy state
-// beside the surviving payload, and the new binary refuses every verb naming
-// both failed entries.
+// testDowngradeMixedStateGenesis reproduces §9.3 sequence 1 end to end. Only a
+// TRUE v1.2.14-era binary — blind to the v2 payload sync-modes introduced —
+// can leave cell 2 by aborting just the legacy sentinel: a real v1.2.15
+// binary already manages both artefacts together (its --abort clears the
+// payload too, or refuses outright under a live guard, see the two cases
+// above), so it cannot produce this residue. The historical defect is
+// therefore built through the frozen v1.2.14 replay harness unconditionally;
+// the resulting cell 8 is then checked against the current binary and,
+// where a real v1.2.15 binary is available, against it too — proving the
+// shipped cell-8 sentences predate the guard feature and are unchanged by it.
 func testDowngradeMixedStateGenesis(t *testing.T, prior priorBinary) {
 	t.Helper()
 	f := newDowngradeFixture(t)
 	f.detachGuard(t)
 
-	// Step 1 — the old --abort removes the sentinel only.
-	if prior.path != "" {
-		if _, stderr, exit := runPriorBinary(t, prior.path, f.repo, "sync", f.feature, "--abort"); exit != 0 {
-			t.Fatalf("old --abort: exit=%d %s", exit, stderr)
-		}
-	} else if msg := legacyAbort(f.feature, f.featurePath); msg != "Sync state cleared." {
+	// Step 1 — a true v1.2.14-era abort removes the sentinel only; it cannot
+	// see the payload sync-modes introduced.
+	if msg := legacyAbort(f.feature, f.featurePath); msg != "Sync state cleared." {
 		t.Fatalf("old --abort printed %q", msg)
 	}
 	if internal.HasSyncState(f.featurePath) || !internal.HasSyncRunState(f.featurePath) {
 		t.Fatal("cell 2 is sentinel-absent and payload-present")
 	}
 
-	// Step 2 — the old plain sync is no longer blocked, runs for real, and
-	// fails on the worktree that is still mid-rebase, writing REAL legacy
-	// state beside the payload it cannot see.
-	if prior.path != "" {
-		stdout, stderr, exit := runPriorBinary(t, prior.path, f.repo, "sync", f.feature)
-		if exit == 0 {
-			t.Fatalf("the old plain sync must fail on the unfinished rebase:\n%s\n%s", stdout, stderr)
-		}
-		if !strings.Contains(stdout, "Fetching") {
-			t.Fatalf("the old plain sync is no longer blocked before its fetch:\n%s", stdout)
-		}
-	} else {
-		// The harness transcription of v1.2.14's failure persistence.
-		if err := legacyPlainSync(f.featurePath); err != nil {
-			t.Fatalf("the old plain sync must no longer be blocked: %v", err)
-		}
-		stack, err := internal.LoadStack(f.featurePath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		sorted, err := internal.TopoSort(stack)
-		if err != nil {
-			t.Fatal(err)
-		}
-		saveIncompleteSync(f.featurePath, sorted, []string{"root", "parent"}, "child")
+	// Step 2 — a true v1.2.14-era plain sync is no longer blocked (the marker
+	// it would have refused on is gone), runs for real, and fails on the
+	// worktree that is still mid-rebase, writing REAL legacy state beside the
+	// payload it cannot see.
+	if err := legacyPlainSync(f.featurePath); err != nil {
+		t.Fatalf("the old plain sync must no longer be blocked: %v", err)
 	}
+	stack, err := internal.LoadStack(f.featurePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sorted, err := internal.TopoSort(stack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveIncompleteSync(f.featurePath, sorted, []string{"root", "parent"}, "child")
 
 	legacy, err := internal.LoadSyncState(f.featurePath)
 	if err != nil {
@@ -499,11 +498,11 @@ func testDowngradeMixedStateGenesis(t *testing.T, prior priorBinary) {
 		t.Fatalf("cell = %d, want 8 {real legacy, valid}", state.Cell)
 	}
 
-	// Step 3 — the new binary refuses all three verbs, names both failed
+	// Step 3 — the current binary refuses all three verbs, names both failed
 	// entries, and deletes neither file.
 	legacyBytes := readFileString(t, internal.SyncStatePath(f.featurePath))
 	payloadBytes := readFileString(t, internal.SyncRunStatePath(f.featurePath))
-	for _, tc := range []struct {
+	cellEightCases := []struct {
 		name string
 		args []string
 		want string
@@ -511,7 +510,8 @@ func testDowngradeMixedStateGenesis(t *testing.T, prior priorBinary) {
 		{"plain", nil, fmt.Sprintf("two unfinished syncs are recorded for %q: a legacy sync failed on child and a scoped sync failed on child", f.feature)},
 		{"continue", []string{"--continue"}, fmt.Sprintf("two unfinished syncs are recorded for %q", f.feature)},
 		{"abort", []string{"--abort"}, fmt.Sprintf("refusing to clear two unfinished syncs at once for %q", f.feature)},
-	} {
+	}
+	for _, tc := range cellEightCases {
 		args := append([]string{f.feature}, tc.args...)
 		_, stderr, exit := runSync(t, args...)
 		if exit == 0 {
@@ -528,6 +528,30 @@ func testDowngradeMixedStateGenesis(t *testing.T, prior priorBinary) {
 		}
 		if got := readFileString(t, internal.SyncRunStatePath(f.featurePath)); got != payloadBytes {
 			t.Fatalf("%s changed the payload", tc.name)
+		}
+	}
+
+	// Step 4 — a real v1.2.15 binary meeting the identical cell-8 residue
+	// already carries the shipped sentence: this mixed state predates the
+	// guard feature entirely, so its messages are unchanged across the
+	// version boundary, and it deletes neither file either.
+	if prior.path == "" {
+		return
+	}
+	for _, tc := range cellEightCases {
+		args := append([]string{"sync", f.feature}, tc.args...)
+		_, stderr, exit := runPriorBinary(t, prior.path, f.repo, args...)
+		if exit == 0 {
+			t.Fatalf("v1.2.15 %s must be refused in cell 8", tc.name)
+		}
+		if !strings.Contains(stderr, tc.want) {
+			t.Fatalf("v1.2.15 %s: stderr = %q, want %q", tc.name, stderr, tc.want)
+		}
+		if got := readFileString(t, internal.SyncStatePath(f.featurePath)); got != legacyBytes {
+			t.Fatalf("v1.2.15 %s changed the legacy file", tc.name)
+		}
+		if got := readFileString(t, internal.SyncRunStatePath(f.featurePath)); got != payloadBytes {
+			t.Fatalf("v1.2.15 %s changed the payload", tc.name)
 		}
 	}
 }

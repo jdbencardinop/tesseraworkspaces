@@ -41,11 +41,20 @@ Shipped foundations:
   cannot move an unselected branch; the frozen decision, scope, push, and
   validation command are persisted and carried through `--continue` and
   `--abort`; incompatible combinations are refused before any fetch, lock, or
-  rebase; and external sync and push share one resolved layout.
+  rebase; and external sync and push share one resolved layout;
+- rebase plan guard: `tws sync` can preview the exact rebase a run would
+  perform — the old base, the new base, and a replay-candidate count per
+  entry — before anything moves, and refuses to execute a plan whose replay
+  count exceeds an operator-set bound unless the operator approves the exact
+  previewed plan by its fingerprint. A preview still fetches wherever the run
+  it describes fetches, so it is a safety gate rather than an offline mode; a
+  guarded run records its bound in recovery state so an older tws release
+  refuses to resume it instead of silently dropping the guard; and a guard
+  refusal is a single anchored line on stderr, distinct from every refusal
+  tws already performed.
 
-Current target: **rebase plan guard** — the first remaining P1 item below: show
-the old base, new base, and replay count, and stop surprising broad rebases
-before they start.
+Current target: **safe reparent/restack** — update Git and metadata
+atomically for a single-parent stack.
 
 Follow-ups explicitly owned by later features rather than by `tws status`:
 
@@ -81,7 +90,6 @@ For decoupled names, `StackEntry.Name` identifies the tws worktree while `StackE
 ## P1 stack safety and observability backlog
 
 - **Sync modes (shipped)**: local-only propagation, no-fetch operation, surgical branch/descendant sync, and explicit root targets, with the frozen decision persisted and carried through `--continue`/`--abort`.
-- **Rebase plan guard**: show the old base, new base, and replay count; stop surprising broad rebases before they start.
 - **Safe reparent/restack**: update Git and metadata atomically for a single-parent stack.
 
 ## Agent integration — P2

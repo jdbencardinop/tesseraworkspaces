@@ -1,0 +1,8 @@
+{
+  "slug": "rebase-plan-guard",
+  "completed_at": "2026-08-24T21:21:26Z",
+  "base_commit": "e0bd2b1421d8acfaf6e9ac506f8c0a3b3f742995",
+  "has_patch": true,
+  "validation_status": "passed",
+  "validation_notes": "tpatch test — command: go test ./... -count=1 -timeout 40m"
+}

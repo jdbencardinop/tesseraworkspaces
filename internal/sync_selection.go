@@ -167,11 +167,18 @@ func ResolveSyncSelection(stack Stack, policy SyncRunPolicy, opts SyncSelectionO
 	if err != nil {
 		return SyncSelection{}, err
 	}
+	return ResolveSyncSelectionFromOrder(stack, sorted, policy, opts)
+}
 
-	members := make(map[string]bool, len(sorted))
+// ResolveSyncSelectionFromOrder is ResolveSyncSelection's body, taking the
+// already-sorted order so a caller that already holds this invocation's one
+// TopoSort result never sorts a second time. It is otherwise byte-identical
+// to ResolveSyncSelection, including every error string.
+func ResolveSyncSelectionFromOrder(stack Stack, order []StackEntry, policy SyncRunPolicy, opts SyncSelectionOpts) (SyncSelection, error) {
+	members := make(map[string]bool, len(order))
 	switch policy.ScopeKind {
 	case SyncScopeAll:
-		for _, e := range sorted {
+		for _, e := range order {
 			members[e.Name] = true
 		}
 	case SyncScopeOne:
@@ -199,7 +206,7 @@ func ResolveSyncSelection(stack Stack, policy SyncRunPolicy, opts SyncSelectionO
 
 	sel := SyncSelection{Policy: policy, Names: make(map[string]bool, len(members))}
 	repoSet := make(map[string]bool)
-	for _, entry := range sorted {
+	for _, entry := range order {
 		if !members[entry.Name] {
 			continue
 		}

@@ -3,9 +3,13 @@ package cli
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
 )
@@ -77,6 +81,101 @@ func (f *scopedFixture) detachGuard(t *testing.T) {
 	body := fmt.Sprintf("pid: 999999\ncreated: %q\ntoken: %q\nstate_version: 2\n", guard.Created, guard.Token)
 	if err := os.WriteFile(internal.SyncRunGuardPath(f.featurePath), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// spawnDeadPID starts a real short-lived process, waits for it to exit, then
+// polls the same signal-0 existence probe production's isProcessAlive uses
+// (internal/checkout_sync.go) until the OS confirms the PID is truly gone.
+// Tests that need a guaranteed-dead PID — rather than the fixed 999999
+// convention detachGuard uses — call this instead.
+func spawnDeadPID(t *testing.T) int {
+	t.Helper()
+	cmd := exec.Command("git", "--version")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("spawn short-lived process: %v", err)
+	}
+	pid := cmd.Process.Pid
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("short-lived process exited with an error: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if !signalZeroAlive(pid) {
+			return pid
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("pid %d never became dead after Wait", pid)
+	return 0
+}
+
+// spawnLivePID starts a real long-lived process and returns its PID plus a
+// cleanup func that kills and reaps it. Tests that need a guard PID the OS
+// genuinely still considers alive (the "live-foreign owner" twin of a dead
+// or self PID) call this.
+func spawnLivePID(t *testing.T) (pid int, cleanup func()) {
+	t.Helper()
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("spawn long-lived process: %v", err)
+	}
+	pid = cmd.Process.Pid
+	if !signalZeroAlive(pid) {
+		t.Fatalf("pid %d must be alive immediately after Start", pid)
+	}
+	return pid, func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}
+}
+
+// signalZeroAlive is the same existence probe internal.isProcessAlive uses
+// (an unexported production symbol this package cannot import), duplicated
+// locally so fixtures can construct and verify PIDs without reaching into
+// package internal's private API.
+func signalZeroAlive(pid int) bool {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return proc.Signal(syscall.Signal(0)) == nil
+}
+
+// detachGuardPreservingBytes rewrites ONLY the recorded "pid: <N>" line of an
+// existing .sync-run.lock, leaving every other byte — field order, quoting,
+// and whatever encoding the real marshaler chose for created/token/
+// state_version — untouched. Unlike detachGuard, which reconstructs the file
+// from a fixed template, this proves a stale-guard reader reacts only to the
+// pid field's value, never to incidental formatting.
+func (f *scopedFixture) detachGuardPreservingBytes(t *testing.T, pid int) {
+	t.Helper()
+	path := internal.SyncRunGuardPath(f.featurePath)
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("guard must exist after a failure: %v", err)
+	}
+	pidLineRe := regexp.MustCompile(`(?m)^pid: -?\d+$`)
+	if !pidLineRe.Match(original) {
+		t.Fatalf("guard file has no recognizable pid line:\n%s", original)
+	}
+	rewritten := pidLineRe.ReplaceAll(original, []byte(fmt.Sprintf("pid: %d", pid)))
+	if err := os.WriteFile(path, rewritten, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	origLines := strings.Split(string(original), "\n")
+	newLines := strings.Split(string(rewritten), "\n")
+	if len(origLines) != len(newLines) {
+		t.Fatalf("rewrite changed the line count: %d -> %d", len(origLines), len(newLines))
+	}
+	for i := range origLines {
+		if strings.HasPrefix(origLines[i], "pid: ") {
+			continue
+		}
+		if origLines[i] != newLines[i] {
+			t.Fatalf("byte-preserving rewrite touched line %d: %q -> %q", i, origLines[i], newLines[i])
+		}
 	}
 }
 

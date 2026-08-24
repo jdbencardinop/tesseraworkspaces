@@ -1,0 +1,8 @@
+# Test run — 2026-08-24T21:21:26Z
+# Command: go test ./... -count=1 -timeout 40m
+# Directory: /Users/jdbencardinop/Documents/Proyectos/tesseraspaces
+
+?   	github.com/jdbencardinop/tesseraworkspaces/assets/skills	[no test files]
+ok  	github.com/jdbencardinop/tesseraworkspaces/cmd/tws	0.410s
+ok  	github.com/jdbencardinop/tesseraworkspaces/internal	59.313s
+ok  	github.com/jdbencardinop/tesseraworkspaces/internal/cli	377.317s

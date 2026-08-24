@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,10 @@ type syncResult struct {
 	Complete  bool
 	Failed    string
 	Completed []string
+	// Refusal is non-nil exactly when a guarded route's mid-run replay-limit
+	// revalidation refused this invocation: the executor prints its marker
+	// through planGuardRefusal and never treats it as an ordinary failure.
+	Refusal *internal.PlanGuardRefusalError
 }
 
 // syncRunContext carries the frozen decision of a new-mode external run through
@@ -22,21 +27,31 @@ type syncRunContext struct {
 	Policy  internal.SyncRunPolicy
 	Sel     internal.SyncSelection
 	Payload *internal.SyncRunState
+
+	// Route is "" on every shipped scoped run; a guarded legacy (full-stack)
+	// run sets it to internal.RouteLegacy so scoped()/selects()/skipsAnchor()
+	// answer exactly as the nil-guard, no-flag path answers today, even
+	// though this context is non-nil (it still carries Payload/guard state).
+	Route string
+	// Validation is the frozen validation identity a guarded run measured at
+	// birth (§15). Its zero value (Applies: false) defers to Payload's own
+	// TestCommand exactly as before, so an unguarded run observes no change.
+	Validation internal.PlanValidationIdentity
 }
 
 func (r *syncRunContext) scoped() bool {
-	return r != nil && r.Policy.ScopeKind != internal.SyncScopeAll
+	return r != nil && r.Route != internal.RouteLegacy && r.Policy.ScopeKind != internal.SyncScopeAll
 }
 
 func (r *syncRunContext) selects(name string) bool {
-	if r == nil {
+	if r == nil || r.Route == internal.RouteLegacy {
 		return true
 	}
 	return r.Sel.Names[name]
 }
 
 func (r *syncRunContext) skipsAnchor(name string) bool {
-	if r == nil || r.Policy.Propagation != internal.SyncPropagationLocalOnly {
+	if r == nil || r.Route == internal.RouteLegacy || r.Policy.Propagation != internal.SyncPropagationLocalOnly {
 		return false
 	}
 	return r.Sel.Role(name) == internal.SyncRoleAnchor
@@ -47,18 +62,25 @@ func (r *syncRunContext) skipsAnchor(name string) bool {
 // the command frozen in its payload at start-up — including the empty command,
 // which means the run was started with no validation configured and must not
 // acquire one mid-run — so a --continue from another shell, or after a config
-// edit, can never validate with a different command (§7.7).
+// edit, can never validate with a different command (§7.7). A guarded run's
+// own frozen Validation identity, when present, is the command of record
+// instead of Payload.TestCommand, so a guard born with --test never silently
+// re-reads config either.
 func (r *syncRunContext) validate(layout externalSyncLayout, worktreePath, name string) bool {
 	if r == nil || r.Payload == nil {
 		return runValidation(worktreePath, name)
 	}
-	if r.Payload.TestCommand == "" {
+	command := r.Payload.TestCommand
+	if r.Validation.Applies {
+		command = r.Validation.Command
+	}
+	if command == "" {
 		return true
 	}
 	resume := r.Payload.Stage
 	r.Payload.Stage = internal.SyncStageValidating
 	_ = internal.SaveSyncRunState(layout.FeaturePath, r.Payload)
-	if !runValidationCommand(r.Payload.TestCommand, worktreePath, name) {
+	if !runValidationCommand(command, worktreePath, name) {
 		// The failure path records stage `failed` through saveScopedSyncFailure.
 		return false
 	}
@@ -67,15 +89,19 @@ func (r *syncRunContext) validate(layout externalSyncLayout, worktreePath, name 
 	return true
 }
 
-func syncWithStack(feature string, layout externalSyncLayout, stack internal.Stack, sorted []internal.StackEntry) syncResult {
-	return syncWithStackFiltered(feature, layout, stack, sorted, nil)
+func syncWithStack(feature string, layout externalSyncLayout, stack internal.Stack, sorted []internal.StackEntry, guard *planGuardRun) syncResult {
+	return syncWithStackFiltered(feature, layout, stack, sorted, nil, guard)
 }
 
-func syncWithStackFiltered(feature string, layout externalSyncLayout, stack internal.Stack, sorted []internal.StackEntry, alreadyDone map[string]bool) syncResult {
-	return syncWithStackScoped(feature, layout, stack, sorted, alreadyDone, nil)
+func syncWithStackFiltered(feature string, layout externalSyncLayout, stack internal.Stack, sorted []internal.StackEntry, alreadyDone map[string]bool, guard *planGuardRun) syncResult {
+	return syncWithStackScoped(feature, layout, stack, sorted, alreadyDone, nil, guard)
 }
 
-func syncWithStackScoped(feature string, layout externalSyncLayout, stack internal.Stack, sorted []internal.StackEntry, alreadyDone map[string]bool, run *syncRunContext) syncResult {
+// syncWithStackScoped is the one executor both the no-flag and every new-mode
+// route call. guard is nil on every shipped call site: a nil guard leaves
+// every byte and every process this function runs untouched, since both new
+// JIT seams below are themselves gated on guard != nil.
+func syncWithStackScoped(feature string, layout externalSyncLayout, stack internal.Stack, sorted []internal.StackEntry, alreadyDone map[string]bool, run *syncRunContext, guard *planGuardRun) syncResult {
 	updatedByRef := make(map[string]bool)
 	completed := completedNames(alreadyDone)
 	if alreadyDone == nil {
@@ -84,6 +110,7 @@ func syncWithStackScoped(feature string, layout externalSyncLayout, stack intern
 	scoped := run.scoped()
 	rebased := 0
 	anchorsSkipped := 0
+	firstRevalidation := true
 
 	if run != nil && run.Payload != nil {
 		run.Payload.Stage = internal.SyncStageRebasing
@@ -131,6 +158,25 @@ func syncWithStackScoped(feature string, layout externalSyncLayout, stack intern
 			if entry.LastBaseSHA != "" && currentBaseSHA != "" && entry.LastBaseSHA != currentBaseSHA {
 				rebaseArgs = []string{"rebase", "--onto", base, entry.LastBaseSHA}
 			}
+		}
+
+		if guard != nil {
+			if firstRevalidation {
+				firstRevalidation = false
+				if err := syncStepHook(internal.SyncStageRebasing, -1); err != nil {
+					return syncFailure(layout, sorted, completed, entry.Name, run)
+				}
+			}
+			if rerr := guard.revalidate(entry.Name); rerr != nil {
+				return syncGuardFailure(layout, sorted, completed, entry.Name, run, rerr)
+			}
+			// §10.5 destination pinning: a guarded execution path passes the
+			// planned and JIT-revalidated full SHA in the --onto operand
+			// instead of the ref name Git would re-resolve. Only that operand
+			// changes; the flag set, the recorded-cutoff operand, the branch
+			// operand and the plain-rebase arm are untouched, and no unguarded
+			// (golden-covered) invocation can reach this branch.
+			rebaseArgs = pinGuardedOnto(rebaseArgs, currentBaseSHA)
 		}
 
 		if err := syncStepHook(internal.SyncStageRebasing, rebased); err != nil {
@@ -191,6 +237,13 @@ func syncWithStackScoped(feature string, layout externalSyncLayout, stack intern
 
 		base := resolveEntryBase(stack, entry, entry.Repo)
 		rebaseDir := entry.Repo
+
+		if guard != nil {
+			if rerr := guard.revalidate(entry.Name); rerr != nil {
+				return syncGuardFailure(layout, sorted, completed, entry.Name, run, rerr)
+			}
+		}
+
 		var err error
 		if rebaseDir != "" {
 			err = internal.RunSilentDir(rebaseDir, "git", "rebase", base, entry.GitBranch())
@@ -259,6 +312,20 @@ func syncFailure(layout externalSyncLayout, sorted []internal.StackEntry, comple
 		return syncResult{Failed: failed, Completed: completed}
 	}
 	return saveIncompleteSync(layout.FeaturePath, sorted, completed, failed)
+}
+
+// syncGuardFailure is syncFailure's guard-refusal twin: a mid-run replay-limit
+// revalidation refused entry, so the result carries the *PlanGuardRefusalError
+// the executor must hand to planGuardRefusal instead of an ordinary failure
+// sentence. State is persisted exactly as syncFailure persists it, since a
+// refusal this late still leaves the run resumable at the same failed entry.
+func syncGuardFailure(layout externalSyncLayout, sorted []internal.StackEntry, completed []string, failed string, run *syncRunContext, rerr error) syncResult {
+	result := syncFailure(layout, sorted, completed, failed, run)
+	var refusal *internal.PlanGuardRefusalError
+	if errors.As(rerr, &refusal) {
+		result.Refusal = refusal
+	}
+	return result
 }
 
 func saveIncompleteSync(featurePath string, sorted []internal.StackEntry, completed []string, failed string) syncResult {
@@ -418,4 +485,24 @@ func runValidationCommand(command, worktreePath, branchName string) bool {
 	}
 	fmt.Println("ok")
 	return true
+}
+
+// pinGuardedOnto applies §10.5 destination pinning to one already-built rebase
+// argv. It rewrites exactly the operand that follows `--onto` — and only when
+// the arm really has one and the destination resolved — leaving a plain
+// `git rebase [--update-refs] <base>` arm, the recorded-cutoff operand and the
+// branch operand exactly as the unguarded twin builds them.
+func pinGuardedOnto(argv []string, destinationSHA string) []string {
+	if destinationSHA == "" {
+		return argv
+	}
+	for i, tok := range argv {
+		if tok != "--onto" || i+1 >= len(argv) {
+			continue
+		}
+		pinned := append([]string(nil), argv...)
+		pinned[i+1] = destinationSHA
+		return pinned
+	}
+	return argv
 }

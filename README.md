@@ -71,6 +71,11 @@ tws sync auth --from api            # sync one entry and its descendant subtree
 tws sync auth --local-only          # replay local parent tips; never advance an anchor
 tws sync auth --no-fetch            # plan from local refs; no automatic network input
 tws sync auth --fetch --full        # name both axes explicitly (external defaults)
+
+tws sync auth --plan                                    # preview: old base, new base, candidates per entry
+tws sync auth --plan --max-replay-per-entry 10          # bound the previewed run's replay work
+tws sync auth --max-replay-per-entry 10 \
+  --approve-plan <fingerprint>                          # execute the approved plan
 ```
 
 **Sync modes.** Three independent axes select what a run does. `--fetch` /
@@ -97,6 +102,38 @@ unchanged. Notes:
 - Downgrading in the middle of a scoped run: an older tws fails closed on plain
   sync and on `--continue`. Downgrading *after* an explicit old `--abort` is
   unsupported.
+
+**Plan and guard.** Run `--plan` before a wide sync that could rebase several
+branches at once, and read its `entries[]` rows first. `--plan` describes the
+rebase this invocation would perform and exits: it moves no branch, rewrites
+no working tree, and writes no tws state — but it is not Git-write-free. A
+plan fetches exactly where the run it describes fetches: an external plan
+fetches by default, a checkout plan only under `--fetch`, and `--plan
+--continue` never fetches — so `--plan --no-fetch` previews a **different**,
+new-mode route, not the one a bare `tws sync <feature>` takes. Bare `--plan`
+(no other flag) describes exactly the no-flag run. Its `candidates` counts are
+an upper bound on what a guarded run might replay, never a promise of what
+gets applied.
+
+`--max-replay-per-entry <n>` and `--max-replay-total <n>` refuse before
+rebasing if this invocation would replay more candidates than the bound, for
+one entry or in total — the bound applies to this invocation only and is
+never cumulative across resumes. `--approve-plan <fingerprint>` re-supplies
+the 64-hex fingerprint `--plan` printed and requires at least one of those two
+limits, `--plan` included; a workflow that mints or presents a limitless
+fingerprint is a documentation bug, never a valid one. Extract the fingerprint
+explicitly — e.g. `sed -n 's/^Approval fingerprint: //p'` — never pipe
+`tail -1` into `--approve-plan`.
+
+A guarded run's limits are recorded in recovery state, so an older tws release
+refuses to resume it instead of silently dropping the guard. A guard refusal
+exits `1` and writes exactly one `plan-guard: <kind>: <detail>` line on
+stderr; a detail beginning `state-preserved: ` means something on disk
+outlives the refusal. A refusal tws already performs — a dirty tree, a held
+lock, a base that does not resolve, an incomplete previous run — keeps its own
+wording, exits `1`, and is never marked. `--plan` itself exits `0` even when
+it describes a refusal, so decide whether to execute from the plan's own
+fields, never from that exit status.
 
 - **Amend-aware** — uses `--onto` to avoid ghost conflicts from amended commits
 - **Archived branch support** — syncs archived branches via `--update-refs` or optimistic rebase
@@ -156,6 +193,8 @@ tws init --register --register-alias myapp   # also enroll in the global registr
 | `tws new <feature> <branch> [--base] [--repo] [--force]` | Create worktree branch |
 | `tws open [feature] [branch] [--tmux] [--no-agent]` | Open worktree (interactive picker if no args) |
 | `tws sync <feature> [--push] [--continue] [--abort] [--verbose] [--fetch\|--no-fetch] [--full\|--local-only] [--only <entry>\|--from <entry>]` | Rebase in dependency order, optionally scoped |
+| `tws sync <feature> --plan [--json] [--max-replay-per-entry N] [--max-replay-total N]` | Preview the rebase; candidates are an upper bound, never applied |
+| `tws sync <feature> --approve-plan <fingerprint> [--max-replay-per-entry N \| --max-replay-total N]` | Execute a previewed, guarded plan |
 | `tws push <feature> [--dry-run]` | Push all branches |
 | `tws stack <feature>` | Show dependency tree |
 | `tws stack status <feature> [--json]` | Stack ancestry, materialization, and upstream status |

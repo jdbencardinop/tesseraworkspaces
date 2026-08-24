@@ -288,6 +288,89 @@
   and `tws status` report `active_git_op: bisect` where `doctor` previously
   reported nothing
 
+- **Rebase plan guard** — `tws sync <feature>` gains `--plan` (preview the
+  exact rebase this invocation would perform: old base, new base, and a
+  `candidates` count per entry, which is an upper bound and never a promise of
+  what gets applied), `--max-replay-per-entry <n>` and `--max-replay-total <n>`
+  (refuse before rebasing if this invocation would replay more candidates than
+  the bound, for one entry or in total), and `--approve-plan <fingerprint>`
+  (re-supply the 64-hex fingerprint `--plan` printed to execute the exact plan
+  it described; requires at least one of the two limits on every route,
+  `--plan` included — a workflow that mints or presents a limitless
+  fingerprint is a documentation bug, never a shipped one)
+- **`--plan` is non-mutating but not fetch-free** — it moves no branch,
+  rewrites no working tree, and writes no tws state, but a plan fetches
+  exactly where the run it describes fetches: an external plan fetches by
+  default, a checkout plan only under `--fetch`, and `--plan --continue` never
+  fetches, so `--plan --no-fetch` previews a different, fully local route. No
+  workflow may claim `--plan` mutates nothing without that qualification
+- **Guard refusals carry a marker; shipped refusals never do** — a guard-owned
+  refusal exits `1` and writes exactly one `plan-guard: <kind>: <detail>` line
+  on stderr; a detail beginning `state-preserved: ` means something on disk
+  outlives the refusal. A refusal tws already performs — a dirty tree, a held
+  lock, an unresolvable base, an incomplete previous run — keeps its own
+  wording, exits `1`, and is never marked
+- **Fix: a decoupled in-stack parent resolves in checkout mode (D1-a)** — a
+  checkout sync whose base names an in-stack parent with a decoupled
+  `branch:` (tws identity `StackEntry.Name` differs from Git identity
+  `StackEntry.GitBranch()`) no longer fails with `resolve base <base> for
+  <entry>: <error>` before any rebase; it resolves the parent's real Git
+  branch and proceeds, matching external
+- **Behaviour change: the same fix silently changes a colliding destination
+  (D1-b)** — where a real Git branch happens to share a decoupled parent's
+  *logical* name, checkout sync used to rebase onto that same-named branch by
+  coincidence; it now resolves through `StackEntry.GitBranch()`, the parent's
+  recorded Git branch, so the rebase argv, the `--onto` SHA, and the landed
+  destination change on this no-flag path. This is the only silent
+  argv/destination change in this feature, and both cells are asserted in the
+  test matrix
+- **Guarded recovery state downgrades safely** — a guarded run (any run
+  carrying a replay limit or `--approve-plan`) persists its limits in
+  `state_version: 3` recovery state, in either workspace mode, so an older tws
+  release cannot silently resume it without the guard it was given. An older
+  release instead refuses an external `state_version: 3` payload with
+  `scoped sync state at <path> is unreadable or uses an unsupported version
+  (unsupported scoped sync state version 3); inspect it and remove it
+  manually — tws will not guess`, for every verb including `--abort`, and
+  refuses a `state_version: 3` checkout transaction on `--continue` with
+  `checkout sync transaction state version 3 is newer than 2; upgrade tws or
+  remove <path>`. A **fresh** old-binary checkout run over the same
+  transaction refuses earlier and separately, with the shipped
+  `previous checkout-sync incomplete; use --continue or --abort` — it never
+  reaches the version comparison. Checkout `--abort` is the one declared
+  exception: it still aborts, because abort rebases nothing and there is
+  nothing left to protect
+- **Fix: `tws sync <feature> --abort` now clears a stale guard-only lock**
+  (recovery cell 1) — where a killed scoped setup left only
+  `.sync-run.lock` behind, `--abort` previously reported `Nothing to abort —
+  no sync in progress.` while the guard file survived; it now inspects and
+  clears a provably stale guard, printing `Stale sync guard from PID <pid>
+  cleared; no sync state was present.`
+- **Fix: `--abort` also clears a stale guard beside real legacy sync state**
+  (recovery cell 7) — where a real `.sync-state.yaml` sits beside a stale or
+  self-recorded `.sync-run.lock`, `--abort` previously cleared only the sync
+  state and left the guard on disk; it now clears both and says so with
+  `Sync state cleared; stale sync guard from PID <pid> cleared.`
+- **Fix: an interrupted guarded legacy setup is now a recoverable document,
+  not a silent write-off** (recovery cell 4, the backup-sentinel residue of a
+  guarded legacy setup interrupted mid-write) — `--continue` now **resumes**
+  that setup under its guard; `--abort` still clears it, but now says so —
+  `Sync state cleared; the interrupted guarded setup's backup of the previous
+  sync state was discarded.` — instead of discarding it silently; and a plain
+  `tws sync <feature>` refuses but names **both** recovery verbs (resume with
+  `--continue`, discard with `--abort`) instead of refusing blindly. An older
+  tws release still either refuses the same residue or discards the backup
+  without mentioning it
+- **Controlled-path stack read is hoisted above the lock, on one arm only** —
+  a `--plan` or a guarded execution now reads and sorts `stack.yaml` before
+  taking its lock or fetching, so on the **legacy** checkout arm a cyclic
+  stack now refuses above the lock with the shipped `build plan: cycle
+  detected in stack.yaml`, and an unreadable one with the shipped `load
+  stack: <error>`, in both cases leaving no lock and no transaction behind.
+  The **new-mode** checkout arm is unmoved (it already refused there, inside
+  its own sort), and every unguarded `tws sync` keeps its shipped order in
+  both arms
+
 ## v1.2.11
 
 - **Workspace sibling links** — `tws space add/list/show/remove` maintains

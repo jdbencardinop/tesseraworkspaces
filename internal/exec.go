@@ -2,6 +2,7 @@ package internal
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -127,6 +128,29 @@ func RunDir(dir string, name string, args ...string) error {
 	cmd := exec.Command(name, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	cmd.Dir = dir
+
+	return cmd.Run()
+}
+
+// RunTo is Run with stdout/stderr taken from the caller instead of hard-wired
+// to os.Stdout/os.Stderr. It is otherwise byte-identical to Run.
+func RunTo(stdout, stderr io.Writer, name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	cmd.Stdin = os.Stdin
+
+	return cmd.Run()
+}
+
+// RunDirTo is RunDir with stdout/stderr taken from the caller instead of
+// hard-wired to os.Stdout/os.Stderr. It is otherwise byte-identical to RunDir.
+func RunDirTo(stdout, stderr io.Writer, dir, name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	cmd.Stdin = os.Stdin
 	cmd.Dir = dir
 
