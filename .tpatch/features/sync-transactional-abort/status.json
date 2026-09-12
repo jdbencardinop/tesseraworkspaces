@@ -1,0 +1,22 @@
+{
+  "id": "sync-transactional-abort",
+  "slug": "sync-transactional-abort",
+  "title": "Fix GitHub issue #4 defect 1: make sync recovery closure-aware. Snapshot and durably protect every selected branch tip and relevant stack metadata before the first Git mutation; if --full or another sync mode advances an anchor and a later child fails, '--abort' must restore every ref moved by that run, including anchors, unless a branch gained later user work, in which case abort refuses without erasing it. Surface partial progress and recovery guidance in status/doctor, preserve no-flag success behavior, and use real multi-branch worktree tests.",
+  "state": "requested",
+  "compatibility": "unknown",
+  "requested_at": "2026-09-12T15:42:23Z",
+  "updated_at": "2026-09-12T15:42:23Z",
+  "last_command": "add",
+  "apply": {},
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "sync-modes",
+      "kind": "hard"
+    },
+    {
+      "slug": "rebase-plan-guard",
+      "kind": "hard"
+    }
+  ]
+}

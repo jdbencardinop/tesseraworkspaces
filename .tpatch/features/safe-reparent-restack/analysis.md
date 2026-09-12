@@ -995,7 +995,79 @@ subcommand/feature-name collision if that command placement is selected.
 
 ---
 
-## 11. Dependency analysis
+## 11. GitHub issue audit
+
+All open repository issues were reviewed before definition.
+
+| Issue | Relationship | Backlog disposition |
+| --- | --- | --- |
+| [#1](https://github.com/jdbencardinop/tesseraworkspaces/issues/1) - feature-wide inject misses slash-containing logical names | Not reparent behavior, but confirms that logical names cannot be treated as one path component | Registered `fix-inject-slash-worktree-discovery`, hard-dependent on worktree context injection and branch-name decoupling |
+| [#2](https://github.com/jdbencardinop/tesseraworkspaces/issues/2) - role-aware worktree/orchestrator templates | Already substantially covered by `named-feature-templates`, template conflict handling, tiered skills, and Copilot/Codex work | Appended the missing independent-role/default/scope/ownership requirements to `named-feature-templates`; added soft ordering edges instead of a duplicate feature |
+| [#3](https://github.com/jdbencardinop/tesseraworkspaces/issues/3) - scoped status scans every feature | Independent status performance/failure-isolation bug; relevant to future transaction observability but not reparent execution | Registered `scoped-status-projection`, hard-dependent on agent work status |
+| [#4](https://github.com/jdbencardinop/tesseraworkspaces/issues/4) - split-base abort and stale cutoff replay | Directly validates the transaction and cutoff risks in this analysis, but both defects also affect ordinary sync and must not be hidden inside a new command | Registered `sync-transactional-abort` and `sync-cutoff-integrity`; added both as soft ordering references for safe reparent |
+
+### 11.1 Issue #4 defect 1: partial sync rollback
+
+The reported six-branch `--full` run advanced the anchor to a new master,
+failed on a child, and left the anchor advanced after `--abort`. That is the
+existing sync behavior described in this analysis: current abort clears state
+or the active rebase but does not restore every ref already moved by the run.
+
+Safe reparent must not repeat this failure. Its transaction requirements cover
+the target and complete affected closure. However, fixing only reparent would
+leave ordinary sync broken, so full sync rollback is tracked separately in
+`sync-transactional-abort`.
+
+The issue's real stack shape should be reused as a safe-reparent acceptance
+fixture:
+
+```text
+master
+`-- pr1
+    |-- pr2
+    |-- pr3
+    |   `-- pr5
+    |       `-- pr6
+    `-- pr4
+```
+
+It proves rollback and recovery over branching, not only a linear chain.
+
+### 11.2 Issue #4 defect 2: wrong cutoff provenance
+
+The reported rebase replayed 34 master commits rather than the child's own
+commit. The manual repair used:
+
+```text
+git rebase --onto <new-parent-tip> <old-parent-tip>
+```
+
+This confirms the per-row cutoff model, but safe reparent alone cannot repair
+ordinary `tws sync`. `sync-cutoff-integrity` owns:
+
+- auditing how `LastBaseSHA` was attributed in the failing run;
+- validating cutoff existence/ancestry in ordinary full/local-only sync;
+- preventing broad plain-rebase fallback in stale-parent cases;
+- defining absence/fallback behavior for ordinary sync;
+- exposing the chosen cutoff/provenance in plans and status.
+
+The safe-reparent define phase may reuse its pure cutoff validator or state
+model later, but does not silently broaden its implementation boundary.
+
+### 11.3 Definition impact
+
+Issue #4 adds no new reparent command surface. It strengthens these existing
+requirements:
+
+- whole-closure pre-images and rollback/resume evidence;
+- branch-shaped as well as linear real-Git fixtures;
+- per-row cutoff provenance and ancestry;
+- status/doctor reporting during partial progress;
+- explicit separation between reparent recovery and ordinary sync bug fixes.
+
+---
+
+## 12. Dependency analysis
 
 Registered hard parents:
 
@@ -1009,7 +1081,9 @@ Registered hard parents:
 Registered soft parents:
 
 - `skill-distribution`;
-- `tiered-skill-system`.
+- `tiered-skill-system`;
+- `sync-transactional-abort`;
+- `sync-cutoff-integrity`.
 
 The hard set is sufficient and intentionally explicit:
 
@@ -1026,7 +1100,7 @@ work, or PR adapters is warranted.
 
 ---
 
-## 12. Test strategy
+## 13. Test strategy
 
 All Git behavior must use real temporary repositories, bare remotes, and
 linked worktrees.
@@ -1086,7 +1160,7 @@ a source/pure-function assertion is sufficient.
 
 ---
 
-## 13. Ranked risks
+## 14. Ranked risks
 
 1. **Silent wrong replay set** if cutoff ancestry is not checked.
 2. **No safe cutoff for a never-synced target** unless the fallback/override
@@ -1115,7 +1189,7 @@ a source/pure-function assertion is sufficient.
 
 ---
 
-## 14. Open decisions for `define`
+## 15. Open decisions for `define`
 
 1. Command: `tws stack reparent` or top-level `tws reparent`.
 2. Destination grammar and explicit entry/ref disambiguation.
@@ -1173,7 +1247,7 @@ a source/pure-function assertion is sufficient.
 
 ---
 
-## 15. Analysis verdict
+## 16. Analysis verdict
 
 The feature is feasible and fills the next P1 gap, but it must be treated as a
 new transactional operation rather than a sync flag.

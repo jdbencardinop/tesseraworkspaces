@@ -42,6 +42,14 @@
     {
       "slug": "tiered-skill-system",
       "kind": "soft"
+    },
+    {
+      "slug": "sync-transactional-abort",
+      "kind": "soft"
+    },
+    {
+      "slug": "sync-cutoff-integrity",
+      "kind": "soft"
     }
   ]
 }

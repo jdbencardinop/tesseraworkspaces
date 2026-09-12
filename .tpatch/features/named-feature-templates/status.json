@@ -17,6 +17,22 @@
     {
       "slug": "template-sync-existing",
       "kind": "hard"
+    },
+    {
+      "slug": "tiered-skill-system",
+      "kind": "soft"
+    },
+    {
+      "slug": "skill-distribution",
+      "kind": "soft"
+    },
+    {
+      "slug": "template-conflict-resolution",
+      "kind": "soft"
+    },
+    {
+      "slug": "copilot-codex-hooks",
+      "kind": "soft"
     }
   ]
 }
