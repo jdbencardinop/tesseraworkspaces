@@ -1,6 +1,6 @@
 # tws and tesserasessions collaboration plan
 
-Status: proposed for joint review
+Status: revised after tesserasessions changes-requested review
 
 Date: 2026-09-11
 
@@ -30,10 +30,14 @@ schema or read the tss SQLite database directly.
 
 - workspace, feature, stack entry, Git branch, repository, and worktree
   topology;
+- desired provider-session topology and launch intent after validating the
+  repository, branch, worktree, checkout lock, and agent invocation;
 - worktree creation, rename, archive, removal, and Git synchronization;
 - checkout branch switching and restoration;
 - inject/templates and durable decisions;
-- sessions tws launches and the local evidence needed to recover them;
+- direct child-process sessions tws launches and the local evidence needed to
+  recover them;
+- the decision that a provider-backed session should close;
 - local locks, failed stages, stale state, and destructive-action gates;
 - final `tws status` rollups.
 
@@ -43,9 +47,16 @@ schema or read the tss SQLite database directly.
 - cross-agent runtime discovery;
 - Herdr/tmux and later live providers;
 - semantic agent state and its provenance;
-- provider-specific attach, open, send, read, run, wait, reap, and resurrection;
-- multiplexer target identity;
+- provider execution and target-specific revalidation;
+- provider-specific ensure, observe, literal-text send, bounded read, safe
+  wait, and owned-target close where capabilities permit;
+- minting, decoding, and revalidating opaque provider references;
+- multiplexer target identity and generation;
 - provider capability and freshness reporting.
+
+For provider-backed sessions, tws authorizes a destructive close from its
+topology; tss still performs the close and refuses when ownership, provider
+instance, target generation, or scope no longer matches.
 
 ### Neither project should own
 
@@ -82,25 +93,62 @@ The existing tss commands (`attach`, `open`, `send`, `read`, and `run`) are
 useful operator commands, but they currently produce or execute shell command
 strings based on inventory/runtime rows.
 
-The joint PRD should define a versioned provider contract suitable for tws:
+The existing human commands stay available. They are not automatically safe
+machine APIs because several currently compose shell command strings and
+`run` joins arguments before `sh -lc`.
+
+Control schema v1 should be deliberately narrow and one-operation-per-process:
 
 | Operation | Purpose |
 | --- | --- |
-| `ensure` | Create or adopt a provider target from a desired-session spec |
-| `attach` | Return to an existing target without changing Git topology |
-| `observe` | Return bounded runtime and semantic state |
-| `close` | Close only the provider-owned target |
-| `send` | Deliver input with explicit safety/quoting semantics |
-| `read` | Read bounded recent output |
-| `run` | Run a command in a new provider surface |
-| `wait` | Wait for a declared semantic/runtime condition |
-| `resurrect` | Recreate a dead target from provider-owned durable state |
+| `capabilities` | Side-effect-free provider capability discovery |
+| `ensure` | Create a new provider-owned target only when creation is idempotently recoverable by `request_id` |
+| `observe_ref` | Revalidate and observe one exact provider reference |
+| `send_text` | Send a JSON literal string with separate `submit: none|enter` semantics |
+| `read_text` | Return bounded recent output with source, byte/line limits, format, and truncation evidence |
+| `wait_state` | Wait only when occupant/generation pinning is proved and revalidated |
+| `close_owned` | Close only a target created by v1 `ensure`, after ownership/generation checks |
 
-Potentially interactive operations must retain a `--print` or plan mode.
+Explicitly excluded from control v1:
+
+- inherited-TTY `attach`;
+- generic `run_argv` until a provider preserves argv boundaries end to end;
+- foreign target adoption;
+- arbitrary terminal key programs;
+- force close and general reaping;
+- resurrection.
+
+These exclusions do not remove the current human `attach`, `open`, `send`,
+`read`, and `run` commands. They separate an operator command from a stable
+machine contract.
+
+`ensure` uses `request_id` as its idempotency key. Reusing a request ID with a
+different normalized request fails. A provider advertises `ensure.v1` only if
+it can recover the original target after a lost response. Timeout after
+dispatch yields `outcome_unknown`; retrying the same request ID is
+reconciliation, not a fresh create.
 
 ### Slice 3: durable provider identity
 
-tws should persist an opaque provider reference, not a tmux session name.
+tss mints and owns provider references. tws stores each reference byte-for-byte
+and never extracts provider internals or ownership tokens.
+
+A minimal consumer-visible envelope is:
+
+```json
+{
+  "kind": "tss_provider_ref",
+  "version": 1,
+  "provider": "herdr",
+  "opaque": "<provider-specific opaque value>"
+}
+```
+
+Internally, the opaque value binds provider, provider instance, stable target,
+target generation/birth identity, tss ownership nonce, and the idempotent
+ensure request ID. Every target-specific operation, including reads,
+revalidates it. Path, branch, target name, PID, and pane ID are evidence, not
+authority.
 
 The provider observation should include:
 
@@ -113,22 +161,28 @@ The provider observation should include:
 - process/pane birth identity;
 - observation and expiry timestamps;
 - capability set;
-- optional adoption/match evidence.
+- state provenance and confidence;
+- diagnostic surface/match evidence.
 
 Path remains evidence, never sole identity. Git topology remains tws-owned.
 
 ### Slice 4: agent-state provenance
 
-The contract should state how each semantic value was observed:
+Status schema v1 remains unchanged. Provenance and confidence first belong to
+the new reference-scoped control observation; a later status-v2 decision may
+reuse them.
+
+The control observation should state how each semantic value was observed:
 
 - native provider state;
 - agent lifecycle hook;
 - foreground command heuristic;
-- transcript/store evidence;
+- persisted-store evidence;
 - unknown.
 
 Consumers need source, confidence, observation time, and expiry. `ready` must
 continue to mean a live agent can accept input, not the absence of a runtime.
+Use closed qualitative confidence values rather than floating-point scores.
 
 ### Slice 5: optional workmux provider
 
@@ -147,30 +201,125 @@ workmux adapter for:
 Native Herdr and tmux remain required baseline providers. An absent workmux
 binary must never reduce existing behavior.
 
+The initial adapter, if ever registered, should be read-only. Control requires
+a documented versioned public workmux schema, provider instance and target
+generation, public ownership semantics, capability discovery, structured
+errors, and supported version ranges. Current private state files,
+`@workmux_*` options, and hook commands are insufficient contracts.
+
 ## Desired-session request
 
-The ADR/PRD should converge on a request shaped approximately like this:
+The ADR/PRD should converge on an envelope shaped approximately like this:
 
 ```json
 {
   "schema_version": 1,
-  "request_id": "open-auth-models",
+  "request_id": "open-auth-models-01",
   "operation": "ensure",
-  "session": {
-    "workspace_id": "ws-123",
-    "feature": "auth",
-    "entry": "models",
-    "path": "/workspaces/auth/models",
+  "consumer": {
+    "name": "tws",
+    "correlation_id": "workspace-entry-opaque",
+    "metadata": {
+      "workspace_id": "ws-123",
+      "feature": "auth",
+      "entry": "models"
+    }
+  },
+  "provider_selection": {
+    "preferred": ["herdr", "tmux"],
+    "required_capabilities": ["ensure.v1", "observe_ref.v1"]
+  },
+  "provider_ref": null,
+  "input": {
+    "cwd": "/workspaces/auth/models",
     "repo_root": "/repos/app",
     "git_branch": "feature/auth-models",
-    "agent_command": ["claude"],
-    "profile": "worktree-agent",
-    "attach_policy": "attach-or-create"
+    "agent": {
+      "kind": "claude",
+      "argv": ["claude"],
+      "profile": "worktree-agent"
+    },
+    "create_policy": "create_new"
   }
 }
 ```
 
-The exact field set is not decided by this document.
+Rules to preserve:
+
+- unknown request fields fail in schema v1;
+- provider selection finishes before mutation;
+- no fallback occurs after a mutating provider call begins;
+- environment values remain excluded until the threat model defines
+  redaction/storage behavior;
+- one request performs one operation.
+
+Expected response outcomes are:
+
+```text
+succeeded
+partial
+failed
+outcome_unknown
+```
+
+Partial creation returns provider reference and completed-step evidence.
+Stale/replaced/ownership-mismatched references fail without path/name/PID
+fallback.
+
+The exact final field set remains a PRD decision.
+
+### Capability vocabulary
+
+Candidate capabilities:
+
+```text
+ensure.v1
+observe_ref.v1
+send_text.v1
+read_text.v1
+wait_state.v1
+close_owned.v1
+attach_interactive.v1   # later
+run_argv.v1             # reserved
+adopt_foreign.v1        # later
+resurrect.v1            # later
+```
+
+Clients never infer capability from a provider name. Constraints report text
+and output bounds, submit modes, read formats, wait predicates, maximum
+timeouts, close scope, idempotency, and generation guarantees.
+
+### Timeout and failure rules
+
+- Invalid/incompatible requests fail before provider invocation.
+- Provider absence or timeout before dispatch is `failed` and may be retried.
+- Timeout after mutation dispatch is `outcome_unknown`; no automatic provider
+  failover or mutation retry occurs.
+- Reusing the same idempotent `ensure` request ID is the only automatic
+  reconciliation mechanism for an unknown create outcome.
+- A partial result includes its provider reference and completed-step
+  evidence.
+- Stale, replaced, or ownership-mismatched references never fall back to path,
+  name, branch, pane ID, or PID.
+- Close validates ownership generation rather than volatile activity/content
+  revision.
+- Orphans may remain when the provider or reference is unavailable; force
+  close and general reaping are not v1 behavior.
+
+### Threat-model minimum
+
+The joint threat model must cover:
+
+- argv/shell injection and literal text versus terminal-key semantics;
+- output bounds, truncation, and sensitive screen content;
+- provider instance, boot, target generation, and same-user spoofing;
+- path/repository/branch as candidate evidence but never authority;
+- stale evidence and unknown mutation outcomes;
+- absence of foreign target adoption;
+- exact owned-scope destructive close with no force flag;
+- PID reuse for tws direct sessions using process-start/host-boot identity
+  where available;
+- environment-secret omission and redaction.
 
 ## Coordination channel
 
@@ -240,12 +389,61 @@ blocked
 
 | ID | Deliverable | Owner | Initial state |
 | --- | --- | --- | --- |
-| `ADR-RUNTIME-BOUNDARY` | Runtime and control ownership boundary | Joint | proposed |
-| `PRD-TSS-STATUS-CONSUMER` | tws adapter for existing status schema | tws | proposed |
-| `PRD-SESSION-CONTROL` | Versioned session-control provider contract | tss-led | proposed |
-| `ADR-SESSION-IDENTITY` | Durable provider session identity and adoption | Joint | proposed |
-| `THREAT-SESSION-CONTROL` | Quoting, target ownership, stale identity, and destructive-operation threat model | Joint | proposed |
+| `ADR-RUNTIME-BOUNDARY` | Runtime and control ownership boundary | tss canonical, joint review | changes requested |
+| `PRD-TSS-STATUS-CONSUMER` | tws adapter for existing status schema | tws | reviewing |
+| `PRD-SESSION-CONTROL` | Narrow versioned session-control provider contract | tss-led | changes requested |
+| `ADR-SESSION-IDENTITY` | Durable provider session identity and reference storage | tss canonical, joint review | changes requested |
+| `THREAT-SESSION-CONTROL` | Quoting, target ownership, stale identity, and destructive-operation threat model | tss with tws topology/direct-process addendum | changes requested |
 | `RESEARCH-WORKMUX-PROVIDER` | Optional workmux provider feasibility | tss | deferred |
+
+## Accepted review decisions
+
+The first tss review accepted:
+
+- status schema v1 unchanged;
+- status enrichment ready for a tws-owned consumer PRD;
+- tss ownership of provider references;
+- byte-opaque reference storage in tws;
+- no foreign adoption in control v1;
+- no resurrection in control v1;
+- workmux provider deferred;
+- tws direct processes remain tws-owned.
+
+The review requested the narrower control operation set above, explicit lost
+response/idempotency handling, qualitative state provenance, and a joint
+threat model before implementation.
+
+## Proposed tpatch feature split after approval
+
+No feature below should be registered until its owning ADR/PRD is approved.
+
+### tesserasessions
+
+```text
+provider-session-identity
+provider-observation-provenance
+        \            /
+         session-control-contract
+             |-- herdr-control-provider-v1
+             `-- tmux-control-provider-v1
+```
+
+`workmux-runtime-provider` remains deferred and should start read-only if a
+versioned public workmux contract becomes available.
+
+### tesseraworkspaces
+
+```text
+agent-work-status-dashboard
+        `-- tss-status-enrichment
+
+direct-session-birth-identity
+        `-- provider-session-reference-storage
+                `-- tss-session-control-client
+```
+
+Cross-repository dependencies are recorded as canonical artifact
+repository/commit/path/hash references, not native tpatch edges.
 
 ## Readiness gates
 
