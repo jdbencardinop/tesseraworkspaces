@@ -137,6 +137,13 @@ A higher-level “super tws” spanning multiple project workspace roots remains
 
 ## Research / P3
 
+- **workmux and tesserasessions session-provider research**: preserve the
+  [workmux comparison](research/workmux-market-research.md) and the
+  [tws-tss collaboration plan](integrations/tesserasessions-collaboration.md).
+  The delivered tss runtime-status contract remains authoritative; joint work
+  should extend it with durable provider identity and versioned control rather
+  than create a competing status schema. A local coordination mailbox is
+  discoverable with `tws space show tws-tss-session-design --workspace`.
 - **Historical tpatch artifact repair**: after upgrading tpatch, audit old bundled shared-file features topologically, repair canonical patch boundaries/dependencies carefully, regenerate recipes, and publish a verification report. This is backlog maintenance and does not block product work while code gates and recipe replay remain green.
 - PR provider adapters for GitHub and Azure DevOps.
 - Workspace portability refinements and structured retrospective export.
