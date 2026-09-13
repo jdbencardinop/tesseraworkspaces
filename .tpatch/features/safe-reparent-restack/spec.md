@@ -2148,10 +2148,13 @@ with its own sentence, `unsupported scoped sync state version 4`.
 
 The legacy sentinel MUST likewise be serialized and written directly by the
 reparent-owned compatibility writer. `SaveGuardedLegacySentinel` MUST NOT be
-called after the v4 payload exists: its current safety gate rejects that file
-order. The new writer must reproduce the shipped sentinel marker shape
-exactly, use the run's marker/token, and write it through
-`durableWriteFile(..., 0644)`.
+used: it emits the guarded **legacy-sync** shape through `atomicWriteFile`,
+whereas this boundary needs reparent identity and the directory-fsync
+guarantee of `durableWriteFile`. Its existing compare-and-swap checks only the
+legacy sentinel path and does not reject a v4 payload beside it; that is not
+the reason for the new writer. The new writer must reproduce the shipped
+sentinel marker shape exactly, add the reparent identity required here, use
+the run's marker/token, and write it through `durableWriteFile(..., 0644)`.
 
 **Checkout**
 
@@ -2236,9 +2239,10 @@ a stack reparent is in progress for "<feature>" (run <run-id>, stage <stage>); f
 
 It fires only while a reparent state artifact exists for the feature in the
 current mode, and it MUST NOT alter any existing sync golden. Because the check
-precedes classification, it also covers `tws sync --continue` and
-`tws sync --abort`, which would otherwise reach the v4 or undecodable artifacts
-and emit a confusing lower-level error.
+precedes both plan dispatch and classification, it covers `tws sync --plan`,
+plain sync, `tws sync --continue`, and `tws sync --abort`; those routes would
+otherwise describe or reach the v4/undecodable artifacts and emit a confusing
+lower-level result.
 
 `compat-artifact-missing` covers the case where a foreign or older binary
 removed the compatibility artifacts while the reparent artifact survived. The
@@ -2481,8 +2485,9 @@ it first would strand pins and a lock with nothing to describe them.
 ### 11.6b `ReclaimCheckoutLock`
 
 `--continue` and `--abort` legitimately own a checkout lock written by a dead
-predecessor, but the shipped `forceAcquireCheckoutLock` is unexported and
-steals unconditionally. This feature MUST add, beside it:
+predecessor. The shipped `forceAcquireCheckoutLock` is unexported and
+sync-specific, but its current PID/liveness ladder already refuses a live
+foreign process. This feature MUST expose that same safety model beside it:
 
 ```go
 // ReclaimCheckoutLock takes the checkout lock only when it is absent, already
@@ -2490,15 +2495,14 @@ steals unconditionally. This feature MUST add, beside it:
 func ReclaimCheckoutLock(featurePath string) error
 ```
 
-It MUST read the existing `LockInfo`, use the shipped PID/liveness ladder and
-the existing compare-bytes-before-remove primitive, and acquire `O_EXCL` after
-removing only a lock it proved dead or self-owned. `LockInfo` has no owner
-token and MUST NOT gain one merely for this feature; the detailed reparent
-artifact carries `owner_token`. A live foreign holder returns an error the
-caller surfaces as `sync-state-present`, with detail saying that another
-reparent recovery currently owns the shared checkout-sync lock.
-`forceAcquireCheckoutLock` MUST remain unchanged and MUST keep all of its
-existing callers.
+It MUST reuse `forceAcquireCheckoutLock`'s existing `LockInfo`,
+PID/liveness, compare-bytes-before-remove, and `O_EXCL` behavior rather than
+implement a second reclaim ladder. `LockInfo` has no owner token and MUST NOT
+gain one merely for this feature; the detailed reparent artifact carries
+`owner_token`. A live foreign holder returns an error the caller surfaces as
+`sync-state-present`, with detail saying that another reparent recovery
+currently owns the shared checkout-sync lock. `forceAcquireCheckoutLock` MUST
+keep all of its existing callers and behavior.
 
 ### 11.7 Per-ref classification after a partial commit
 
@@ -3546,9 +3550,9 @@ by the tests that cover them.
 - **AC-078** Cleanup releases in the §11.6a order and deletes the state
   artifact **last**; a crash at any step is repaired by re-running either verb.
 - **AC-079** Reparent and sync are mutually exclusive in both modes; the sync
-  pre-check runs before mode dispatch and before classification, so plain,
-  `--continue`, and `--abort` all print the exact §11.2 sentence rather than a
-  version or decode error.
+  pre-check runs before mode dispatch, plan dispatch, and classification, so
+  `--plan`, plain, `--continue`, and `--abort` all print the exact §11.2
+  sentence rather than a plan, version error, or decode error.
 - **AC-080** `compat-artifact-missing` is raised when the artifact survives
   without its compatibility files; `--continue` re-creates them only after the
   four §11.2a proofs; `--abort` cleans up entirely from the detailed state
@@ -3735,7 +3739,7 @@ closure ordering over a branching graph, not only a linear chain.
 | T-064 | operator branch commit before the commit point refuses; after the commit point both verbs report it and complete cleanup | AC-076 |
 | T-065 | continue/abort reject approval and limit flags | AC-005, AC-077 |
 | T-066 | cleanup order, artifact deleted last, crash at each step | AC-078 |
-| T-067 | sync ↔ reparent mutual exclusion, both modes, all three verbs, pre-check before dispatch | AC-079 |
+| T-067 | sync ↔ reparent mutual exclusion, both modes, plan/plain/continue/abort, pre-check before dispatch | AC-079 |
 | T-068 | `compat-artifact-missing`; §11.2a re-creation proofs; abort without re-creation | AC-080 |
 | T-069 | `ReclaimCheckoutLock`: absent / self / dead / live-foreign | AC-081 |
 | T-070 | downgrade: prior binary, plain/continue/abort, both modes, incl. the non-integer checkout marker | AC-082 |
