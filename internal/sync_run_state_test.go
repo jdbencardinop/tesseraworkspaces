@@ -171,7 +171,15 @@ func TestSyncRunGuard_ClaimAndRelease(t *testing.T) {
 	if guard.PID != os.Getpid() || guard.Token != "tok" || guard.StateVersion != SyncRunStateVersion {
 		t.Fatalf("guard = %+v", guard)
 	}
-	ReleaseSyncRunGuard(dir)
+	if err := ReleaseOwnedSyncRunGuard(dir, "foreign"); err == nil {
+		t.Fatal("a token-bound release must refuse a foreign owner")
+	}
+	if _, err := os.Stat(SyncRunGuardPath(dir)); err != nil {
+		t.Fatal("a foreign release changed the guard")
+	}
+	if err := ReleaseOwnedSyncRunGuard(dir, "tok"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(SyncRunGuardPath(dir)); err == nil {
 		t.Fatal("guard must be gone after release")
 	}

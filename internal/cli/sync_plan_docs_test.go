@@ -114,13 +114,17 @@ func TestSyncPlanDocs_FlagWorkflowSurfacesCarryAllFiveLiterals(t *testing.T) {
 // TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral
 // implements spec.md §22.33-ii's two semantic predicates for docs/roadmap.md
 // and docs/engineering-workflow.md — the planning-prose surfaces the
-// documentation gate deliberately never grep for a flag literal: (1) "rebase
-// plan guard" names the feature exactly once, positioned inside the shipped
-// list/paragraph and strictly before the current-target sentence (never
-// inside a backlog list or the current-target sentence itself), and (2)
-// "safe reparent/restack" occupies that current-target position. It also
-// asserts the negative half of §22.33-ii's own rule: neither file may carry
-// any of the five flag literals.
+// documentation gate deliberately never grep for a flag literal: (1) the
+// shipped feature names sit inside the shipped list/paragraph and strictly
+// before the current-target sentence (never inside a backlog list or the
+// current-target sentence itself), and (2) the NEXT target occupies that
+// current-target position. It also asserts the negative half of §22.33-ii's
+// own rule: neither file may carry any of the five flag literals.
+//
+// safe-reparent-restack T-086 / AC-100 retargets both predicates deliberately:
+// "safe reparent/restack" has moved from the current target into the shipped
+// list, "rebase plan guard" still precedes it there, and the current/next
+// target is now "scoped status projection". The negative half is unchanged.
 func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t *testing.T) {
 	literals := []string{"--plan", "--max-replay-per-entry", "--max-replay-total", "--approve-plan", "plan-guard:"}
 
@@ -141,18 +145,41 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 			t.Fatalf(`docs/roadmap.md must name "rebase plan guard" exactly once, found %d`, n)
 		}
 		guardIdx := strings.Index(ci, "rebase plan guard")
+		reparentIdx := strings.Index(ci, "safe reparent/restack")
 		targetIdx := strings.Index(ci, "current target:")
 		backlogIdx := strings.Index(ci, "p1 stack safety and observability backlog")
-		if guardIdx < 0 || targetIdx < 0 || backlogIdx < 0 {
-			t.Fatalf("docs/roadmap.md is missing one of the required anchors (guard=%d target=%d backlog=%d)", guardIdx, targetIdx, backlogIdx)
+		if guardIdx < 0 || reparentIdx < 0 || targetIdx < 0 || backlogIdx < 0 {
+			t.Fatalf("docs/roadmap.md is missing one of the required anchors (guard=%d reparent=%d target=%d backlog=%d)", guardIdx, reparentIdx, targetIdx, backlogIdx)
 		}
-		if guardIdx >= targetIdx || targetIdx >= backlogIdx {
-			t.Fatalf("docs/roadmap.md must order: shipped \"rebase plan guard\" (%d) before \"Current target:\" (%d) before the P1 backlog heading (%d)", guardIdx, targetIdx, backlogIdx)
+		if guardIdx >= reparentIdx || reparentIdx >= targetIdx || targetIdx >= backlogIdx {
+			t.Fatalf("docs/roadmap.md must order: shipped \"rebase plan guard\" (%d) before shipped \"safe reparent/restack\" (%d) before \"Current target:\" (%d) before the P1 backlog heading (%d)", guardIdx, reparentIdx, targetIdx, backlogIdx)
 		}
 
 		targetTail := ci[targetIdx : targetIdx+min(80, len(ci)-targetIdx)]
-		if !strings.Contains(targetTail, "safe reparent/restack") {
-			t.Fatalf(`docs/roadmap.md's "Current target:" sentence must name "safe reparent/restack", got: %q`, targetTail)
+		if !strings.Contains(targetTail, "scoped status projection") {
+			t.Fatalf(`docs/roadmap.md's "Current target:" sentence must name "scoped status projection", got: %q`, targetTail)
+		}
+
+		normalized := normalizeProse(content)
+		for _, claim := range []string{
+			"three separate effects",
+			"git refs, stack.yaml metadata, and worktree/index state",
+			"ref commit is race-atomic",
+			"crash-atomic",
+			"only on the reftable backend",
+			"exactly one commit point",
+		} {
+			if !strings.Contains(normalized, claim) {
+				t.Errorf("docs/roadmap.md must state the reparent atomicity boundary %q", claim)
+			}
+		}
+		for _, falseClaim := range []string{
+			"refs and stack.yaml metadata atomically",
+			"git refs and stack.yaml metadata atomically",
+		} {
+			if strings.Contains(normalized, falseClaim) {
+				t.Errorf("docs/roadmap.md must not claim combined refs/metadata atomicity: %q", falseClaim)
+			}
 		}
 
 		assertNoFlagLiteral(t, "docs/roadmap.md", content)
@@ -165,23 +192,194 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 		if n := strings.Count(ci, "rebase plan guard"); n != 1 {
 			t.Fatalf(`docs/engineering-workflow.md must name "rebase plan guard" exactly once, found %d`, n)
 		}
+		if n := strings.Count(ci, "safe reparent/restack"); n != 1 {
+			t.Fatalf(`docs/engineering-workflow.md must name "safe reparent/restack" exactly once, found %d`, n)
+		}
 		shippedIdx := strings.Index(ci, "current shipped checkout slices")
 		guardIdx := strings.Index(ci, "rebase plan guard")
+		reparentIdx := strings.Index(ci, "safe reparent/restack")
 		nextFeatureIdx := strings.Index(ci, "next roadmap feature:")
-		if shippedIdx < 0 || guardIdx < 0 || nextFeatureIdx < 0 {
-			t.Fatalf("docs/engineering-workflow.md is missing one of the required anchors (shipped=%d guard=%d next=%d)", shippedIdx, guardIdx, nextFeatureIdx)
+		if shippedIdx < 0 || guardIdx < 0 || reparentIdx < 0 || nextFeatureIdx < 0 {
+			t.Fatalf("docs/engineering-workflow.md is missing one of the required anchors (shipped=%d guard=%d reparent=%d next=%d)", shippedIdx, guardIdx, reparentIdx, nextFeatureIdx)
 		}
-		if shippedIdx >= guardIdx || guardIdx >= nextFeatureIdx {
-			t.Fatalf("docs/engineering-workflow.md must order: the shipped-slices heading (%d) before \"rebase plan guard\" (%d) before \"Next roadmap feature:\" (%d)", shippedIdx, guardIdx, nextFeatureIdx)
+		if shippedIdx >= guardIdx || guardIdx >= reparentIdx || reparentIdx >= nextFeatureIdx {
+			t.Fatalf("docs/engineering-workflow.md must order: the shipped-slices heading (%d) before \"rebase plan guard\" (%d) before slice 13's \"safe reparent/restack\" (%d) before \"Next roadmap feature:\" (%d)", shippedIdx, guardIdx, reparentIdx, nextFeatureIdx)
 		}
 
 		nextTail := ci[nextFeatureIdx : nextFeatureIdx+min(80, len(ci)-nextFeatureIdx)]
-		if !strings.Contains(nextTail, "safe reparent/restack") {
-			t.Fatalf(`docs/engineering-workflow.md's "Next roadmap feature:" sentence must name "safe reparent/restack", got: %q`, nextTail)
+		if !strings.Contains(nextTail, "scoped status projection") {
+			t.Fatalf(`docs/engineering-workflow.md's "Next roadmap feature:" sentence must name "scoped status projection", got: %q`, nextTail)
 		}
 
 		assertNoFlagLiteral(t, "docs/engineering-workflow.md", content)
 	})
+}
+
+func TestReparentDocs_NormativeClaimsAcrossEightSurfaces(t *testing.T) {
+	_ = "asserts AC-100"
+	assertReparentMatrixBehavior(t, "T-086", "documentation-surfaces")
+	surfaces := []string{
+		"README.md",
+		"docs/cheatsheet.md",
+		"CHANGELOG.md",
+		"assets/skills/claude/tesseraworkspaces/SKILL.md",
+		"assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md",
+		"assets/skills/copilot/tws.prompt.md",
+		"docs/roadmap.md",
+		"docs/engineering-workflow.md",
+	}
+	for _, rel := range surfaces {
+		t.Run(rel, func(t *testing.T) {
+			raw := readRepoDoc(t, rel)
+			content := normalizeProse(raw)
+			if strings.Contains(content, "no concurrent reader ever sees half") {
+				t.Errorf("%s must not claim reader snapshot isolation", rel)
+			}
+			for _, contradiction := range []string{
+				"no-flag run takes no lock",
+				"git refs, stack.yaml metadata, and runtime state",
+				"refs, stack.yaml, runtime state",
+				"refs, stack.yaml metadata, and runtime state",
+			} {
+				if strings.Contains(content, contradiction) {
+					t.Errorf("%s carries stale reparent/sync prose %q", rel, contradiction)
+				}
+			}
+			for _, paragraph := range strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n\n") {
+				normalized := normalizeProse(paragraph)
+				if strings.Contains(normalized, "reparent") && strings.Contains(normalized, "moves nothing") {
+					t.Errorf("%s must not claim a reparent plan moves nothing; external policy may fetch", rel)
+				}
+			}
+			if !strings.Contains(content,
+				"moves no branch and writes no tws state; may fetch according to policy") {
+				t.Errorf("%s must carry the exact reparent plan side-effect wording", rel)
+			}
+			for _, claim := range []string{
+				"stack-entry destination stores",
+				"logical entry name",
+				"named literal ref stores",
+				"full refs/...",
+				"raw object",
+				"full lowercase oid",
+				"final mutation check",
+				"feature mutation lock",
+				"top-level external push",
+				"every mutating external sync",
+				"scans every feature's recoverable checkout sync/reparent state",
+				"do not use an older tws while any reparent is active or recoverable",
+				"worktree/index state",
+			} {
+				if !strings.Contains(content, claim) {
+					t.Errorf("%s must carry the canonical destination-storage claim %q", rel, claim)
+				}
+			}
+		})
+	}
+
+	for _, rel := range []string{
+		"README.md",
+		"assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md",
+	} {
+		content := normalizeProse(readRepoDoc(t, rel))
+		for _, claim := range []string{
+			"concurrent write to any expected-old ref",
+			"aborts the ref transaction during prepare",
+			"not reader snapshot isolation",
+			"crash-atomic only on",
+			"refs, stack.yaml, and worktree/index state are separate effects",
+			"forward",
+		} {
+			if !strings.Contains(content, claim) {
+				t.Errorf("%s must carry the complete §9.13 atomicity claim %q", rel, claim)
+			}
+		}
+	}
+
+	cheatsheet := normalizeProse(readRepoDoc(t, "docs/cheatsheet.md"))
+	for _, claim := range []string{
+		"authoritative recorded lastbasesha",
+		"cannot override",
+		"unresolvable record",
+	} {
+		if !strings.Contains(cheatsheet, claim) {
+			t.Errorf("docs/cheatsheet.md must state %q", claim)
+		}
+	}
+
+	orchestrator := normalizeProse(readRepoDoc(t, "assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md"))
+	fresh := `plan.runnable == true && plan.guard.wouldrefuse == false && plan.guard.executeblockedby == [] && plan.refusal.kind == null && plan.approval.usable == true`
+	resume := `plan.route == "continue" && plan.runnable == true && plan.guard.wouldrefuse == false && plan.guard.executeblockedby == [] && plan.refusal.kind == null && plan.approval.scope == "resume"`
+	if !strings.Contains(orchestrator, fresh) {
+		t.Errorf("the orchestrator must embed the exact §7.12 fresh predicate")
+	}
+	if !strings.Contains(orchestrator, resume) {
+		t.Errorf("the orchestrator must embed the exact §7.12a continue predicate")
+	}
+	if strings.Contains(orchestrator, `plan.summary.plannability == "ok"`) {
+		t.Error(`the fresh predicate must not use the nonexistent plannability value "ok"`)
+	}
+	if !strings.Contains(orchestrator, "reparent plan's target and descendants[]") {
+		t.Error("the orchestrator must describe reparent rows as target + descendants[]")
+	}
+	if strings.Contains(orchestrator, "reparent plan's entries[]") {
+		t.Error("the orchestrator must not reuse sync's entries[] shape for reparent")
+	}
+
+	readme := normalizeProse(readRepoDoc(t, "README.md"))
+	if got := strings.Count(readme, "a refusal tws already performs"); got != 1 {
+		t.Errorf("README.md must contain one unsplit refusal paragraph, found %d copies", got)
+	}
+
+	for _, rel := range []string{
+		"README.md",
+		"docs/cheatsheet.md",
+		"assets/skills/claude/tesseraworkspaces/SKILL.md",
+		"assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md",
+		"assets/skills/copilot/tws.prompt.md",
+	} {
+		content := normalizeProse(readRepoDoc(t, rel))
+		for _, claim := range []string{"same replay limit", "limitless preview", "null fingerprint"} {
+			if !strings.Contains(content, claim) {
+				t.Errorf("%s must state %q", rel, claim)
+			}
+		}
+		raw := readRepoDoc(t, rel)
+		lines := strings.Split(raw, "\n")
+		for i, line := range lines {
+			if !strings.Contains(line, "tws stack reparent") || !strings.Contains(line, "--plan") {
+				continue
+			}
+			command := line
+			for j := i + 1; j < len(lines) && j <= i+2 && strings.HasSuffix(strings.TrimSpace(command), "\\"); j++ {
+				command += " " + lines[j]
+			}
+			if !strings.Contains(command, "--max-replay-per-entry") && !strings.Contains(command, "--max-replay-total") {
+				t.Errorf("%s has a limitless reparent plan example: %s", rel, command)
+			}
+		}
+	}
+}
+
+func TestReparentDocs_GuardedWorkflowExecutes(t *testing.T) {
+	f := newReparentCustomerExternal(t)
+	const limit = "20"
+	human, prose := f.Plan(
+		f.Feature, "pr2", "--onto", "master",
+		"--max-replay-total", limit,
+	)
+	fingerprint := reparentFingerprint(t, human+"\n"+prose)
+	if fingerprint == "" {
+		t.Fatal("documented bounded preview minted no fingerprint")
+	}
+	stdout, stderr, exit := f.Run(
+		f.Feature, "pr2", "--onto", "master",
+		"--max-replay-total", limit,
+		"--approve-plan", fingerprint,
+	)
+	if exit != 0 || stdout != "" {
+		t.Fatalf("documented plan/approve/execute workflow = exit %d stdout %q stderr %q", exit, stdout, stderr)
+	}
 }
 
 // ---------------------------------------------------------------------------

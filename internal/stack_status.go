@@ -89,6 +89,13 @@ type StackStatusReport struct {
 	Feature       string               `json:"feature"`
 	Entries       []StackStatusEntry   `json:"entries"`
 	Summary       StackStatusSummary   `json:"summary"`
+
+	// Reparent is the §11.10 projection of an in-progress safe reparent. It is
+	// the ONE deliberate exception to the "no field is ever omitted" rule
+	// above: declaring it omitempty with a POINTER value keeps the key ABSENT
+	// — never null — whenever no artifact exists, which is what leaves the
+	// no-reparent document byte-identical to today and SchemaVersion at 1.
+	Reparent *ReparentProjection `json:"reparent,omitempty"`
 }
 
 // StackStatusWorkspace describes the resolved workspace. Exactly one of
@@ -612,8 +619,21 @@ func stackStatusParentCounts(repoDir, localHead, parentHead string) (*int, *int)
 // exactly once, computes no ancestry of its own, issues no second ref probe or
 // repository resolution, and starts at most 2 + C + D Git processes of its own.
 func BuildStackStatus(ws Workspace, cfg Config, feature, featurePath string, stack Stack) (*StackStatusReport, error) {
+	return BuildStackStatusWithReparentPath(ws, cfg, feature, featurePath, featurePath, stack)
+}
+
+// BuildStackStatusWithReparentPath keeps ordinary ancestry and materialization
+// routed through featurePath while reading reparent state from the path the
+// reparent layout resolver selected. The paths differ only for a configured
+// external TWS_ROOT override.
+func BuildStackStatusWithReparentPath(ws Workspace, cfg Config, feature, featurePath, reparentFeaturePath string, stack Stack) (*StackStatusReport, error) {
 	edges, res := FeatureStackEdges(ws, cfg, feature, featurePath, stack)
 	edges = ancestryEdgesFor(feature, stack, edges)
+	// §11.10 rule 2: ancestry status and reason are still reported; only the
+	// repair guidance is replaced by the anchored reparent line.
+	if ReparentGuidanceSuppressed(ws, feature, reparentFeaturePath) {
+		edges = SuppressReparentAncestryGuidance(edges)
+	}
 	repoDir := res.RepoDir
 
 	report := &StackStatusReport{
@@ -635,11 +655,19 @@ func BuildStackStatus(ws Workspace, cfg Config, feature, featurePath string, sta
 	}
 	report.Workspace.StableID = stackStatusOptString(ws.StableID)
 
+	// §11.10: the read-only reparent projection. BuildReparentProjection
+	// returns nil when no artifact exists, so the key stays absent and the
+	// document is byte-identical to today. It is strictly read-only: no fetch,
+	// no ref write, no state repair, and it never evaluates the §12.3 remote
+	// follow-up record.
+	reparentLoc := ReparentLocationFor(ws, feature, reparentFeaturePath)
+	report.Reparent = BuildReparentProjection(reparentLoc)
+
 	var branchInv BranchRefInventory
 	var worktreeInv WorktreeInventory
 	if repoDir != "" {
 		branchInv = BuildBranchRefInventory(repoDir)
-		worktreeInv = BuildWorktreeInventory(repoDir)
+		worktreeInv = ExcludeReparentScratchWorktrees(BuildWorktreeInventory(repoDir), ActiveReparentScratchPath(reparentLoc))
 	}
 
 	var checkout *StackStatusCheckout

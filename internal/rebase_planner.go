@@ -220,6 +220,27 @@ func ResolveSyncBase(stack Stack, entry StackEntry, repoCtx string) ResolveSyncB
 	if parent.Name != "" && SameStackRepo(parent.Repo, entry.Repo) {
 		return ResolveSyncBaseResult{Base: parent.GitBranch(), Kind: "stack-entry", DependsOnName: parent.Name}
 	}
+	var defaultBranch string
+	if repoCtx == "" {
+		defaultBranch = DefaultBranch()
+	} else {
+		defaultBranch, _ = DefaultBranchIn(repoCtx)
+	}
+	return ResolveSyncBaseWithDefaultBranch(stack, entry, defaultBranch)
+}
+
+// ResolveSyncBaseWithDefaultBranch is the pure half of ResolveSyncBase. Sync
+// keeps measuring its default branch exactly as before; reparent supplies the
+// same already-measured fact through its Dir-based Git runner so no hidden
+// process can add `-C` to the reparent boundary.
+func ResolveSyncBaseWithDefaultBranch(stack Stack, entry StackEntry, defaultBranch string) ResolveSyncBaseResult {
+	if entry.Base == "" {
+		return ResolveSyncBaseResult{Kind: "none"}
+	}
+	parent := GetBranch(stack, entry.Base)
+	if parent.Name != "" && SameStackRepo(parent.Repo, entry.Repo) {
+		return ResolveSyncBaseResult{Base: parent.GitBranch(), Kind: "stack-entry", DependsOnName: parent.Name}
+	}
 	kind, dependsOn := "literal-ref", ""
 	if parent.Name != "" {
 		// A same-named stack entry exists but in a different repository:
@@ -227,12 +248,6 @@ func ResolveSyncBase(stack Stack, entry StackEntry, repoCtx string) ResolveSyncB
 		// can use directly (§10) — resolveBase treats entry.Base as a
 		// literal ref from here on, exactly as the shipped executor does.
 		kind, dependsOn = "stack-entry", parent.Name
-	}
-	var defaultBranch string
-	if repoCtx == "" {
-		defaultBranch = DefaultBranch()
-	} else {
-		defaultBranch, _ = DefaultBranchIn(repoCtx)
 	}
 	if entry.Base == defaultBranch {
 		return ResolveSyncBaseResult{Base: "origin/" + defaultBranch, IsRemoteTracking: true, Kind: kind, DependsOnName: dependsOn}

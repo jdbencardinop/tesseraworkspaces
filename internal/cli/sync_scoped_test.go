@@ -595,20 +595,32 @@ func TestSyncScoped_GuardRefusesASecondRun(t *testing.T) {
 	}
 }
 
-func TestSyncScoped_UnreadableGuardDoesNotBlockANoFlagRun(t *testing.T) {
+func TestSyncScoped_UnreadableGuardBlocksNoFlagRunWithoutMutation(t *testing.T) {
 	f := newScopedFixture(t)
-	if err := os.WriteFile(internal.SyncRunGuardPath(f.featurePath), []byte("::: not yaml :::\n"), 0o600); err != nil {
+	guard := []byte("::: not yaml :::\n")
+	if err := os.WriteFile(internal.SyncRunGuardPath(f.featurePath), guard, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	stackBefore, err := os.ReadFile(internal.StackPath(f.featurePath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	refsBefore := gitOutput(t, f.repo, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads")
 	stdout, stderr, exit := runSync(t, f.feature)
-	if exit != 0 {
-		t.Fatalf("a no-flag run never consults the guard: exit=%d\n%s\n%s", exit, stdout, stderr)
+	if exit == 0 || !strings.Contains(stderr, "invalid sync guard") {
+		t.Fatalf("a mutating no-flag run must fail closed on an unreadable shared guard: exit=%d\n%s\n%s", exit, stdout, stderr)
 	}
-	if !strings.Contains(stdout, "Sync complete.") {
-		t.Fatalf("missing the frozen terminal line:\n%s", stdout)
+	if stdout != "" {
+		t.Fatalf("a guard refusal must print no success output:\n%s", stdout)
 	}
-	if _, err := os.Stat(internal.SyncRunGuardPath(f.featurePath)); err != nil {
-		t.Fatal("a no-flag run must leave the guard file alone")
+	if after, err := os.ReadFile(internal.SyncRunGuardPath(f.featurePath)); err != nil || string(after) != string(guard) {
+		t.Fatalf("unreadable guard changed: %q (%v)", after, err)
+	}
+	if after, err := os.ReadFile(internal.StackPath(f.featurePath)); err != nil || string(after) != string(stackBefore) {
+		t.Fatalf("stack.yaml changed: %v", err)
+	}
+	if got := gitOutput(t, f.repo, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads"); got != refsBefore {
+		t.Fatal("unreadable guard refusal moved a ref")
 	}
 }
 

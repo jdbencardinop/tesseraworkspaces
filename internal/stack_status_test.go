@@ -733,8 +733,19 @@ func ssAssertReportKeys(t *testing.T, doc map[string]any, mode WorkspaceMode) {
 }
 
 func TestStackStatus_KeySet(t *testing.T) {
-	if strings.Contains(ssSourceFile(t, "stack_status.go"), "omitempty") {
-		t.Fatal("internal/stack_status.go must contain no omitempty tag")
+	// safe-reparent-restack §11.10 / AC-085 introduces EXACTLY ONE omitempty
+	// tag in this file: the `reparent` projection. It is deliberately a
+	// POINTER declared omitempty, so the key is ABSENT — never null — whenever
+	// no artifact exists, which is what keeps the no-reparent document
+	// byte-identical to today and leaves schema_version at 1. Every other key
+	// of this document is still always present, so the original assertion is
+	// preserved with that one exception spelled out.
+	src := ssSourceFile(t, "stack_status.go")
+	const reparentKey = "`json:\"reparent,omitempty\"`"
+	// Counting the closing quote restricts the match to real struct tags, so
+	// prose that merely names the option is not miscounted as one.
+	if strings.Count(src, "omitempty\"") != 1 || !strings.Contains(src, reparentKey) {
+		t.Fatal("internal/stack_status.go must carry exactly one omitted-when-empty struct tag, the reparent projection pointer")
 	}
 
 	t.Run("external populated", func(t *testing.T) {

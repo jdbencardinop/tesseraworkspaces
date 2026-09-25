@@ -1570,3 +1570,371 @@ func TestCheckoutSyncPlan_Criterion22_24c_RouteVersionMatrix(t *testing.T) {
 		}
 	}
 }
+
+// ============================================================================
+// checkoutBaseTokenFor and ReclaimCheckoutLock — safe-reparent's two
+// behaviour-preserving extractions out of this file.
+// ============================================================================
+
+// TestCheckoutBaseTokenFor_ReproducesTheShippedInlineRule pins the extraction
+// against a literal re-statement of the body it replaced, including the two
+// properties that are easy to lose: an empty base is "no base at all" (the
+// caller's `continue`), and StackEntry.Repo is deliberately NOT consulted —
+// GetBranch matches on logical Name alone, exactly as the shipped arm did.
+func TestCheckoutBaseTokenFor_ReproducesTheShippedInlineRule(t *testing.T) {
+	stack := Stack{Branches: []StackEntry{
+		{Name: "pr1", Branch: "feature/pr1", Base: "main"},
+		{Name: "pr2", Base: "pr1"},
+		{Name: "pr3", Base: "refs/heads/main"},
+		{Name: "elsewhere", Branch: "feature/elsewhere", Base: "main", Repo: "/other"},
+		{Name: "pr4", Base: "elsewhere"},
+		{Name: "root", Base: ""},
+	}}
+
+	shipped := func(entry StackEntry) (string, bool) {
+		base := entry.Base
+		if base == "" {
+			return "", false
+		}
+		if parent := GetBranch(stack, entry.Base); parent.Name != "" {
+			base = parent.GitBranch()
+		}
+		return base, true
+	}
+
+	for _, entry := range stack.Branches {
+		wantBase, wantOK := shipped(entry)
+		gotBase, gotOK := checkoutBaseTokenFor(stack, entry)
+		if gotBase != wantBase || gotOK != wantOK {
+			t.Fatalf("checkoutBaseTokenFor(%q) = (%q, %v), want (%q, %v)", entry.Name, gotBase, gotOK, wantBase, wantOK)
+		}
+	}
+
+	// The three individually meaningful cells, spelled out.
+	if base, ok := checkoutBaseTokenFor(stack, GetBranch(stack, "pr2")); !ok || base != "feature/pr1" {
+		t.Fatalf("an in-stack parent must resolve through GitBranch(): got (%q, %v)", base, ok)
+	}
+	if base, ok := checkoutBaseTokenFor(stack, GetBranch(stack, "pr3")); !ok || base != "refs/heads/main" {
+		t.Fatalf("a literal base must stay literal: got (%q, %v)", base, ok)
+	}
+	if base, ok := checkoutBaseTokenFor(stack, GetBranch(stack, "pr4")); !ok || base != "feature/elsewhere" {
+		t.Fatalf("Repo must not be consulted by this rule: got (%q, %v)", base, ok)
+	}
+	if _, ok := checkoutBaseTokenFor(stack, GetBranch(stack, "root")); ok {
+		t.Fatal("an empty base must report ok == false, reproducing the caller's continue")
+	}
+}
+
+// TestReclaimCheckoutLock_ReusesTheShippedLadder walks the four cells the
+// recovery routes legitimately meet: absent, already ours, held by a dead
+// PID, and held by a LIVE foreign process. The last one must refuse with the
+// byte-identical sentence the shipped ladder has always produced, now also
+// available as a typed error so a caller can classify it without string
+// matching.
+func TestReclaimCheckoutLock_ReusesTheShippedLadder(t *testing.T) {
+	assertReparentMatrixBehavior(t, "T-069",
+		"checkout-lock-reclaim",
+		"workspace-orphan-state-scan",
+	)
+	featurePath := filepath.Join(t.TempDir(), "features", "feat")
+	if err := os.MkdirAll(featurePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	func(t *testing.T) {
+		writeDeadLock := func(t *testing.T, stateDir, statePath string) []byte {
+			t.Helper()
+			if err := os.MkdirAll(stateDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			data := []byte(fmt.Sprintf(
+				"pid: %d\ncreated: \"2026-09-23T00:00:00Z\"\ntoken: old-token\nfeature: old\noperation: sync\nstate_path: %q\n",
+				reparentSpawnDeadPID(t), statePath))
+			if err := os.WriteFile(CheckoutMutationLockPath(stateDir), data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return data
+		}
+		assertUnchanged := func(t *testing.T, stateDir string, before []byte) {
+			t.Helper()
+			after, err := os.ReadFile(CheckoutMutationLockPath(stateDir))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(after, before) {
+				t.Fatalf("uncertain owner state allowed lock theft:\n--- before ---\n%s\n--- after ---\n%s", before, after)
+			}
+		}
+
+		t.Run("symlink owner state", func(t *testing.T) {
+			stateDir := t.TempDir()
+			target := filepath.Join(stateDir, "real-state.yaml")
+			if err := os.WriteFile(target, []byte("state\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			statePath := filepath.Join(stateDir, "owner-state.yaml")
+			if err := os.Symlink(target, statePath); err != nil {
+				t.Fatal(err)
+			}
+			before := writeDeadLock(t, stateDir, statePath)
+			if _, err := AcquireCheckoutMutationLock(stateDir, "new-token", "new", "sync",
+				filepath.Join(stateDir, "new-state.yaml")); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+				t.Fatalf("symlink owner state = %v", err)
+			}
+			assertUnchanged(t, stateDir, before)
+		})
+
+		t.Run("owner state I/O error", func(t *testing.T) {
+			stateDir := t.TempDir()
+			blocker := filepath.Join(stateDir, "not-a-directory")
+			if err := os.WriteFile(blocker, []byte("file\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			statePath := filepath.Join(blocker, "state.yaml")
+			before := writeDeadLock(t, stateDir, statePath)
+			if _, err := AcquireCheckoutMutationLock(stateDir, "new-token", "new", "sync",
+				filepath.Join(stateDir, "new-state.yaml")); err == nil {
+				t.Fatal("ENOTDIR owner-state probe must refuse")
+			}
+			assertUnchanged(t, stateDir, before)
+		})
+
+		t.Run("owner state permission error", func(t *testing.T) {
+			stateDir := t.TempDir()
+			statePath := filepath.Join(stateDir, "owner-state.yaml")
+			before := writeDeadLock(t, stateDir, statePath)
+			previous := checkoutMutationLstat
+			checkoutMutationLstat = func(path string) (os.FileInfo, error) {
+				if path == statePath {
+					return nil, os.ErrPermission
+				}
+				return os.Lstat(path)
+			}
+			t.Cleanup(func() { checkoutMutationLstat = previous })
+			if _, err := AcquireCheckoutMutationLock(stateDir, "new-token", "new", "sync",
+				filepath.Join(stateDir, "new-state.yaml")); err == nil || !errors.Is(err, os.ErrPermission) {
+				t.Fatalf("permission owner-state probe = %v", err)
+			}
+			assertUnchanged(t, stateDir, before)
+		})
+	}(t)
+
+	t.Run("workspace-global mutation lock", func(t *testing.T) {
+		stateDir := t.TempDir()
+		syncState := filepath.Join(stateDir, "alpha-checkout-sync.yaml")
+		reparentState := filepath.Join(stateDir, "beta-reparent.v1.yaml")
+		tokenA := strings.Repeat("a", 32)
+		tokenB := strings.Repeat("b", 32)
+
+		if _, err := AcquireCheckoutMutationLock(stateDir, tokenA, "alpha", "sync", syncState); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := AcquireCheckoutMutationLock(stateDir, tokenB, "beta", "reparent", reparentState); err == nil ||
+			!strings.Contains(err.Error(), "live sync") {
+			t.Fatalf("a second feature must not mutate the physical checkout: %v", err)
+		}
+		if _, err := ReclaimCheckoutMutationLock(stateDir, tokenB, "beta", "reparent", reparentState); err == nil ||
+			!strings.Contains(err.Error(), "foreign sync") {
+			t.Fatalf("recovery must not steal another feature's lock: %v", err)
+		}
+		if err := ReleaseCheckoutMutationLock(stateDir, tokenB); err == nil {
+			t.Fatal("a foreign token must not release the workspace lock")
+		}
+		if err := ReleaseCheckoutMutationLock(stateDir, tokenA); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := AcquireCheckoutMutationLock(stateDir, tokenB, "beta", "reparent", reparentState); err != nil {
+			t.Fatalf("the next feature may acquire after release: %v", err)
+		}
+		if err := ReleaseCheckoutMutationLock(stateDir, tokenB); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("absent global lock scans workspace recovery state", func(t *testing.T) {
+		for _, name := range []string{
+			"alpha-checkout-sync.yaml",
+			"alpha-reparent.v1.yaml",
+		} {
+			t.Run(name, func(t *testing.T) {
+				stateDir := t.TempDir()
+				statePath := filepath.Join(stateDir, name)
+				stateBytes := []byte("recoverable: true\n")
+				if err := os.WriteFile(statePath, stateBytes, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := AcquireCheckoutMutationLock(
+					stateDir, "beta-token", "beta", "sync",
+					filepath.Join(stateDir, "beta-checkout-sync.yaml"),
+				); err == nil || !strings.Contains(err.Error(), statePath) {
+					t.Fatalf("fresh acquisition with orphan %s = %v", name, err)
+				}
+				if _, err := os.Lstat(CheckoutMutationLockPath(stateDir)); !os.IsNotExist(err) {
+					t.Fatalf("refused fresh acquisition left a global lock: %v", err)
+				}
+				if after, err := os.ReadFile(statePath); err != nil || !bytes.Equal(after, stateBytes) {
+					t.Fatalf("refused fresh acquisition changed %s: %q (%v)", name, after, err)
+				}
+			})
+		}
+		t.Run("legacy compatibility directory", func(t *testing.T) {
+			stateDir := t.TempDir()
+			legacyStateDir := t.TempDir()
+			statePath := filepath.Join(legacyStateDir, "alpha-checkout-sync.yaml")
+			stateBytes := []byte("recoverable: true\n")
+			if err := os.WriteFile(statePath, stateBytes, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := AcquireCheckoutMutationLock(
+				stateDir, "beta-token", "beta", "reparent",
+				filepath.Join(stateDir, "beta-reparent.v1.yaml"), legacyStateDir,
+			); err == nil || !strings.Contains(err.Error(), statePath) {
+				t.Fatalf("fresh acquisition with legacy-layout orphan = %v", err)
+			}
+			if _, err := os.Lstat(CheckoutMutationLockPath(stateDir)); !os.IsNotExist(err) {
+				t.Fatalf("refused legacy-layout acquisition left a global lock: %v", err)
+			}
+		})
+
+		t.Run("mixed current and pre-upgrade directories", func(t *testing.T) {
+			for _, tc := range []struct {
+				name        string
+				lockDir     string
+				recoverable string
+				stateName   string
+			}{
+				{
+					name:        "current lock sees legacy transaction",
+					lockDir:     filepath.Join(t.TempDir(), ".tws", "state"),
+					recoverable: "legacy",
+					stateName:   "alpha-checkout-sync.yaml",
+				},
+				{
+					name:        "legacy lock sees current reparent",
+					lockDir:     filepath.Join(t.TempDir(), "state"),
+					recoverable: "current",
+					stateName:   "alpha-reparent.v1.yaml",
+				},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					var otherDir string
+					if tc.recoverable == "legacy" {
+						repoRoot := filepath.Dir(filepath.Dir(tc.lockDir))
+						otherDir = filepath.Join(repoRoot, "state")
+					} else {
+						repoRoot := filepath.Dir(tc.lockDir)
+						otherDir = filepath.Join(repoRoot, ".tws", "state")
+					}
+					if err := os.MkdirAll(otherDir, 0o700); err != nil {
+						t.Fatal(err)
+					}
+					statePath := filepath.Join(otherDir, tc.stateName)
+					if err := os.WriteFile(statePath, []byte("recoverable: true\n"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+					owner := filepath.Join(tc.lockDir, "beta-reparent.v1.yaml")
+					if _, err := AcquireCheckoutMutationLock(
+						tc.lockDir, "beta-token", "beta", "reparent", owner,
+					); err == nil || !strings.Contains(err.Error(), statePath) {
+						t.Fatalf("mixed-layout recoverable state = %v", err)
+					}
+					if _, err := os.Lstat(CheckoutMutationLockPath(tc.lockDir)); !os.IsNotExist(err) {
+						t.Fatalf("refused mixed-layout acquisition left a global lock: %v", err)
+					}
+				})
+			}
+		})
+	})
+
+	t.Run("recovery reconstructs only its own reservation", func(t *testing.T) {
+		stateDir := t.TempDir()
+		ownState := filepath.Join(stateDir, "alpha-reparent.v1.yaml")
+		if err := os.WriteFile(ownState, []byte("state\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		token := strings.Repeat("a", 32)
+		if _, err := ReclaimCheckoutMutationLock(stateDir, token, "alpha", "reparent", ownState); err != nil {
+			t.Fatalf("reconstruct matching reservation: %v", err)
+		}
+		if err := ReleaseCheckoutMutationLock(stateDir, token); err != nil {
+			t.Fatal(err)
+		}
+
+		foreignState := filepath.Join(stateDir, "beta-checkout-sync.yaml")
+		if err := os.WriteFile(foreignState, []byte("state\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ReclaimCheckoutMutationLock(stateDir, token, "alpha", "reparent", ownState); err == nil ||
+			!strings.Contains(err.Error(), foreignState) {
+			t.Fatalf("recovery with another feature's state = %v", err)
+		}
+		if _, err := os.Lstat(CheckoutMutationLockPath(stateDir)); !os.IsNotExist(err) {
+			t.Fatalf("refused reconstructed reservation left a global lock: %v", err)
+		}
+	})
+	lockPath := CheckoutLockPath(featurePath)
+
+	// Absent.
+	if err := ReclaimCheckoutLock(featurePath); err != nil {
+		t.Fatalf("absent lock: %v", err)
+	}
+	info, err := ReadCheckoutLock(featurePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.PID != os.Getpid() {
+		t.Fatalf("lock owner = %d, want this process %d", info.PID, os.Getpid())
+	}
+
+	// Already ours.
+	if err := ReclaimCheckoutLock(featurePath); err != nil {
+		t.Fatalf("own lock: %v", err)
+	}
+
+	// Dead foreign PID.
+	dead := reparentSpawnDeadPID(t)
+	if err := os.WriteFile(lockPath, []byte(fmt.Sprintf("pid: %d\ncreated: \"2020-01-01T00:00:00Z\"\n", dead)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReclaimCheckoutLock(featurePath); err != nil {
+		t.Fatalf("dead foreign lock: %v", err)
+	}
+
+	// Live foreign PID.
+	live := reparentSpawnLivePID(t)
+	if err := os.WriteFile(lockPath, []byte(fmt.Sprintf("pid: %d\ncreated: \"2020-01-01T00:00:00Z\"\n", live)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err = ReclaimCheckoutLock(featurePath)
+	if err == nil {
+		t.Fatal("a live foreign lock must never be stolen")
+	}
+	want := fmt.Sprintf("lock held by live process %d; cannot reclaim", live)
+	if err.Error() != want {
+		t.Fatalf("message = %q, want the byte-identical shipped sentence %q", err.Error(), want)
+	}
+	var typed *CheckoutLockLiveError
+	if !errors.As(err, &typed) {
+		t.Fatal("a live foreign holder must be classifiable without string matching")
+	}
+	if typed.PID != live {
+		t.Fatalf("typed error pid = %d, want %d", typed.PID, live)
+	}
+
+	// The lock file itself is untouched by the refusal.
+	current, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(current), fmt.Sprintf("pid: %d", live)) {
+		t.Fatalf("the live holder's lock was modified: %q", current)
+	}
+
+	// forceAcquireCheckoutLock keeps its behaviour and its message: the
+	// exported wrapper is the same ladder, not a second one.
+	if err := forceAcquireCheckoutLock(featurePath); err == nil || err.Error() != want {
+		t.Fatalf("forceAcquireCheckoutLock message = %v, want %q", err, want)
+	}
+	testReparentCheckoutRecoveryLockTransferCrash(t)
+}

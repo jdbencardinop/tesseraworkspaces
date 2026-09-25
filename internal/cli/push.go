@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 
@@ -42,13 +45,26 @@ func pushCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return pushFeature(feature, layout, dryRun)
+			return pushFeatureSerialized(feature, layout, dryRun)
 		},
 	}
 
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be pushed without pushing")
 
 	return cmd
+}
+
+// externalReparentLocation is the external push paths' record location. It is
+// derived from the already-resolved layout and needs NO workspace probe: in
+// external mode both the reparent state artifact and the §12.3 remote
+// follow-up record live directly inside the feature directory, so FeaturePath
+// and the mode are the whole identity.
+func externalReparentLocation(feature string, layout externalSyncLayout) internal.ReparentLocation {
+	return internal.ReparentLocation{
+		Mode:        internal.ModeExternal,
+		Feature:     feature,
+		FeaturePath: layout.FeaturePath,
+	}
 }
 
 // pushFeature pushes every entry of an external feature. It takes the resolved
@@ -59,8 +75,33 @@ func pushFeature(feature string, layout externalSyncLayout, dryRun bool) error {
 	if err != nil {
 		return fmt.Errorf("no stack.yaml found for feature: %s", feature)
 	}
-	return pushEntries(layout, stack.Branches, dryRun)
+	return pushEntries(feature, layout, stack.Branches, dryRun)
 }
+
+func pushFeatureSerialized(feature string, layout externalSyncLayout, dryRun bool) (err error) {
+	if dryRun {
+		return pushFeature(feature, layout, true)
+	}
+	if refusal := internal.ReparentPushMutationRefusal(externalReparentLocation(feature, layout)); refusal != nil {
+		return internal.AnchorReparentRefusal(refusal)
+	}
+	tokenBytes := make([]byte, 16)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return fmt.Errorf("create push mutation token: %w", err)
+	}
+	token := hex.EncodeToString(tokenBytes)
+	if err := internal.ClaimSyncRunGuard(layout.FeaturePath, token); err != nil {
+		return fmt.Errorf("claim feature mutation lock for push: %w", err)
+	}
+	defer func() {
+		err = errors.Join(err, internal.ReleaseOwnedSyncRunGuard(layout.FeaturePath, token))
+	}()
+	return pushFeature(feature, layout, false)
+}
+
+// TopLevelPushEntryBarrier is a test-only seam between invocation-wide
+// preflight and each real push while the feature mutation lock is held.
+var TopLevelPushEntryBarrier func(index int, entry internal.StackEntry) error
 
 // pushScoped is the sync-side push of a new-mode run, for every scope. It is
 // strict and payload-aware: it pushes only the entries this run selected AND
@@ -80,6 +121,47 @@ func pushScoped(feature string, layout externalSyncLayout, stack internal.Stack,
 		alreadyPushed[name] = true
 	}
 
+	loc := externalReparentLocation(feature, layout)
+	if refusal := internal.ReparentPushMutationRefusal(loc); refusal != nil {
+		return internal.AnchorReparentRefusal(refusal)
+	}
+	// Under the sync-owned mutation lock, clear local observations first,
+	// reload the envelope, then preflight the entries this invocation pushes.
+	defaultRepo := externalPushDefaultRepo(layout, stack)
+	env, err := internal.PrepareReparentPushEnvelope(loc, defaultRepo, &stack, true)
+	if err != nil {
+		var anchored *internal.ReparentAnchoredError
+		if errors.As(err, &anchored) {
+			return anchored
+		}
+		return fmt.Errorf("evaluate reparent remote follow-up before push: %w", err)
+	}
+	var probes []internal.ReparentPushEntryProbe
+	if env.Active() {
+		for _, selected := range sel.Entries {
+			if !rebased[selected.Name] || alreadyPushed[selected.Name] {
+				continue
+			}
+			entry := internal.GetBranch(stack, selected.Name)
+			if entry.Name == "" {
+				continue
+			}
+			probes = append(probes, env.ProbeEntry(pushRepoDir(layout, entry), entry.Name))
+		}
+	}
+	// The preflight is evaluated unconditionally: an envelope whose record
+	// exists but could not be read is inactive AND untrusted, and that case
+	// must refuse invocation-wide rather than fall through to today's argv.
+	// pushScoped has no dry-run branch and gains none.
+	if pre := env.PreflightProbes(probes); pre.Refuse {
+		// The refusal escapes into `tws sync`'s own error rendering, so it
+		// carries §13.2's marker with it: an operator must never see a bare
+		// `remote-followup-unsafe-lease:` line with no idea which subsystem
+		// refused.
+		return internal.AnchorReparentRefusal(pre.Refusal())
+	}
+
+	pushed := false
 	for _, selected := range sel.Entries {
 		if !rebased[selected.Name] || alreadyPushed[selected.Name] {
 			continue
@@ -100,12 +182,17 @@ func pushScoped(feature string, layout externalSyncLayout, stack internal.Stack,
 		if entry.Repo != "" {
 			repoDir = entry.Repo
 		}
-		if err := internal.RunDirClean(repoDir, "git", "push", "--force-with-lease", "origin", entry.GitBranch()); err != nil {
+		decision := env.Decision(entry.Name)
+		if decision.Applies && decision.WarnLine != "" {
+			fmt.Fprintln(os.Stderr, decision.WarnLine) //nolint:errcheck
+		}
+		if err := internal.RunDirClean(repoDir, "git", pushArgv(decision, entry.GitBranch())...); err != nil {
 			fmt.Printf("  [x] %s (push failed)\n", entry.Name)
 			saveScopedPushFailure(layout.FeaturePath, payload, entry.Name)
 			return fmt.Errorf("push failed for %s; fix the remote problem, then resume with: tws sync %s --continue", entry.Name, feature)
 		}
 		fmt.Printf("  [+] %s (pushed)\n", entry.Name)
+		pushed = true
 
 		// The logical name is recorded only after Git succeeded, and the
 		// payload is persisted before the next push is attempted.
@@ -114,14 +201,60 @@ func pushScoped(feature string, layout externalSyncLayout, stack internal.Stack,
 			return fmt.Errorf("record pushed entry %s: %w", entry.Name, err)
 		}
 	}
+	if env.Active() && pushed {
+		if err := env.PersistClears(&stack); err != nil {
+			return fmt.Errorf("persist reparent remote follow-up clear after push: %w", err)
+		}
+	}
 	return nil
 }
 
 // pushEntries is the legacy push loop of `tws push` and of every no-flag run:
 // it prints per-entry failures and returns nil, which is exactly the
 // compatibility behaviour a new-mode run must not have.
-func pushEntries(layout externalSyncLayout, entries []internal.StackEntry, dryRun bool) error {
-	for _, entry := range entries {
+func pushEntries(feature string, layout externalSyncLayout, entries []internal.StackEntry, dryRun bool) error {
+	loc := externalReparentLocation(feature, layout)
+	if refusal := internal.ReparentPushMutationRefusal(loc); refusal != nil {
+		if !dryRun {
+			return internal.AnchorReparentRefusal(refusal)
+		}
+		fmt.Fprintf(os.Stderr, "reparent-remote: would refuse: %s\n", refusal.Error()) //nolint:errcheck
+	}
+	// Real push persists clears under its invocation lock and reloads before
+	// preflight. Dry-run projects the same clears in memory and writes nothing.
+	stack := internal.Stack{Branches: append([]internal.StackEntry{}, entries...)}
+	defaultRepo := externalPushDefaultRepo(layout, stack)
+	env, err := internal.PrepareReparentPushEnvelope(loc, defaultRepo, &stack, !dryRun)
+	if err != nil {
+		var anchored *internal.ReparentAnchoredError
+		if errors.As(err, &anchored) {
+			return anchored
+		}
+		return fmt.Errorf("evaluate reparent remote follow-up before push: %w", err)
+	}
+	var probes []internal.ReparentPushEntryProbe
+	if env.Active() {
+		for _, entry := range entries {
+			if _, err := os.Stat(layout.WorktreePath(entry.Name)); os.IsNotExist(err) {
+				continue
+			}
+			probes = append(probes, env.ProbeEntry(pushRepoDir(layout, entry), entry.Name))
+		}
+	}
+	preflight := env.PreflightProbes(probes)
+	if preflight.Refuse && !dryRun {
+		// The gate is invocation-wide: nothing is pushed at all, and the
+		// refusal reaches `tws push`'s generic error printer anchored.
+		return internal.AnchorReparentRefusal(preflight.Refusal())
+	}
+	if preflight.Refuse && dryRun {
+		// §12.4a rule 2: in a dry run the same verdict is a diagnostic, never
+		// a refusal, and the preview still exits 0.
+		fmt.Fprintln(os.Stderr, preflight.DryRunLine()) //nolint:errcheck
+	}
+
+	pushed := false
+	for index, entry := range entries {
 		path := layout.WorktreePath(entry.Name)
 
 		// Skip archived branches
@@ -130,25 +263,85 @@ func pushEntries(layout externalSyncLayout, entries []internal.StackEntry, dryRu
 			continue
 		}
 
+		decision := env.Decision(entry.Name)
+		if decision.Applies && decision.WarnLine != "" {
+			fmt.Fprintln(os.Stderr, decision.WarnLine) //nolint:errcheck
+		}
+
 		if dryRun {
-			fmt.Printf("  [~] %s (would push --force-with-lease)\n", entry.Name)
+			// §12.4a rule 1: a pending entry's preview names the argv the real
+			// run would use; rule 4 keeps every other entry's exact line and
+			// stream. A dry run writes, marks and deletes nothing.
+			suffix := "(would push --force-with-lease)"
+			if decision.Applies && decision.DryRunSuffix != "" {
+				suffix = decision.DryRunSuffix
+			}
+			fmt.Printf("  [~] %s %s\n", entry.Name, suffix)
 			continue
+		}
+		if TopLevelPushEntryBarrier != nil {
+			if err := TopLevelPushEntryBarrier(index, entry); err != nil {
+				return err
+			}
 		}
 
 		// Determine repo context
-		repoDir := path
-		if entry.Repo != "" {
-			repoDir = entry.Repo
-		}
-
-		runErr := internal.RunDirClean(repoDir, "git", "push", "--force-with-lease", "origin", entry.GitBranch())
+		repoDir := pushRepoDir(layout, entry)
+		runErr := internal.RunDirClean(repoDir, "git", pushArgv(decision, entry.GitBranch())...)
 		if runErr != nil {
 			fmt.Printf("  [x] %s (push failed)\n", entry.Name)
 		} else {
 			fmt.Printf("  [+] %s (pushed)\n", entry.Name)
+			pushed = true
+		}
+	}
+	if pushed && env.Active() {
+		liveStack, err := internal.LoadStack(layout.FeaturePath)
+		if err != nil {
+			return fmt.Errorf("reload stack after push before clearing reparent follow-up: %w", err)
+		}
+		if err := env.PersistClears(&liveStack); err != nil {
+			return fmt.Errorf("persist reparent remote follow-up clear after push: %w", err)
 		}
 	}
 	return nil
+}
+
+func externalPushDefaultRepo(layout externalSyncLayout, stack internal.Stack) string {
+	for _, entry := range stack.Branches {
+		if entry.Repo != "" {
+			continue
+		}
+		path := layout.WorktreePath(entry.Name)
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	for _, entry := range stack.Branches {
+		if entry.Repo != "" {
+			return entry.Repo
+		}
+	}
+	return ""
+}
+
+// pushRepoDir is the per-entry Git context both external loops already use.
+func pushRepoDir(layout externalSyncLayout, entry internal.StackEntry) string {
+	if entry.Repo != "" {
+		return entry.Repo
+	}
+	return layout.WorktreePath(entry.Name)
+}
+
+// pushArgv materializes rule R-PUSH step 4: the BARE lease, plus
+// --force-if-includes for a pending published entry and nothing else. The zero
+// decision reproduces the shipped argv exactly.
+func pushArgv(d internal.ReparentPushDecision, branch string) []string {
+	args := []string{"push", "--force-with-lease"}
+	if d.ForceIfIncludes {
+		args = append(args, "--force-if-includes")
+	}
+	return append(args, "origin", branch)
 }
 
 // pushFeatureCheckout holds the pre-sync-modes push body verbatim. Checkout

@@ -103,6 +103,18 @@ const (
 	SyncIOWriteSyncRunState    = "write-sync-run-state"   // SaveSyncRunState
 	SyncIOWriteTransaction     = "write-checkout-tx"      // SaveCheckoutTransaction
 	SyncIOReloadStack          = "reload-stack"           // the JIT seam's stack.yaml reload
+
+	// The four safe-reparent tokens (§10.3b). They are APPENDED to the
+	// domain above and are never reordered: an existing token's position
+	// is part of the shipped seam's contract. Each one is consulted TWICE
+	// by durableWriteFile — once before the rename and once after the
+	// rename but before the parent-directory fsync — so a test can force a
+	// failure in either window by counting its own invocations.
+	SyncIOWriteStack           = "write-stack"           // WriteStackBytesAtomic
+	SyncIOWriteReparentState   = "write-reparent-state"  // the §11.1 reparent state artifact
+	SyncIOWriteReparentCompat  = "write-reparent-compat" // the §11.2 compatibility artifacts
+	SyncIOWriteReparentRemote  = "write-reparent-remote" // the §12.3 remote follow-up record
+	SyncIORemoveReparentRemote = "remove-reparent-remote"
 )
 
 // syncIOFault consults the injected seam. It returns nil in production,

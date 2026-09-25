@@ -339,3 +339,76 @@ func TestGitCapability_ProbeGitCapabilities_ComposesProbeAndDerive(t *testing.T)
 		t.Errorf("ProbeGitCapabilities capabilities = %+v, want GitCapabilitiesForVersion(returned version) = %+v", caps, want)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// ReparentGitCapabilities — safe-reparent's additive gate pair (§9.10).
+//
+// The six-gate table above is frozen; these cells assert the new pair sits
+// BESIDE it, gates at its own versions, and changes nothing about it.
+// ---------------------------------------------------------------------------
+
+func TestReparentGitCapabilities_GateBoundaries(t *testing.T) {
+	cases := []struct {
+		name           string
+		version        GitVersion
+		forceIfInclude bool
+		refBackend     bool
+	}{
+		{"2.29 is below force-if-includes", GitVersion{Probed: true, OK: true, Major: 2, Minor: 29}, false, false},
+		{"2.30 is exactly force-if-includes", GitVersion{Probed: true, OK: true, Major: 2, Minor: 30}, true, false},
+		{"2.44 is below show-ref-format", GitVersion{Probed: true, OK: true, Major: 2, Minor: 44}, true, false},
+		{"2.45 is exactly show-ref-format", GitVersion{Probed: true, OK: true, Major: 2, Minor: 45}, true, true},
+		{"3.0 is above both", GitVersion{Probed: true, OK: true, Major: 3, Minor: 0}, true, true},
+		{"1.99 is below both", GitVersion{Probed: true, OK: true, Major: 1, Minor: 99}, false, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			caps := ReparentGitCapabilitiesForVersion(tc.version)
+			if caps.CapForceIfIncludes != tc.forceIfInclude {
+				t.Errorf("CapForceIfIncludes = %v, want %v", caps.CapForceIfIncludes, tc.forceIfInclude)
+			}
+			if caps.CapRefBackendKnown != tc.refBackend {
+				t.Errorf("CapRefBackendKnown = %v, want %v", caps.CapRefBackendKnown, tc.refBackend)
+			}
+		})
+	}
+}
+
+func TestReparentGitCapabilities_UnknownVersionYieldsAllFalse(t *testing.T) {
+	for _, v := range []GitVersion{
+		{},
+		{Probed: true, OK: false, Raw: "git version (unparseable)"},
+	} {
+		caps := ReparentGitCapabilitiesForVersion(v)
+		if caps != (ReparentGitCapabilities{}) {
+			t.Fatalf("ReparentGitCapabilitiesForVersion(%+v) = %+v, want the zero value read as unknown", v, caps)
+		}
+	}
+}
+
+func TestReparentGitCapabilities_PatchLevelNeverConsulted(t *testing.T) {
+	low := ReparentGitCapabilitiesForVersion(GitVersion{Probed: true, OK: true, Major: 2, Minor: 44, Patch: 9999})
+	if low.CapRefBackendKnown {
+		t.Fatal("a 2.44 patch release must not satisfy the 2.45 gate")
+	}
+}
+
+func TestReparentGitCapabilities_FrozenSixGateTableIsUnchanged(t *testing.T) {
+	v := GitVersion{Probed: true, OK: true, Major: 2, Minor: 45}
+	before := GitCapabilities{
+		CapPruneTags:           true,
+		CapConfigShowScope:     true,
+		CapDefaultBackendMerge: true,
+		CapSoleRemoteFallback:  true,
+		CapRebaseUpdateRefs:    true,
+		CapFetchAll:            true,
+	}
+	if got := GitCapabilitiesForVersion(v); got != before {
+		t.Fatalf("GitCapabilitiesForVersion(2.45) = %+v, want the frozen %+v", got, before)
+	}
+	// The required minimum is the existing 2.38 gate, not a new one.
+	if GitCapabilitiesForVersion(GitVersion{Probed: true, OK: true, Major: 2, Minor: 37}).CapRebaseUpdateRefs {
+		t.Fatal("2.37 must not satisfy the CapRebaseUpdateRefs floor safe-reparent requires")
+	}
+}

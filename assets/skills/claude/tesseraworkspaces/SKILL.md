@@ -30,6 +30,9 @@ tws <command> [args]
 | `tws import <file> [--from-repo <feature>]` | Import workspace from YAML or tarball |
 | `tws stack <feature>` | Show branch dependency tree |
 | `tws stack status <feature> [--json]` | Stack ancestry, materialization, and upstream status |
+| `tws stack reparent <feature> <entry> --onto <dest>` | Move one entry onto a new parent and replay its descendants |
+| `tws stack reparent <feature> <entry> --onto <dest> --plan --max-replay-total N [--json]` | Preview the bounded reparent; moves no branch and writes no tws state; may fetch according to policy |
+| `tws stack reparent <feature> --continue` / `--abort` | Resume or roll back the persisted reparent |
 | `tws list` / `tws ls` | List features and branches |
 | `tws delete <feature>` | Remove feature and all worktrees |
 | `tws archive <feature> <branch>` | Remove worktree, keep branch ref |
@@ -50,6 +53,53 @@ tws <command> [args]
 | `tws template sync <feature> [--template <dir>]` | Backfill templates |
 | `tws init [--agent claude\|copilot]` | Install agent skills |
 | `tws --version` | Print version |
+
+### Reparent vs sync
+
+`tws sync` replays a stack onto the parents it **already has**. `tws stack
+reparent` **changes** a parent: it points one entry at a new destination and
+replays that entry's descendant closure onto the new topology, then records the
+new base and cutoff for every moved row in one atomic `stack.yaml` write.
+
+Reach for `tws stack reparent` when the desired parent is different from the
+recorded one — a squash-merged or abandoned parent, a branch that should hang
+off `main` instead of a sibling. Reach for `tws sync` when the parents are
+right and only their tips moved.
+
+A fresh reparent is always guarded. The preview and execution use the same
+replay limit flag(s) and values; execution additionally carries
+`--approve-plan <fingerprint>`. A limitless preview has a null fingerprint.
+`--continue` and `--abort` never take an approval token,
+a destination, a cutoff, a limit or a fetch flag — the whole decision comes
+from persisted state. A stack-entry destination stores the logical entry name;
+a named literal ref stores its full `refs/...` name; a raw object-id destination
+stores the full lowercase OID. Reparent commits every moved branch in one
+race-atomic compare-and-swap transaction (crash-atomic only on the reftable
+backend), has one commit point requiring both durable post-image metadata and
+planned-or-no-op refs, and recovers forward past it.
+Git refs, `stack.yaml` metadata, and worktree/index state are three separate
+effects; runtime state is durable recovery evidence, not a transactional
+effect.
+Checkout mode's one physical checkout means any checkout reparent blocks
+opening every feature in that workspace; external direct/tmux/all launch
+intents are scoped to the affected closure and published before the final mutation check.
+Checkout sync/reparent mutations are workspace-global, and checkout rejects
+non-empty entry `repo` values. It changes no remote ref and no pull request;
+real top-level external push holds the feature mutation lock for its complete
+multi-entry invocation, clears obsolete follow-up rows before lease preflight,
+and waits until the reparent commit point is proven. Every mutating external
+sync route holds that same lock through rebase, metadata, optional push and
+remote follow-up clearing, rechecks reparent state after claiming, and releases
+last. If the checkout-global lock is absent, current tws scans every feature's
+recoverable checkout sync/reparent state before fresh mutation and recovery
+reconstructs only its own reservation. Checkout feature-directory opens hold
+the workspace launch intent through the agent/shell after a final guard check.
+Different stored `repo` spellings on one logical edge are refused even when
+they resolve to one common directory.
+v1.2.16 only refuses same-feature sync after compatibility-envelope birth; it
+cannot see window 1, global locks, unrelated-feature checkout reparent or
+top-level push. **Do not use an older tws while any reparent is active or
+recoverable.**
 
 ### Quick Start
 

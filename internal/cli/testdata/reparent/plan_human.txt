@@ -1,0 +1,55 @@
+reparent plan  (schema 1, route fresh)
+Feature: feature
+Workspace: mode=external invocation=plan-only
+Policy: fetch=no-fetch onto-kind=auto oid-width=40 cutoff-supplied=no limits=flags
+Summary: plannability=rows rows=1 descendants=0 deferred=0
+target
+  pr2 (branch feat-pr2)
+    old parent: requested=none stored=pr1 kind=stack-entry ref=refs/heads/feat-pr1 sha=<short>
+    new parent: requested=master stored=refs/heads/master kind=literal-ref ref=refs/heads/master pinned=<short>
+    resolver agreement: agreed=yes
+      resolve-reparent-destination: sha=<short> agrees=yes
+      resolve-sync-base: sha=<short> agrees=yes
+      stack-base-ref: sha=<short> agrees=yes
+      checkout-base: sha=<short> agrees=yes
+    cutoff: sha=<short> provenance=recorded-by-sync recorded=present ancestor-of-branch=yes
+    replay: 1 candidate(s), first <short> C, determinacy exact
+    merge commits in range: 0
+descendants (0)
+metadata changes
+  stack.yaml before: <short>
+  stack.yaml after:  <short>
+  pr2: base pr1 -> refs/heads/master, last_base_sha <short> -> <short>
+  writer: durable-atomic-stack-writer at after-ref-commit (post-image known: yes)
+strategy and atomicity
+  kind=detached-scratch-cas backend=merge context=external-scratch-worktree
+  run id: not assigned, computation path: not assigned
+  pins: refs/tws/reparent/<run-id>
+  refs: backend=files commit=single-cas-transaction race-atomic=yes crash-atomic=no recovery=row-by-row
+  metadata: atomic=yes durable=yes; combined atomic=no; commit point=durable-post-image-metadata
+holders
+  original head: branch=master sha=<short> detached=no
+  feat-pr2: kind=linked-worktree action=detach-and-restore safe=yes
+  restore point: after-metadata-write
+remote follow-up
+  remote=origin provider calls=0 implicit push=no
+  feat-pr2: divergence=no-upstream pr base feat-pr1 -> master
+  tws changed no remote ref and no pull request.
+  pr2: PR base feat-pr1 -> master
+  retarget the pull request first, then fetch and integrate remote work, then publish.
+  if you force publish, use: git push --force-with-lease --force-if-includes origin feat-pr2
+  record: will write=yes at after-new-pins-before-holder-detach
+blockers: none
+warnings:
+  destination-not-remote-rewritten: stored refs/heads/master, not refs/remotes/origin/master: future syncs of this edge use the local ref, never the fetched one
+  holder-detach-required: feat-pr2 is held by <feature-path>/worktrees/pr2 and is detached for the transaction, then re-attached
+  files-backend-not-crash-atomic: the ref transaction is race-atomic but not crash-atomic on this backend; recovery classifies every affected ref individually
+guard
+  limits: per-entry=10 total=50
+  would refuse: no
+  runnable: yes
+approval
+  fingerprint: <fingerprint>
+  usable=yes scope=fresh-execution supplied=no accepted=not supplied
+  covers: has_work=yes requires_limits=yes hard_blockers_waived=no
+  note: approves exactly this plan: this destination, these cutoffs, this closure order and these pre-image tips

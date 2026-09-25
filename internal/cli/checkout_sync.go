@@ -21,6 +21,11 @@ func runCheckoutSync(cmd *cobra.Command, ws internal.Workspace, opts internal.Ch
 	}
 	opts.FeaturePath = featurePath
 	opts.RepoDir = ws.RepoRoot
+	// Rule R-PUSH's record location. The command route owns the workspace, so
+	// it resolves the location once and hands it down; package internal never
+	// re-derives workspace identity inside a push loop.
+	opts.Reparent = internal.ReparentLocationFor(ws, feature, featurePath)
+	opts.ReparentProse = cmd.ErrOrStderr()
 
 	// --plan describes the run this invocation would perform and exits
 	// (spec §3.3 step 6): it is dispatched below RequireFeaturePath but

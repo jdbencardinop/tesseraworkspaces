@@ -24,6 +24,21 @@ import (
 // the source order of spec §3.1.
 var planGuardControlFlags = []string{"plan", "json", "max-replay-per-entry", "max-replay-total", "approve-plan"}
 
+// The six shared validation sentences this file owns. They are hoisted to
+// package constants, with no byte changed, so a sibling command that tests
+// the identical condition reuses the exact sentence rather than re-typing a
+// literal that can drift. Every fmt.Errorf below now formats the constant
+// with %s, which produces the same bytes as the literal it replaced and
+// leaves every `tws sync` message, help string and golden untouched.
+const (
+	errMsgJSONRequiresPlan       = "--json requires --plan"
+	errMsgPlanWithAbort          = "--plan cannot be combined with --abort"
+	errMsgMaxPerEntryNonNegative = "--max-replay-per-entry must be zero or greater"
+	errMsgMaxTotalNonNegative    = "--max-replay-total must be zero or greater"
+	errMsgApproveTokenShape      = "--approve-plan requires a 64-character lowercase hex fingerprint"
+	errMsgApproveRequiresLimits  = "--approve-plan requires --max-replay-per-entry or --max-replay-total"
+)
+
 // planGuardOptions is the control-flag envelope resolvePlanGuardOptions
 // produces. It is a strict cli-side mirror of internal.CheckoutPlanGuard,
 // minus the runtime-only PersistedGuarded field.
@@ -92,7 +107,7 @@ func resolvePlanGuardOptions(cmd *cobra.Command) (planGuardOptions, error) {
 	// --json --abort invocation (row 6 of the matrix) is refused with this
 	// same message rather than the --abort combination message below.
 	if present["json"] && !opts.Plan {
-		return planGuardOptions{}, fmt.Errorf("--json requires --plan")
+		return planGuardOptions{}, fmt.Errorf("%s", errMsgJSONRequiresPlan)
 	}
 
 	cont := syncBoolFlag(cmd, "continue")
@@ -102,7 +117,7 @@ func resolvePlanGuardOptions(cmd *cobra.Command) (planGuardOptions, error) {
 	if abort {
 		switch {
 		case present["plan"]:
-			return planGuardOptions{}, fmt.Errorf("--plan cannot be combined with --abort")
+			return planGuardOptions{}, fmt.Errorf("%s", errMsgPlanWithAbort)
 		case present["max-replay-per-entry"]:
 			return planGuardOptions{}, fmt.Errorf("--max-replay-per-entry cannot be combined with --abort")
 		case present["max-replay-total"]:
@@ -117,14 +132,14 @@ func resolvePlanGuardOptions(cmd *cobra.Command) (planGuardOptions, error) {
 	if present["max-replay-per-entry"] {
 		v, _ := cmd.Flags().GetInt("max-replay-per-entry")
 		if v < 0 {
-			return planGuardOptions{}, fmt.Errorf("--max-replay-per-entry must be zero or greater")
+			return planGuardOptions{}, fmt.Errorf("%s", errMsgMaxPerEntryNonNegative)
 		}
 		opts.MaxPerEntry = &v
 	}
 	if present["max-replay-total"] {
 		v, _ := cmd.Flags().GetInt("max-replay-total")
 		if v < 0 {
-			return planGuardOptions{}, fmt.Errorf("--max-replay-total must be zero or greater")
+			return planGuardOptions{}, fmt.Errorf("%s", errMsgMaxTotalNonNegative)
 		}
 		opts.MaxTotal = &v
 	}
@@ -135,11 +150,11 @@ func resolvePlanGuardOptions(cmd *cobra.Command) (planGuardOptions, error) {
 	if present["approve-plan"] {
 		token := strings.TrimSpace(opts.Approve)
 		if !planApproveTokenShape.MatchString(token) {
-			return planGuardOptions{}, fmt.Errorf("--approve-plan requires a 64-character lowercase hex fingerprint")
+			return planGuardOptions{}, fmt.Errorf("%s", errMsgApproveTokenShape)
 		}
 		opts.Approve = token
 		if !cont && opts.MaxPerEntry == nil && opts.MaxTotal == nil {
-			return planGuardOptions{}, fmt.Errorf("--approve-plan requires --max-replay-per-entry or --max-replay-total")
+			return planGuardOptions{}, fmt.Errorf("%s", errMsgApproveRequiresLimits)
 		}
 	}
 

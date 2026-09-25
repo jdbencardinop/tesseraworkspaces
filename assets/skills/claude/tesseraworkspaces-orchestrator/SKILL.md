@@ -98,6 +98,96 @@ refusal — while a refusal tws already performs (dirty tree, held lock,
 unresolvable base, incomplete previous run) keeps its own wording and carries
 no marker.
 
+### Reparent before a wide sync
+
+```sh
+tws stack reparent <feature> <entry> --onto <dest> --plan --json \
+  --max-replay-total <n>                                             # preview, exits 0
+tws stack reparent <feature> <entry> --onto <dest> \
+  --approve-plan <fingerprint> --max-replay-total <n>                 # execute
+tws stack reparent <feature> --continue                               # resume
+tws stack reparent <feature> --abort                                  # roll back
+```
+
+Use the same replay limit flag(s) and values on preview and execution. A
+limitless preview has a null fingerprint and cannot be approved.
+The preview moves no branch and writes no tws state; may fetch according to
+policy.
+
+When a reparent plan's `target` and `descendants[]` show a branch replaying a
+lot because its recorded parent is simply **wrong** — squash-merged, abandoned,
+or never the intended base — a wider `tws sync` will not fix it. Reparent that
+entry first, then sync.
+`tws sync` replays onto the parents already recorded; `tws stack reparent`
+changes the parent and replays only the affected closure.
+
+Broadcast with `tws decide <feature> "<summary>" --type breaking` before
+executing: a reparent rewrites the history worktree agents are sitting on.
+
+**Machine admission — fresh route.** Execute only when all of:
+
+```text
+plan.runnable == true
+  && plan.guard.would_refuse == false
+  && plan.guard.execute_blocked_by == []
+  && plan.refusal.kind == null
+  && plan.approval.usable == true
+```
+
+**Machine admission — continue route.** Resume only when all of:
+
+```text
+plan.route == "continue"
+  && plan.runnable == true
+  && plan.guard.would_refuse == false
+  && plan.guard.execute_blocked_by == []
+  && plan.refusal.kind == null
+  && plan.approval.scope == "resume"
+```
+
+The continue predicate deliberately does **not** require an approval
+fingerprint: `--continue` never takes one, and the persisted run already
+carries the frozen decision and its limits.
+
+Destination storage is canonical: a stack-entry destination stores the logical
+entry name, a named literal ref stores its full `refs/...` name, and a raw
+object-id destination stores the full lowercase OID.
+
+Never branch on `--plan`'s exit status: a plan-only run exits `0` even when it
+publishes a refusal. A reparent refusal is one `reparent: <kind>: <detail>`
+line on stderr; a `state-preserved: ` prefix means something on disk outlives
+it. A conflict is a **pause**, not a refusal, and carries no marker.
+
+While a reparent is recorded, `tws sync <feature>` refuses on every verb
+(`--plan` included). Checkout mode blocks opening every feature in the
+workspace while its single physical checkout is owned by the run; external
+direct/tmux/all launches publish scoped intent before their final mutation
+check. tws changes no remote ref and no pull request. Checkout sync/reparent
+mutations serialize workspace-wide, checkout refuses non-empty entry `repo`
+values, and top-level external push holds the feature mutation lock across all
+entries, clearing obsolete follow-up rows before lease preflight. The next push
+waits for a proven commit point, then warns and uses
+`--force-with-lease --force-if-includes`.
+Every mutating external sync route holds that same lock through rebase,
+metadata, optional push and remote follow-up clearing, rechecks reparent state
+after claiming, and releases last. If the checkout-global lock is absent,
+current tws scans every feature's recoverable checkout sync/reparent state
+before fresh mutation and recovery reconstructs only its own reservation.
+Checkout feature-directory opens hold the workspace launch intent through the
+agent/shell after a final guard check. Different stored `repo` spellings on one
+logical edge are refused even when they resolve to one common directory.
+
+Atomicity is bounded precisely: a concurrent write to any expected-old ref
+aborts the ref transaction during prepare; this is not reader snapshot
+isolation. Ref commit is crash-atomic only on reftable. Refs, `stack.yaml`, and
+worktree/index state are separate effects, and recovery after the single commit
+point proceeds forward.
+
+The old-binary guarantee is same-feature and post-envelope only. v1.2.16
+cannot observe window 1, workspace-global locks, unrelated-feature checkout
+reparent or top-level push. **Do not use an older tws while any reparent is
+active or recoverable.**
+
 ### Manage worktrees
 ```sh
 tws new <feature> <branch> --base <parent>   # create new branch

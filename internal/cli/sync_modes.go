@@ -38,6 +38,17 @@ const errSyncModeFlagsNeedV2 = "cannot use sync mode flags on --continue without
 // triggers.
 var syncTriggerFlags = []string{"fetch", "no-fetch", "full", "local-only", "only", "from"}
 
+// The three shared validation sentences this file owns. They are hoisted to
+// package constants, with no byte changed, so a sibling command that tests
+// the identical condition reuses the exact sentence instead of re-typing a
+// literal that can drift. The `--full` / `--local-only` rows of the I4 table
+// stay inline: they are not shared with any other command.
+const (
+	errMsgFetchNoFetchExclusive = "--fetch and --no-fetch are mutually exclusive"
+	errMsgFetchExplicitValue    = "--fetch does not take an explicit value; use --no-fetch to disable automatic fetch"
+	errMsgNoFetchExplicitValue  = "--no-fetch does not take an explicit value; use --fetch to enable automatic fetch"
+)
+
 // syncPresenceFlags is the closed key set of the presence map.
 var syncPresenceFlags = []string{"fetch", "no-fetch", "full", "local-only", "only", "from", "push"}
 
@@ -64,7 +75,7 @@ func resolveSyncPolicy(cmd *cobra.Command, mode internal.WorkspaceMode) (interna
 
 	// I1-I3 — mutual exclusion.
 	if changed["fetch"] && changed["no-fetch"] {
-		return policy, newMode, changed, fmt.Errorf("--fetch and --no-fetch are mutually exclusive")
+		return policy, newMode, changed, fmt.Errorf("%s", errMsgFetchNoFetchExclusive)
 	}
 	if changed["full"] && changed["local-only"] {
 		return policy, newMode, changed, fmt.Errorf("--full and --local-only are mutually exclusive")
@@ -78,8 +89,8 @@ func resolveSyncPolicy(cmd *cobra.Command, mode internal.WorkspaceMode) (interna
 		name string
 		msg  string
 	}{
-		{"fetch", "--fetch does not take an explicit value; use --no-fetch to disable automatic fetch"},
-		{"no-fetch", "--no-fetch does not take an explicit value; use --fetch to enable automatic fetch"},
+		{"fetch", errMsgFetchExplicitValue},
+		{"no-fetch", errMsgNoFetchExplicitValue},
 		{"full", "--full does not take an explicit value; use --local-only to restrict propagation"},
 		{"local-only", "--local-only does not take an explicit value; use --full to advance anchors"},
 	} {
@@ -263,6 +274,58 @@ func newSyncOwnerToken() (string, error) {
 		return "", fmt.Errorf("generate sync owner token: %w", err)
 	}
 	return hex.EncodeToString(buf), nil
+}
+
+// ExternalSyncMutationGuardHook is a test-only seam after a mutating external
+// sync route owns the shared feature guard and before it rechecks authoritative
+// reparent state.
+var ExternalSyncMutationGuardHook func(featurePath string) error
+
+func externalSyncPostClaimRecheck(feature string, layout externalSyncLayout, token string) error {
+	releaseOnError := func(cause error) error {
+		if releaseErr := internal.ReleaseOwnedSyncRunGuard(layout.FeaturePath, token); releaseErr != nil {
+			return errors.Join(cause, releaseErr)
+		}
+		return cause
+	}
+	if ExternalSyncMutationGuardHook != nil {
+		if err := ExternalSyncMutationGuardHook(layout.FeaturePath); err != nil {
+			return releaseOnError(err)
+		}
+	}
+	if err := internal.RefuseSyncIfReparentActive(externalReparentLocation(feature, layout)); err != nil {
+		return releaseOnError(err)
+	}
+	return nil
+}
+
+func acquireExternalSyncMutationGuard(feature string, layout externalSyncLayout, token string, reclaim bool) error {
+	var err error
+	if reclaim {
+		err = internal.ReclaimSyncRunGuard(layout.FeaturePath, token)
+	} else {
+		err = internal.ClaimSyncRunGuard(layout.FeaturePath, token)
+	}
+	if err != nil {
+		return err
+	}
+	return externalSyncPostClaimRecheck(feature, layout, token)
+}
+
+func withExternalSyncMutationGuard(feature string, layout externalSyncLayout, token string, reclaim bool, mutate func() error) (err error) {
+	if token == "" {
+		token, err = newSyncOwnerToken()
+		if err != nil {
+			return err
+		}
+	}
+	if err := acquireExternalSyncMutationGuard(feature, layout, token, reclaim); err != nil {
+		return err
+	}
+	defer func() {
+		err = errors.Join(err, internal.ReleaseOwnedSyncRunGuard(layout.FeaturePath, token))
+	}()
+	return mutate()
 }
 
 // syncMarkerCollision is the mandatory I17 pre-flight: the generated marker may
@@ -473,6 +536,9 @@ type syncRunStateBirth struct {
 // exact order, and it is the run's first side effect.
 func setupSyncRunState(layout externalSyncLayout, feature, marker, token string, sel internal.SyncSelection, push bool, testCommand, validationSource string, birth syncRunStateBirth) (*internal.SyncRunState, error) {
 	if err := internal.ClaimSyncRunGuard(layout.FeaturePath, token); err != nil {
+		return nil, err
+	}
+	if err := externalSyncPostClaimRecheck(feature, layout, token); err != nil {
 		return nil, err
 	}
 	if err := syncStepHook(internal.SyncStageInitializing, 0); err != nil {
@@ -875,6 +941,9 @@ func setupGuardedLegacyRunState(layout externalSyncLayout, feature, marker, toke
 		return nil, guardedLegacyUndo{}, err
 	}
 	made.Guard = true
+	if err := externalSyncPostClaimRecheck(feature, layout, token); err != nil {
+		return nil, guardedLegacyUndo{}, err
+	}
 	if err := syncStepHook(internal.SyncStageInitializing, 0); err != nil {
 		return fail(err)
 	}

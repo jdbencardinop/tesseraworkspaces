@@ -2,6 +2,90 @@
 
 ## Unreleased
 
+- **Safe reparent/restack** — `tws stack reparent <feature> <entry> --onto <dest>`
+  moves one stack entry onto a new parent and replays its descendant closure.
+  `--plan [--json]` previews the exact run — destination, per-row cutoff,
+  replay candidates, collateral refs, holders and remote follow-up — and moves
+  no branch and writes no tws state; may fetch according to policy. A **fresh execution
+  is always guarded**: it requires `--approve-plan <fingerprint>` plus at least
+  one of `--max-replay-per-entry` / `--max-replay-total`, and both limits are
+  re-enforced against freshly measured counts immediately before each row is
+  computed
+- **One compare-and-swap ref transaction** — every moved branch lands in a
+  single `git update-ref --stdin` transaction, so the ref commit is
+  **race-atomic**; it is **crash-atomic only on the reftable backend**. A
+  reparent has three separate effects — Git refs, `stack.yaml` metadata and
+  worktree/index state — and exactly one commit point, which requires both a durably
+  written post-image `stack.yaml` and refs already at their planned values (or
+  a no-op). A stack-entry destination stores its logical entry name, a named
+  literal ref stores its full `refs/...` name, and a raw object-id destination
+  stores the full lowercase OID
+- **Recovery is explicit and forward-only past the commit point** —
+  `tws stack reparent <feature> --continue` resumes the persisted run and
+  `--abort` rolls it back before the commit point and completes-and-cleans-up
+  after it. Neither verb takes an approval token, a destination, a cutoff, a
+  limit or a fetch flag: supplying any of them is refused before any lock or
+  Git command. While the run's state artifact exists, `tws sync <feature>`
+  refuses on every verb (`--plan` included) with a reparent-aware message, and
+  session launch is excluded for the affected external closure or,
+  workspace-wide, for checkout mode's one physical checkout. A repeated abort
+  safely accepts an originally detached checkout already restored to its
+  recorded HEAD after a restore-before-cleanup crash. Pre-commit remote-record
+  restoration is journaled before write/remove and resumes idempotently after
+  post-rename or post-remove failure
+- **No implicit push and no provider call** — tws changes no remote ref and no
+  pull request. A rewritten branch whose pull request still points at the old
+  base is recorded in a local follow-up record, so the next push prints one
+  `reparent-remote:` warning and pushes with
+  `--force-with-lease --force-if-includes`. The record clears from local
+  observation alone, with no fetch and no network. A real push is refused
+  while the reparent commit point is unproven
+- **Checkout-global mutation and launch handshake** — checkout sync and
+  reparent share one workspace-global mutation lock across features, while
+  session launch publishes an intent before its final mutation check. Checkout
+  intent directories are inspected and removed through rooted identity checks;
+  symlink/non-directory intents are never followed. Checkout feature-directory
+  opens retain that same intent through the agent and shell after a final
+  mutation/reparent/session check. Checkout rejects non-empty
+  stack-entry `repo` values because execution is fixed to the one workspace
+  repository. If the global lock is absent, fresh acquisition scans every
+  feature's recoverable checkout sync/reparent state; recovery reconstructs
+  only its own reservation
+- **Repository aliases fail explicitly** — a logical edge whose stored `repo`
+  spellings differ is refused even when both paths resolve to one Git common
+  directory, because shipped sync readers still compare stored repo tokens.
+  Exact equal tokens remain supported and unrelated different repositories
+  remain outside the closure
+- **Validation distinguishes preexisting untracked files** — validation
+  snapshots the untracked set before each command; tracked changes and newly
+  created untracked paths refuse, while a preexisting untracked path may remain
+  or be modified
+- **External launch and push handshakes** — external direct, tmux,
+  feature-directory and `--all` opens publish a scoped launch intent before
+  their final mutation check; recovery re-probes after reclaim. Top-level
+  external push holds the shared feature mutation lock across preflight and
+  every entry, preventing a reparent from entering mid-invocation. Every
+  mutating external sync route holds the same lock through rebase, metadata,
+  optional push and remote follow-up clearing, rechecks reparent state after
+  claiming, and releases last
+- **Bounded downgrade guarantee** — v1.2.16 same-feature sync
+  plain/continue/abort fails closed once the compatibility envelope exists,
+  but released code cannot see artifact-before-compat window 1, new global
+  locks, unrelated-feature checkout reparent or top-level push. Do not use an
+  older tws while any reparent is active or recoverable
+- **Clear before lease preflight** — all three real push paths persist local
+  removed/archived/published follow-up clears under their invocation lock,
+  reload the record, then run capability/lease preflight. Dry-run projects the
+  same clearing in memory and writes nothing
+- **Plan failures remain documents** — default-fetch and no-fetch planning
+  normalize malformed/unreadable stack, duplicate identities, unknown target,
+  cross-repo and unavailable repository failures into human/JSON plans with
+  exit 0; duplicate identity gates run before any planning/fetch Git
+- **Single-line refusals and status-specific observability** — CR/LF from
+  hooks, Git and validation is sanitized into one anchored refusal line;
+  human surfaces distinguish active/complete/unsupported/corrupt/foreign/stale
+  and offer recovery guidance only when actionable
+
 - **Sync modes** — `tws sync <feature>` gains three independent axes:
   `--fetch`/`--no-fetch` (input-ref policy), `--full`/`--local-only`
   (propagation policy), and `--only <entry>`/`--from <entry>` (selection scope,
@@ -91,9 +175,10 @@
   now carry `name:`, so a stack with two entries sharing one Git branch is
   attributed correctly. This applies on the no-flag path too, and is the only
   no-flag checkout transaction difference
-- **Known limitations, stated honestly** — two concurrent syncs against one
-  feature are still unsafe: a scoped run is guarded, but a no-flag run takes no
-  lock and does not consult the guard. Downgrading to an older tws *after* an
+- **Known limitations, stated honestly** — all current mutating external sync
+  routes, including the no-flag route, share the feature mutation lock; older
+  releases without that serialization remain outside the safe-reparent
+  compatibility boundary. Downgrading to an older tws *after* an
   explicit old `--abort` is unsupported, and an older tws must not be used to
   resume a scoped checkout sync — abort it instead. The legacy
   `.sync-state.yaml` path is still **followed** when it is a symlink on a

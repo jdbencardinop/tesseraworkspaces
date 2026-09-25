@@ -182,6 +182,13 @@ func TestDirectOpenRecordLifecycleOrdering(t *testing.T) {
 
 	opts := trackedOpts(featurePath)
 	opts.Runner, opts.Shell, opts.Store = agent, shell, store
+	opts.FinalGuard = func() error {
+		calls = append(calls, "final.guard")
+		if got := loadOnlyRecord(t, featurePath, "auth", "api").Stage; got != internal.DirectStageStarting {
+			t.Fatalf("final guard must run after the launch intent is durable, got stage %q", got)
+		}
+		return nil
+	}
 	var out, errOut bytes.Buffer
 	opts.Out, opts.Err = &out, &errOut
 
@@ -191,6 +198,7 @@ func TestDirectOpenRecordLifecycleOrdering(t *testing.T) {
 
 	want := []string{
 		"store.create(starting)",
+		"final.guard",
 		"agent.start(claude)",
 		"store.update#1(agent)",
 		"agent.wait",
@@ -221,6 +229,27 @@ func TestDirectOpenRecordLifecycleOrdering(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in output %q", want, text)
 		}
+	}
+
+	calls = nil
+	opts = trackedOpts(featurePath)
+	opts.Runner = &fakeDirectRunner{calls: &calls, label: "agent", pid: 6000}
+	opts.Shell = shell
+	opts.Store = &fakeDirectStore{calls: &calls}
+	opts.FinalGuard = func() error {
+		if got := loadOnlyRecord(t, featurePath, "auth", "api").Stage; got != internal.DirectStageStarting {
+			t.Fatalf("reparent final check must see the starting intent, got %q", got)
+		}
+		return errors.New("reparent won the race")
+	}
+	if err := openDirect(opts); err == nil || !strings.Contains(err.Error(), "reparent won") {
+		t.Fatalf("final guard refusal = %v", err)
+	}
+	if strings.Contains(strings.Join(calls, "\n"), "agent.start") {
+		t.Fatal("the agent started after losing the reparent handshake")
+	}
+	if files := recordFiles(t, featurePath); len(files) != 0 {
+		t.Fatalf("the refused launch must remove its intent record, found %v", files)
 	}
 }
 

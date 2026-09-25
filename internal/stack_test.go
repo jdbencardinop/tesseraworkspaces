@@ -6,6 +6,14 @@ import (
 	"testing"
 )
 
+// ---------------------------------------------------------------------------
+// Matrix ownership (§17.2): safe-reparent's stable closure order lives beside
+// the frozen TopoSort it deliberately does not reuse.
+//
+//	T-025 ReparentClosureOrder determinism, declaration-order tie-break,
+//	      TopoSort untouched ...................................... AC-037
+// ---------------------------------------------------------------------------
+
 func TestTopoSort_LinearChain(t *testing.T) {
 	s := Stack{Branches: []StackEntry{
 		{Name: "auth-routes", Base: "auth-middleware"},
@@ -288,5 +296,169 @@ func TestLoadStack_MissingFile(t *testing.T) {
 	_, err := LoadStack("/nonexistent/path")
 	if err == nil {
 		t.Fatal("expected error for missing file")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ReparentClosureOrder (safe-reparent §6.1a)
+//
+// TopoSort stays exactly as it is; these cells assert the properties it does
+// NOT offer and the reparent replay sequence requires.
+// ---------------------------------------------------------------------------
+
+func reparentOrderNames(t *testing.T, stack Stack, target string) []string {
+	t.Helper()
+	rows, err := ReparentClosureOrder(stack, target)
+	if err != nil {
+		t.Fatalf("ReparentClosureOrder(%q): %v", target, err)
+	}
+	names := make([]string, 0, len(rows))
+	for _, row := range rows {
+		names = append(names, row.Name)
+	}
+	return names
+}
+
+func TestReparentClosureOrder_TargetFirstAndParentsBeforeChildren(t *testing.T) {
+	stack := Stack{Branches: []StackEntry{
+		{Name: "pr1", Base: "main"},
+		{Name: "pr2", Base: "pr1"},
+		{Name: "pr3", Base: "pr2"},
+		{Name: "unrelated", Base: "main"},
+	}}
+
+	got := reparentOrderNames(t, stack, "pr1")
+	want := []string{"pr1", "pr2", "pr3"}
+	if len(got) != len(want) {
+		t.Fatalf("closure = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("closure = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestReparentClosureOrder_DeclarationOrderIsTheSoleSiblingTieBreak(t *testing.T) {
+	assertReparentMatrixBehavior(t, "T-025", "sibling-declaration-order")
+	_ = "asserts AC-037"
+	// Two independent subtrees under the target: every sibling pair must be
+	// emitted in stack.yaml declaration order, whatever the map iteration
+	// order of the run happens to be.
+	stack := Stack{Branches: []StackEntry{
+		{Name: "root", Base: "main"},
+		{Name: "beta", Base: "root"},
+		{Name: "alpha", Base: "root"},
+		{Name: "beta-child", Base: "beta"},
+		{Name: "alpha-child", Base: "alpha"},
+	}}
+
+	first := reparentOrderNames(t, stack, "root")
+	want := []string{"root", "beta", "alpha", "beta-child", "alpha-child"}
+	for i := range want {
+		if first[i] != want[i] {
+			t.Fatalf("closure = %v, want %v (declaration order, not alphabetical)", first, want)
+		}
+	}
+
+	// Determinism across repeated runs: TopoSort seeds its ready queue from a
+	// Go map and is therefore free to vary; this function must not.
+	for i := 0; i < 50; i++ {
+		again := reparentOrderNames(t, stack, "root")
+		for j := range first {
+			if again[j] != first[j] {
+				t.Fatalf("run %d produced %v, want the stable %v", i, again, first)
+			}
+		}
+	}
+}
+
+func TestReparentClosureOrder_ReorderingBranchesChangesOrder(t *testing.T) {
+	original := Stack{Branches: []StackEntry{
+		{Name: "root", Base: "main"},
+		{Name: "beta", Base: "root"},
+		{Name: "alpha", Base: "root"},
+	}}
+	swapped := Stack{Branches: []StackEntry{
+		{Name: "root", Base: "main"},
+		{Name: "alpha", Base: "root"},
+		{Name: "beta", Base: "root"},
+	}}
+
+	if reparentOrderNames(t, original, "root")[1] != "beta" {
+		t.Fatal("declaration order must decide the first sibling")
+	}
+	if reparentOrderNames(t, swapped, "root")[1] != "alpha" {
+		t.Fatal("reordering Stack.Branches must change the closure order")
+	}
+}
+
+func TestReparentClosureOrder_CrossRepoChildIsNotAChild(t *testing.T) {
+	stack := Stack{Branches: []StackEntry{
+		{Name: "pr1", Base: "main"},
+		{Name: "pr2", Base: "pr1"},
+		{Name: "other", Base: "pr1", Repo: "/elsewhere"},
+	}}
+
+	got := reparentOrderNames(t, stack, "pr1")
+	for _, name := range got {
+		if name == "other" {
+			t.Fatalf("a different-repository entry was pulled into the closure: %v", got)
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("closure = %v, want exactly pr1 and pr2", got)
+	}
+}
+
+func TestReparentClosureOrder_CycleAndUnknownTargetRefuse(t *testing.T) {
+	cyclic := Stack{Branches: []StackEntry{
+		{Name: "a", Base: "b"},
+		{Name: "b", Base: "a"},
+	}}
+	if _, err := ReparentClosureOrder(cyclic, "a"); err == nil {
+		t.Fatal("expected an error for a cyclic closure")
+	}
+
+	fine := Stack{Branches: []StackEntry{{Name: "a", Base: "main"}}}
+	if _, err := ReparentClosureOrder(fine, "missing"); err == nil {
+		t.Fatal("expected an error for an unknown target")
+	}
+
+	duplicated := Stack{Branches: []StackEntry{
+		{Name: "a", Base: "main"},
+		{Name: "a", Base: "main"},
+	}}
+	if _, err := ReparentClosureOrder(duplicated, "a"); err == nil {
+		t.Fatal("expected an error for duplicate entry names")
+	}
+}
+
+func TestReparentClosureOrder_ExcludesAncestorsOfTheTarget(t *testing.T) {
+	stack := Stack{Branches: []StackEntry{
+		{Name: "pr1", Base: "main"},
+		{Name: "pr2", Base: "pr1"},
+		{Name: "pr3", Base: "pr2"},
+	}}
+
+	got := reparentOrderNames(t, stack, "pr2")
+	want := []string{"pr2", "pr3"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("closure = %v, want %v", got, want)
+	}
+}
+
+func TestReparentClosureOrder_UsesGitBranchIdentityUnchanged(t *testing.T) {
+	stack := Stack{Branches: []StackEntry{
+		{Name: "pr1", Branch: "feature/pr1", Base: "main"},
+		{Name: "pr2", Branch: "feature/pr2", Base: "pr1"},
+	}}
+
+	rows, err := ReparentClosureOrder(stack, "pr1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows[0].GitBranch() != "feature/pr1" || rows[1].GitBranch() != "feature/pr2" {
+		t.Fatalf("closure rows lost their decoupled branch identity: %+v", rows)
 	}
 }

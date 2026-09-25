@@ -23,10 +23,12 @@ Three invariants govern every other decision and are worth reading first:
 2. **There is exactly one commit point** — durable post-image metadata **and**
    every affected ref at its planned tip (§11.8a). Before that conjunction,
    `--abort` rolls back; after it, `--abort` is forward completion only.
-3. **The compatibility artifacts make every shipped binary fail closed**
-   before it can reinterpret or clear a reparent run, and they do so through
-   that binary's shipped control flow, verified against the code rather than
-   assumed (§11.2, §14.3).
+3. **The compatibility envelope gives a bounded downgrade guarantee.** Shipped
+   v1.2.16 same-feature sync plain/continue/abort fails closed after the
+   envelope exists. It cannot observe the artifact-before-envelope crash
+   window, the new workspace-global lock, unrelated-feature checkout runs, or
+   top-level push. Operators MUST NOT use an older tws while any reparent is
+   active or recoverable (§11.2, §14.3).
 
 ---
 
@@ -75,9 +77,10 @@ descendant closure, and updates `stack.yaml` only after Git success.
    `rebase --update-refs`, or any autostash. v1 selects the **merge** rebase
    backend unconditionally.
 8. Recovery state is a separate versioned artifact that additionally holds the
-   existing sync locks and writes mode-appropriate compatibility artifacts so
-   that older `tws` releases fail closed and sync/reparent are mutually
-   exclusive in both workspace modes.
+   current release's sync/global mutation locks and writes mode-appropriate
+   compatibility artifacts. The current release provides complete mutual
+   exclusion; v1.2.16 only fails closed for same-feature sync after the
+   compatibility envelope exists.
 9. No provider call, no implicit push, no automatic PR retarget. The only
    remote this feature ever names is `origin`.
 10. `tws sync` flags, help, no-flag goldens, `RebasePlan` schema, and the sync
@@ -222,6 +225,15 @@ computed row (§9.6).
 - `--continue` and `--abort` MUST NOT fetch and MUST NOT accept either flag.
   The persisted `fetch_policy` is recorded for audit only and is never
   re-applied.
+- The reused `PlanFetch` semantics are exact. `policy_source` uses only
+  `flag | route-default | persisted-transaction`; an effective no-fetch policy
+  has `attempted: false`, `outcome: "skipped"`,
+  `suppression_cause: null`, empty repos, false mutation facts, and
+  `freshness: "local-only"`. A measured fetch copies every repository context,
+  candidate, effect, attempted, and outcome fact. Any failed attempted row
+  yields `outcome: "failed"`, `freshness: "possibly-stale"`, and unknown
+  mutation facts when the failed fetch may have contacted its remote; it MUST
+  never render as fetched.
 
 ### 3.5 Flag validation order (exact, before any workspace resolution)
 
@@ -244,7 +256,10 @@ failure:
 5. `--fetch` with `--no-fetch` → `--fetch and --no-fetch are mutually exclusive`
 6. explicit boolean values for `--fetch` / `--no-fetch` →
    `--fetch does not take an explicit value; use --no-fetch to disable automatic fetch`
-   and the mirrored `--no-fetch` message
+   and the mirrored `--no-fetch` message. The parser's implicit-value marker
+   MUST be impossible to carry through OS argv (one NUL byte), and its
+   `everExplicit` bit is monotonic: a later bare duplicate cannot erase an
+   earlier `--fetch=true|false` / `--no-fetch=true|false`.
 7. `--onto-kind` not in `{auto, entry, ref}` →
    `--onto-kind must be one of: auto, entry, ref`
 8. fresh route with empty or whitespace-only `--onto` →
@@ -300,6 +315,11 @@ run's own buffers and MUST NOT inherit this process's stdout (§9.11).
 
 - A successfully produced plan MUST exit 0 even when it publishes a refusal.
   Exit status is never an admission predicate.
+- Reparent MUST NOT call the process-terminating `RequireTool`. A missing
+  `git` executable is a returned error written on stderr for execution routes.
+  A plan route that can resolve enough workspace/feature identity MUST instead
+  publish one unavailable human/JSON plan document on stdout and exit 0; it
+  MUST remain in-process and write no partial non-document stdout.
 - Every execution refusal and every execution error MUST exit 1.
 - A successful execution MUST exit 0, including one that recovered a partial
   commit (§11.7) or deferred a holder restoration (§9.9).
@@ -343,6 +363,13 @@ For `kind = stack-entry`:
 
 For `kind = literal-ref`, resolution MUST be explicit and MUST NOT delegate
 ambiguity to a bare `git rev-parse <token>`.
+
+The operator token is byte-significant. CLI validation MAY trim only to decide
+that an all-whitespace required value is empty; every non-empty `--onto` and
+`--cutoff` value MUST otherwise flow unchanged into resolution,
+`requested_token` / `supplied_token`, persisted state, and the fingerprint.
+In particular `" main "` is not `main`: it is resolved as those exact bytes
+and ordinarily refuses as unresolvable.
 
 **Pseudo refs are unsupported.** The tokens `HEAD`, `FETCH_HEAD`, `ORIG_HEAD`,
 `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `REBASE_HEAD`, `AUTO_MERGE`,
@@ -404,8 +431,10 @@ resolved as follows:
 1. Determine the repository's **canonical OID width** once per run from
    `git rev-parse --show-object-format` (available below this feature's Git
    2.38 floor): `sha1` means `40`, and `sha256` means `64`. Any other or
-   unreadable value refuses `capability-unsupported`. The width is published
-   as `policy.oid_width` and frozen in state. No other width is ever assumed.
+   unreadable value refuses `capability-unsupported`. A resolved plan publishes
+   the width as `policy.oid_width` and freezes it in state; an unavailable plan
+   publishes JSON `null` and human `unknown`, never `0`. No other width is ever
+   assumed.
 2. If `len(token) == oid_width`, the token is a **full OID**: run
    `git rev-parse --verify --quiet --end-of-options <lowercased token>^{commit}`.
    Failure refuses `destination-unresolvable`.
@@ -469,7 +498,19 @@ and normalize it with
 `git rev-parse --verify --quiet --end-of-options <answer>^{commit}` before
 comparison. This is load-bearing for annotated tags: the checkout resolver's
 bare `rev-parse` observes the tag-object OID, while the normalized answer must
-be the peeled commit OID. The existing resolvers themselves remain unchanged.
+be the peeled commit OID. Shipped `ResolveSyncBase` behavior remains
+unchanged: its token decision is extracted into a pure helper taking an
+already measured default branch, while reparent measures that branch through
+`runReparentGit` with `Cmd.Dir`. A PATH-level shim over the complete route
+MUST observe no `-C` process.
+
+A literal destination has one additional semantic gate before resolver
+comparison: its canonical stored token (full ref or raw OID) MUST NOT equal
+the `Name` of any stack entry. Existing readers are entry-first, so even when
+that entry's branch currently resolves to the same OID, persisting the token
+would change meaning when the entry later moved. Refuse
+`destination-resolver-divergent`, naming the colliding stored token and entry;
+OID equality never waives this ambiguity.
 
 Any normalized resolver answer that differs from the pinned commit, or fails
 to resolve, refuses
@@ -528,7 +569,9 @@ current parent SHA.
   `AncestryStatusCurrent` → **no work**. A plan route MUST emit
   `summary.plannability = "no-work"`, `summary.has_work = false`,
   `runnable = false`, `refusal.kind = null`, and `approval.fingerprint = null`
-  (no usable token). An execution route MUST refuse `no-work`.
+  (no usable token). Once this strict verdict is known, cutoff/replay/merge and
+  capability-only blockers and guard evaluations are suppressed because no
+  replay can run. An execution route MUST refuse only `no-work`.
 - `sameParent` **and** the edge is not current (stale, divergent, missing,
   cross-repo, unevaluated) → refuse `destination-same-parent-stale` with the
   exact guidance:
@@ -671,19 +714,26 @@ outcome for a topology mutation.
 
 ### 6.1 Closure algorithm
 
-1. Load `stack.yaml`; refuse `stack-unsortable` if the closure sort of §6.1a
-   fails.
-2. Validate identity before anything else:
+1. Read and decode `stack.yaml`.
+2. Validate identity immediately after decode, before target lookup, closure
+   ordering, `TopoSort`, repository resolution, fetch, or any Git child:
    - duplicate `StackEntry.Name` → `duplicate-entry-name`;
    - two non-archived entries with the same `GitBranch()` → `duplicate-git-branch`.
-   Both checks are pure and MUST run before any Git child process.
+   Both checks are pure.
 3. Resolve the target by exact `Name`. Unknown → `target-unknown`.
-4. Compute the **logical** descendant set of the target with the same
-   parent-edge semantics the shipped executors use: `child.Base == parent.Name`
-   **and** `SameStackRepo(child.Repo, parent.Repo)`
-   (`internal/sync_selection.go`). An entry in a different repository whose
-   `Base` merely happens to spell the same name is **not** a child and MUST NOT
-   be pulled into the closure, refused, or reported; it is an unrelated stack.
+4. Resolve each distinct entry repository path to a canonical root/common-dir
+   identity before constructing reparent edges. A potential edge exists when
+   `child.Base == parent.Name` and either the stored repo tokens are equal or
+   the resolved common-dir identities are equal, so an alias child cannot
+   silently disappear. v1 then **refuses** an edge whose common dir is equal
+   but exact raw `Repo` tokens differ, including different canonical-path,
+   symlink, `..`, or whitespace spellings, using
+   `destination-resolver-divergent` and explaining that shipped sync readers
+   still compare `SameStackRepo` by stored spelling. Exact equal raw tokens are
+   accepted. An entry in a genuinely different repository whose `Base` merely
+   happens to spell the same name is not a child; a selected destination whose
+   identity genuinely differs refuses `cross-repo-closure`. Raw `Repo` strings
+   remain unchanged in the plan, state, and metadata.
 5. For every entry that *is* a genuine logical descendant, resolve its
    **execution common directory** (`git rev-parse --git-common-dir` from the
    row's repository context). If any genuine closure row's common-dir differs
@@ -692,7 +742,7 @@ outcome for a topology mutation.
    `Repo` string, is what makes a symlinked or differently-spelled path resolve
    to the same repository instead of a false refusal.
 6. Order the closure by §6.1a and keep only members of the closure. The target
-   is always first.
+   is always first. An unsortable closure refuses `stack-unsortable`.
 
 ### 6.1a Reparent closure order (stable, reparent-owned)
 
@@ -702,9 +752,12 @@ between a `--plan` and its execution, so this feature owns one:
 
 ```go
 func ReparentClosureOrder(stack Stack, target string) ([]StackEntry, error)
+func ReparentClosureOrderByRepoIdentity(stack Stack, target string, identities map[string]string) ([]StackEntry, error)
 ```
 
-- Kahn's algorithm over the logical edges of §6.1 step 4.
+- Kahn's algorithm over the logical edges of §6.1 step 4. The first function
+  preserves the pure raw-token helper; production uses the identity-aware
+  variant after measuring/caching common dirs.
 - The ready set is a **min-heap keyed by the entry's index in
   `Stack.Branches`** — that is, `stack.yaml` declaration order is the sole
   sibling tie-break. Declaration order is a stable, operator-visible,
@@ -751,6 +804,16 @@ path that would otherwise handle unmaterialized entries executes
 Session liveness MUST reuse `GuardDirectSessionsFor` (external) and
 `CheckoutSessionPreconditions` / `HasCheckoutAgentSession` (checkout). A record
 that cannot be decoded counts as live.
+
+Checkout mode is stricter than the external same-common-dir rule: because it
+has one physical checkout and one execution repository, **every non-empty
+`StackEntry.Repo` in the consulted stack refuses before fetch, Git probing,
+lock acquisition, or mutation**, including the target and a would-be
+descendant. Checkout execution always uses the workspace repository. This is
+a reparent rule and also remains the existing fresh explicit-new-mode checkout
+sync preflight; it MUST NOT be added to the frozen legacy/no-flag checkout
+sync path or to checkout `--continue`/`--abort`, because older transactions
+that ignored `Repo` must remain recoverable.
 
 ### 6.3 Ordering of validation
 
@@ -860,7 +923,7 @@ explicitly documented as nullable below.
 | `fetch` | `string` | `fetch` / `no-fetch` (reuses `SyncFetchPolicy` values) |
 | `fetch_default_applied` | `bool` | true when neither `--fetch` nor `--no-fetch` was given |
 | `onto_kind_requested` | `string` | `auto` / `entry` / `ref` |
-| `oid_width` | `int` | `40` or `64`, probed per §4.3a step 1 |
+| `oid_width` | `*int` | `40` or `64`, probed per §4.3a step 1; `null` only when the plan is unavailable before the probe |
 | `cutoff_supplied` | `bool` | — |
 | `limits_supplied` | `bool` | fresh route: true when either replay limit flag was given. Continue route: true when the persisted run froze either limit |
 | `limits_origin` | `string` | `flags` / `persisted-state` / `none` |
@@ -1025,7 +1088,7 @@ one element and that no element ever becomes `-C`.
 | --- | --- | --- |
 | `entries` | `[]ReparentPlanMetadataEntry` | one per closure row, in closure order |
 | `stack_sha256_before` | `string` | SHA-256 of the exact `stack.yaml` bytes read |
-| `stack_sha256_after_expected` | `*string` | SHA-256 of the exact bytes that will be written; `null` when the plan is not runnable **and** `null` whenever any row is `parent-computed` (§7.5a) |
+| `stack_sha256_after_expected` | `*string` | SHA-256 of the exact bytes that will be written; `null` when the plan is not runnable, including strict no-work, **and** `null` whenever any row is `parent-computed` (§7.5a) |
 | `writer` | `string` | constant `"durable-atomic-stack-writer"` |
 | `write_point` | `string` | constant `"after-ref-commit"` |
 | `post_image_known` | `bool` | `false` on every plan with a `parent-computed` row; `true` only in state, after every row computes |
@@ -1039,8 +1102,8 @@ one element and that no element ever becomes `-C`.
 | `base_before` | `string` | — |
 | `base_after` | `string` | the **stored** token (§4.3b) |
 | `last_base_sha_before` | `*string` | `null` when absent |
-| `last_base_sha_after` | `*string` | the pinned destination OID for the target; `null` for every descendant on every plan route (§7.5a) |
-| `last_base_sha_after_source` | `string` | `pinned-destination` (target) / `post-replay-parent-tip` (descendant) |
+| `last_base_sha_after` | `*string` | the pinned destination OID for the target; `null` for every descendant on every runnable plan route (§7.5a); exactly equal to `last_base_sha_before` on strict no-work |
+| `last_base_sha_after_source` | `string` | `pinned-destination` (target) / `post-replay-parent-tip` (descendant) / `unchanged` (strict no-work) |
 | `changed` | `bool` | — |
 
 ### 7.7 `ReparentPlanStrategy`
@@ -1124,8 +1187,8 @@ probed and the run assumed the weaker guarantee.
 | `remote_sha` | `*string` | — |
 | `upstream_configured` | `bool` | — |
 | `divergence` | `string` | `none` / `ahead` / `behind` / `diverged` / `no-upstream` / `unknown` |
-| `pr_base_before` | `*string` | old parent as a branch name suitable for a PR base |
-| `pr_base_after` | `*string` | new parent as a branch name, `null` for an object-id destination |
+| `pr_base_before` | `*string` | old parent Git branch from `old_parent.ref`, never the logical stack-entry name |
+| `pr_base_after` | `*string` | new parent Git branch from `new_parent.ref`, `null` for an object-id destination |
 | `provider_hint` | `string` | `github` / `azure-devops` / `generic` / `unknown`, derived only from the local `origin` URL |
 
 `ReparentPlanRemoteFollowup`:
@@ -1153,6 +1216,10 @@ probed and the run assumed the weaker guarantee.
 `ReparentPlanStateFiles` embeds the five existing sync file facts verbatim
 (`checkout_transaction`, `checkout_lock`, `external_legacy_state`,
 `external_run_payload`, `external_run_guard`) and adds:
+
+`external_run_payload.selected` is always a JSON array. It MUST encode as
+`[]`, never `null`, on fresh external plans, checkout plans where that file is
+not applicable, and unavailable/partial plan documents.
 
 `reparent_state` — `PlanStateFileBase` plus:
 
@@ -1335,6 +1402,18 @@ A test MUST assert both predicates as tables, including that a bare
 `--continue --plan` of a healthy paused run is admissible under §7.12a and
 inadmissible under §7.12.
 
+The continue plan is read-only but not stale-state-only: it MUST classify the
+live affected refs, live `stack.yaml` hash, owner liveness, compatibility
+ownership, and shared lock ownership. It publishes the same blocker an
+execution resume would raise and MUST NOT advertise an admissible resume when
+execution would refuse. The ref assessment is one shared read-only primitive:
+before the commit point it rejects symbolic affected branch refs, classifies
+every row as `pre-image` / `planned tip` / `no-op` / `foreign`, and recognizes
+the same post-image plus descendant-of-`planned_new_sha` evidence that execution
+uses to infer a commit point. Thus the plan neither blocks a recovery execution
+would accept nor advertises one execution would refuse. It performs no fetch,
+lock reclaim, state repair, marker persistence, or write.
+
 ### 7.13 Fingerprint
 
 New file `internal/reparent_plan_fingerprint.go`:
@@ -1347,7 +1426,7 @@ func ReparentPlanFingerprintPreimage(plan ReparentPlan) ([]byte, error)
 ```go
 reparentFingerprintPrefix             = "tws-reparent-fp\x00"
 reparentFingerprintEncodingVersion    = 0x0001
-reparentFingerprintTupleSchemaVersion = 0x0001
+reparentFingerprintTupleSchemaVersion = 0x0003
 ```
 
 - Hash: SHA-256, lowercase hex, exactly 64 characters (`^[0-9a-f]{64}$`).
@@ -1360,15 +1439,21 @@ reparentFingerprintTupleSchemaVersion = 0x0001
 The tuple MUST bind, in this fixed field order:
 
 1. workspace mode; 2. workspace stable id; 3. feature; 4. route;
-5. target name; 6. target git branch; 7. target repo;
+5. target name; 6. target git branch; 7. target repository identity STRUCT:
+   repo token, execution-context id, canonical repository root, source, and
+   the raw new-parent `requested_token`.
+   The context id is SHA-256 over canonical repository root + NUL + canonical
+   common-dir, so both identities are bound without adding a display field;
 8. old parent stored token; 9. old parent kind; 10. old parent ref;
 11. old parent sha; 12. new parent **stored** token (§4.3b);
 13. new parent kind; 14. new parent ref; 15. new parent pinned sha;
 16. onto-kind requested; 17. oid width;
 18. target cutoff resolved sha; 19. target cutoff provenance;
-20. ordered closure from `ReparentClosureOrder` — (name, git branch, order)
-    triples in that exact order;
-21. per-row pre-image head sha; 22. per-row cutoff sha and provenance;
+20. ordered closure from `ReparentClosureOrder` — (name, git branch, order,
+    repo token, execution-context id, canonical repository root, source)
+    tuples in that exact order;
+21. per-row pre-image head sha; 22. per-row cutoff sha, provenance, and raw
+    `supplied_token`;
 23. per-row `destination_binding`, `destination_parent`, and
     `destination_sha` (the last is an explicit NULL for every
     `parent-computed` row);
@@ -1379,7 +1464,10 @@ The tuple MUST bind, in this fixed field order:
     NULL for every descendant; 27. `stack_sha256_before`;
 28. fetch policy; 29. guard `max_replay_per_entry`; 30. guard
     `max_replay_total`; 31. validation `command_digest`;
-32. strategy kind, computation context, and backend; 33. approval scope.
+32. execution identity STRUCT: strategy kind, computation context, replay
+    backend, ref backend, original checkout branch/head/detached, and holder
+    tuples `(canonical path, git branch, HEAD, holder kind, action)` sorted by
+    that tuple; 33. approval scope.
 
 Exactly **33** fields. Every deferred value of §7.5a is written as an explicit
 NULL member, never omitted and never guessed, so the preimage a `--plan`
@@ -1388,9 +1476,12 @@ byte-identical by construction. `run_id`, `computation_path`,
 `materialized_argv`, and `stack_sha256_after_expected` are **never** bound:
 they either do not exist at admission or embed a per-run path.
 
-Fields 3, 12, 15, 18, 20, 21, 22, 23, 24, 26, 27 are the load-bearing ones: any
-change to the destination, any cutoff, any pre-image tip, the closure order, or
-any known metadata cell MUST change the fingerprint.
+Fields 3, 7, 12, 15, 18, 20, 21, 22, 23, 24, 26, 27 and 32 are the
+load-bearing ones: any destination/cutoff/pre-image change, repository or
+common-dir identity change, row execution-context change, ref-backend change,
+original checkout identity change, stable holder tuple change, closure-order
+change, raw operator-token byte change, or known metadata change MUST change
+the fingerprint.
 
 ### 7.14 Rendering
 
@@ -1419,7 +1510,7 @@ func MarshalReparentPlan(plan ReparentPlan) ([]byte, error)
     <one block per row: branch, cutoff, destination dependency
      ("onto computed tip of <parent>"), replay>
   metadata changes
-    <one line per changed cell, old -> new; a deferred cell renders "(computed at replay)">
+    <one line per changed cell, old -> new; a descendant-derived deferred cell renders "(computed at replay)">
   strategy and atomicity
   holders
   remote follow-up
@@ -1427,9 +1518,13 @@ func MarshalReparentPlan(plan ReparentPlan) ([]byte, error)
   approval
   ```
 
-- A deferred value (§7.5a) MUST render as the literal `(computed at replay)`
-  in the human document and as `null` in JSON. It MUST NOT render as a blank,
-  a zero, or an invented SHA.
+- A descendant-derived deferred value (§7.5a) MUST render as the literal
+  `(computed at replay)` in the human document and as `null` in JSON. The
+  phrase is reserved for parent-computed descendant facts. An unavailable
+  target/destination, metadata post-image, run id, or computation path renders
+  `unavailable` (and `policy.oid_width` renders `unknown`) in the human
+  document and `null` in JSON; it MUST NOT pretend it will be computed during
+  replay. A normal plan-only run id/path render `not assigned`.
 - The human document and the JSON document MUST go to stdout. The mode header,
   fetch prose, and every refusal MUST go to stderr.
 - A byte-exact golden MUST be pinned at
@@ -1470,6 +1565,9 @@ plan-guard: <kind>: state-preserved: <detail>
   changed. A mismatch refuses `plan-guard: approval-mismatch: ...` and MUST NOT
   mutate anything.
 - A plan route MAY omit limits; §7.12 then makes the token unusable.
+- A documented/approved workflow MUST put the same replay limit flag(s) and
+  values on both preview and execution. A limitless preview has
+  `approval.fingerprint = null` and cannot be approved.
 - Neither obligation reaches `--continue` or `--abort` (§8.4).
 
 ### 8.3 Just-in-time revalidation
@@ -1480,6 +1578,14 @@ count and compare it against the approved row. A divergence refuses
 occurs, and the run remains resumable (`--continue`) or reversible
 (`--abort`).
 
+When an exact approved plan exceeded a supplied limit, state persists both
+`approval.covers.waived_evaluation_ids` and `waived_kinds`. JIT and resume
+honor a limit exceedance only when its exact evaluation ID **and** matching
+`limit-per-entry` / `limit-total` kind were persisted and the revalidation
+digest is unchanged. A changed digest/count refuses
+`revalidation-mismatch`; a newly resolved exceedance whose ID was not waived
+refuses the corresponding limit kind.
+
 ### 8.4 Continue and abort
 
 - `--continue` and `--abort` MUST NOT require, accept, or reuse an approval
@@ -1488,6 +1594,8 @@ occurs, and the run remains resumable (`--continue`) or reversible
   to resume the run and so that §7.12a can publish them as audit evidence.
 - The persisted limits MUST be written into both the reparent state artifact
   and the mode-appropriate compatibility artifact (§11.2).
+- Persisted waiver IDs/kinds are audit and JIT evidence from the already
+  approved fresh run; recovery accepts no new waiver token.
 
 ### 8.5 Post-lock re-snapshot (concurrency window)
 
@@ -1501,8 +1609,10 @@ or compatibility artifact, a fresh execution MUST:
 2. re-resolve every closure row's branch tip, the pinned destination, and
    every cutoff;
 3. re-run the session-liveness probes of §6.2;
-4. re-build the plan and re-compute the fingerprint;
-5. compare that fingerprint against `--approve-plan`.
+4. compare canonical target repository/common-dir identity and every holder's
+   canonical path, branch, HEAD and planned action with the approved snapshot;
+5. re-build the plan and re-compute the fingerprint;
+6. compare that fingerprint against `--approve-plan`.
 
 A mismatch refuses `plan-guard: revalidation-mismatch: state-preserved: ...`,
 naming the first field that moved, releases the lock, and leaves nothing
@@ -1511,7 +1621,12 @@ narrowest window the design can offer without holding the lock across an
 operator's reading of the plan, and it is what makes the approved token a
 statement about the state the run actually mutates.
 
-A `--continue` performs steps 1–3 as a **verification** against persisted
+The explicit identity comparison is required even where two repositories have
+identical refs and therefore produce the same ordinary plan fingerprint. A
+symlink retarget, equivalent clone, holder relocation, changed holder HEAD or
+changed detach/refuse action is `revalidation-mismatch` before state birth.
+
+A `--continue` performs the live portions as a **verification** against persisted
 pre-image values rather than against a token while `resume_stage` is at or
 before `refs-committed`: a drifted ref is classified by §11.7 and a drifted
 `stack.yaml` refuses `metadata-drift`. At `writing-metadata`,
@@ -1520,6 +1635,14 @@ first determines whether the commit point was reached. After it was reached,
 later ref movement is reported informationally and MUST NOT block forward
 holder restoration or cleanup; the stack hash is classified by §11.6 rather
 than compared only with `stack_sha256_before`.
+
+`--continue --plan` uses the same read-only recovery assessment: current
+session liveness, active/unresolved conflict, owner/compat ownership, refs and
+metadata. Missing owned compatibility files are automatic repair work and do
+not block; `completed` with residue is admissible cleanup work. Pending rows
+without `planned_new_sha` are left to their JIT revalidation, so candidate
+drift reports `plan-guard: revalidation-mismatch` rather than a premature
+`ref-foreign-value`.
 
 ---
 
@@ -1550,9 +1673,12 @@ any argv this feature emits.
   runtime-artifact filter that enumerates a feature directory MUST skip any
   entry matching `.reparent*`, exactly as it already skips the other
   dot-prefixed runtime artifacts. Any surface that derives worktrees from
-  `git worktree list --porcelain` MUST also recognize and exclude the recorded
-  scratch path; filtering directory names alone is insufficient because Git
-  registers the scratch in its common-dir metadata.
+  `git worktree list --porcelain` MUST exclude **only** exact active
+  `scratch_path` values loaded from authoritative reparent state; filtering
+  arbitrary `.reparent*` path components is forbidden because unrelated
+  worktrees such as `~/.reparent-lab/...` remain ordinary user worktrees when
+  no state records them. Directory import/adoption filtering remains the
+  `.reparent*` family rule.
 - Failure to create it refuses `scratch-worktree-unavailable`.
 - After the cleanliness proof in cleanup step 2 (§11.6a), it MUST be removed
   with `git worktree remove --force <scratch path>` followed by
@@ -1566,6 +1692,24 @@ any argv this feature emits.
 - Before the first computation it MUST record `original_branch`,
   `original_head`, and `original_detached`, then run the §9.4b untracked gate
   and `git switch --detach <first row pre-image sha>`.
+- `git symbolic-ref --quiet --short HEAD` exit `1` means detached; any other
+  error is `probe-failed`. `HEAD` MUST resolve to a non-empty commit before
+  any mutation. Capture and restore never turn an unreadable or empty identity
+  into a successful detached checkout.
+- When the original checkout is detached, persist
+  `original_head_pin_ref = refs/tws/reparent/<run-id>/original-head` and create
+  that pin at `original_head` before the initial switch. Recovery verifies or
+  recreates the pin under the owned lock. It survives aggressive reflog expiry
+  and GC, remains until the detached checkout is restored on success or abort,
+  and is removed with the run's other pins only afterward.
+- The computation-holder detachment intent MUST persist the **actual switch
+  target SHA** separately from `original_head`. Recovery reconciles the
+  intent against that target, which may differ when the original branch is an
+  affected descendant.
+- When `original_detached` is true, an intent observed with HEAD still equal to
+  `original_head` is the crash window before the initial switch executed, not
+  `holder-unsafe`. `--continue` retries the switch and `--abort` restores the
+  already-correct detached HEAD; both are idempotent.
 - That initial switch **is** the detachment of the checkout's own holder. The
   run MUST record it at that moment as a holder with
   `holder_kind = "computation-context"`, `action = "already-detached"`, and
@@ -1691,13 +1835,15 @@ refuses `validation-failed`, leaves the run resumable, and MUST NOT move any
 public ref.
 
 A validation command MUST leave the computation context clean. After the
-command returns, the run MUST re-check `git status --porcelain` in the
-computation worktree; any tracked modification or any new non-ignored untracked
-path refuses `validation-failed` with a detail naming the residue and the fact
-that the command, not Git, produced it. The run MUST NOT clean, stash, or reset
-that residue: doing so would destroy operator data the command created. State
-is preserved and the run stays resumable, so the operator can inspect the
-worktree, clean it themselves, and `--continue`.
+command returns, the run MUST re-check tracked status and compare the
+non-ignored untracked set against a snapshot taken immediately before the
+command. Any tracked modification or any **new** untracked path refuses
+`validation-failed`; modifying or retaining a preexisting untracked path is
+allowed. The detail names the residue and the fact that the command, not Git,
+produced it. The run MUST NOT clean, stash, or reset that residue: doing so
+would destroy operator data the command created. State is preserved and the
+run stays resumable, so the operator can inspect the worktree, clean it
+themselves, and `--continue`.
 
 `policy.validation.requires_clean_context` publishes this obligation and is
 always `true`.
@@ -1729,6 +1875,15 @@ excluded from §13.2's one-refusal-line rule.
 `conflict-unresolved` when a rebase is still in progress in the computation
 worktree, naming the same native command. It MUST NOT run
 `git rebase --continue` on the operator's behalf.
+
+At the conflict pause the run persists completion context (including a reflog
+anchor when available). After the rebase directory disappears, proof is
+version-independent: the destination must be an ancestor of live `HEAD`, and
+for a non-empty replay `HEAD` MUST differ from `preimage_sha`. Successful
+completion persists the proven HEAD; reflog movement may be recorded as
+additional evidence but exact version-specific reflog subjects are never an
+admission requirement. This rejects native `rebase --abort` even when the
+destination was already an ancestor of the old parent.
 
 `--abort` from `conflict-paused` MUST run `git rebase --abort` in the
 computation worktree before restoring anything else.
@@ -1869,7 +2024,7 @@ detached, the run MUST perform exactly one transaction, with
 `exec.Cmd.Dir = <repo root>`:
 
 ```text
-git update-ref -m "tws reparent <feature> <target> <run-id>" --stdin
+git update-ref --no-deref -m "tws reparent <feature> <target> <run-id>" --stdin
 start
 update refs/heads/<row 1 branch> <new 1> <old 1>
 verify refs/heads/<no-op row branch> <old value>
@@ -1894,7 +2049,10 @@ commit
   with `cas_rows[].applied = true` and `noop = true`, and be classified by
   §11.7 using the **live** ref. It MUST NOT emit `update <ref> X X`: `verify`
   preserves race-atomic coverage without pretending a ref moved.
-- The run MUST NOT emit `create`, `delete`, or `option no-deref` lines, and
+- The command-level `--no-deref` flag is REQUIRED so a direct affected ref
+  swapped to a symbolic ref after preflight cannot redirect the transaction to
+  an out-of-closure target. The run MUST NOT emit `create`, `delete`, or
+  stdin `option no-deref` lines, and
   MUST NOT include any ref outside the affected closure. In the **forward**
   transaction, `verify` is permitted and required only for no-op rows;
   §11.8 step 4 separately requires it for unchanged rows in the rollback
@@ -1972,6 +2130,14 @@ warning `files-backend-not-crash-atomic`.
 ## 10. Metadata contract
 
 ### 10.1 Exact post-state
+
+A strict current same-parent no-work plan has **no post-state mutation**. Every
+metadata row MUST publish `base_before == base_after`,
+`last_base_sha_before == last_base_sha_after`,
+`last_base_sha_after_source == "unchanged"`, and `changed == false`, including
+descendants. It publishes no deferred descendant update, no expected
+post-image hash, and `post_image_known == false`; the human document renders
+`stack.yaml after: unchanged`.
 
 | Entry | `Base` after | `LastBaseSHA` after |
 | --- | --- | --- |
@@ -2059,7 +2225,12 @@ write-reparent-remote    // the §12.3 record
 
 Each token MUST be able to fail **before** the rename and **after** the rename
 but before the directory fsync, so T-044 can assert that the previous file
-survives the first and that recovery survives the second.
+survives the first and that recovery survives the second. When recovery sees
+the expected bytes from a post-rename failure but no durable success marker,
+it MUST fsync the parent directory (or rewrite through the durable writer)
+before recording success, the commit point, or cleanup. This applies to a
+visible forward post-image, a visible abort pre-image, authoritative state,
+and complete external or checkout compatibility artifacts.
 
 ### 10.4 No new persistent field
 
@@ -2108,11 +2279,13 @@ The reparent state artifact is **authoritative** for every fact about the run.
 The compatibility artifacts of §11.2 exist only to make other binaries fail
 closed; no reparent decision is ever read out of them.
 
-### 11.2 Compatibility artifacts and locks (fail-closed contract)
+### 11.2 Compatibility artifacts and locks (bounded downgrade contract)
 
 A reparent run MUST additionally hold the existing mode-appropriate sync
-exclusion and MUST write artifacts that make **every shipped release** fail
-closed rather than misinterpret the run.
+exclusion and MUST write artifacts that make shipped v1.2.16 **same-feature
+sync** plain/continue/abort fail closed once the complete envelope exists.
+These artifacts do not make released binaries aware of new global locks or
+new commands.
 
 **External**
 
@@ -2158,10 +2331,43 @@ the run's marker/token, and write it through `durableWriteFile(..., 0644)`.
 
 **Checkout**
 
-1. acquire the existing `CheckoutLockPath(featurePath)` through
-   `AcquireCheckoutLock`;
-2. write `CheckoutTransactionPath(featurePath)` as a **deliberately
+1. acquire a workspace-global checkout mutation lock under
+   `<metadataRoot>/state/`, shared with checkout sync across **all features**;
+2. acquire the existing feature compatibility lock
+   `CheckoutLockPath(featurePath)` through `AcquireCheckoutLock`;
+3. write `CheckoutTransactionPath(featurePath)` as a **deliberately
    undecodable** compatibility transaction.
+
+Fresh, `--continue`, and `--abort` take locks in that order. Recovery reclaims
+the global lock only when its token, feature, operation, and authoritative
+state path match; a live or foreign lock refuses. The feature lock and
+compatibility transaction remain required for v1.2.16 same-feature sync
+fail-closed behavior. Released binaries do not read the workspace-global lock,
+so an unrelated-feature checkout command in an old binary is not excluded.
+
+Fresh global-lock orphan classification probes the recorded owner state with
+`Lstat`, never by following a symlink. Only `ENOENT` proves absence. A present
+file, symlink, permission/I/O error, or any other unverifiable result refuses
+without removing or rewriting the lock.
+
+An absent workspace-global lock is not proof that the physical checkout is
+free: before a fresh acquisition may proceed, the new reservation scans the
+workspace state directory for every `*-checkout-sync.yaml` and
+`*-reparent.v1.yaml` across all features. Any present or unverifiable record
+refuses and the just-created reservation is removed by token ownership.
+Recovery may reconstruct an absent global lock only while the scan contains
+its exact authoritative state and, for reparent, its same-feature compatibility
+transaction; any other feature's recoverable state refuses.
+
+The feature lock contains only a PID. Recovery can therefore crash after
+rewriting that lock to the recovering PID but before persisting the same PID
+as authoritative `owner_pid`. A later recovery MUST treat that dead,
+transferred feature lock as this run's only when the simultaneously present
+workspace-global lock has the same PID and its token, feature, operation, and
+authoritative state path exactly match this run. This proof is sufficient
+despite the stale persisted PID; a live transferred PID, mismatched token or
+identity, unreadable global lock, or any other feature lock remains foreign
+and MUST NOT be removed or rewritten.
 
 An integer `state_version: 4` is **unsafe** in checkout mode. `ContinueCheckoutSync`
 does check `tx.StateVersion > CheckoutTransactionGuardedVersion`, but the
@@ -2214,9 +2420,9 @@ path helpers MUST NOT change.
 | Existing state | `tws sync` | `tws stack reparent` |
 | --- | --- | --- |
 | none | runs | runs |
-| sync payload/sentinel/lock/transaction | existing behavior, unchanged | refuse `sync-state-present` |
+| sync payload/sentinel/lock/transaction | existing recovery semantics; every mutating external route must own the guard and an unreadable/live/foreign guard fails closed | refuse `sync-state-present` |
 | reparent state + its compatibility artifacts | refuse with the reparent-aware message below | `--continue` / `--abort` only |
-| reparent state, compatibility artifacts missing | refuse with the reparent-aware message below | refuse `compat-artifact-missing` unless `--continue` / `--abort` |
+| reparent state, compatibility artifacts missing | refuse with the reparent-aware message below | fresh refuses `reparent-state-present`; `--plan --continue` reports automatic repair and remains admissible; `--continue` reconstructs owned files; `--abort` proceeds without reconstruction |
 
 The authoritative reparent artifact is classified **before** the generic
 sync-state/lock refusal. Compatibility artifacts whose marker and run id match
@@ -2244,10 +2450,26 @@ plain sync, `tws sync --continue`, and `tws sync --abort`; those routes would
 otherwise describe or reach the v4/undecodable artifacts and emit a confusing
 lower-level result.
 
-`compat-artifact-missing` covers the case where a foreign or older binary
-removed the compatibility artifacts while the reparent artifact survived. The
-reparent artifact is authoritative; tws MUST report the inconsistency and MUST
-NOT silently re-create the artifacts outside `--continue` (§11.2a).
+Every **mutating external sync** route also participates in the other half of
+the handshake. Fresh legacy/no-flag, fresh scoped, guarded legacy/scoped,
+`--continue`, and mutating `--abort` MUST claim or reclaim the same
+feature-scoped `SyncRunGuard` used by external reparent, then immediately
+recheck the authoritative reparent artifact. The guard remains owned through
+all rebase and metadata work and through any optional push, remote follow-up
+clear, and persisted sync teardown; it is released last. A legacy/no-flag run
+uses a transient guard and leaves no new persistent bytes or output after
+completion. A guarded legacy/scoped route MUST NOT clear its sentinel, payload,
+or guard before its optional push. Thus whichever actor publishes the shared
+guard first excludes the other, and no reparent can enter between sync
+completion and a later push.
+
+An owned missing compatibility envelope is an observable recovery condition,
+not a fatal blocker. The authoritative artifact is sufficient for a
+read-only continuation plan and for `--abort`; only `--continue` may
+reconstruct the missing files under §11.2a. The
+`compat-artifact-missing` vocabulary remains reserved for a missing envelope
+whose ownership or reconstruction cannot be proven; ordinary owned absence
+MUST NOT emit it.
 
 ### 11.2a Recovering from missing compatibility artifacts
 
@@ -2321,7 +2543,12 @@ Before the first mutation, in exactly this order:
 
 1. resolve workspace, mode, feature path, repository root;
 2. run §6.3 steps 1–10 (pure and read-only only);
-3. acquire the mode lock (§11.2);
+3. require authoritative reparent state absent, acquire the mode lock
+   (§11.2), then require authoritative state absent again before any remote
+   clear, plan revalidation, or write. A state artifact from crash window 1 is
+   recoverable ownership even when its guard is dead and compatibility
+   artifacts are absent; a fresh run MUST NOT reclaim that guard or overwrite
+   the state/remote pre-image;
 4. run the post-lock re-snapshot and fingerprint re-comparison (§8.5);
 5. capture the pre-image: every closure row's branch SHA, the **exact
    `stack.yaml` bytes** plus their SHA-256, every holder path/branch/HEAD, the
@@ -2365,6 +2592,7 @@ target_git_branch          string
 old_parent_requested_token/stored_token/kind/ref/sha
 new_parent_requested_token/stored_token/kind/ref/sha
 destination_pin_ref        string
+original_head_pin_ref      string (omitempty) # checkout, originally detached
 cutoff_supplied_token      string (omitempty)
 
 rows[]:
@@ -2407,10 +2635,19 @@ cas_rows[]:                ref, old_value, new_value, applied bool, noop bool
 abort_rows[]:              ref, restored bool, classification, detail
 remote_record_written      bool
 remote_followup_entries[]  string
+remote_record_before_captured bool
+remote_record_before_present  bool
+remote_record_before_base64   string (omitempty)
+remote_record_restore_pending bool
+remote_record_restore_source_captured bool
+remote_record_restore_source_present  bool
+remote_record_restore_source_base64   string (omitempty)
 
 max_replay_per_entry       *int
 max_replay_total           *int
 approved_fingerprint       string
+waived_evaluation_ids[]    string
+waived_kinds[]             limit-per-entry|limit-total
 fetch_policy               fetch|no-fetch
 ```
 
@@ -2436,7 +2673,7 @@ every stage. It re-enters at `resume_stage`:
 | --- | --- |
 | `initializing`, `preflight` | re-verify the frozen decision against live refs; complete any missing compatibility artifact under §11.2a; advance |
 | `pinning-preimages` | re-create any missing old pin; advance |
-| `computing` | re-verify completed rows against their `planned_new_sha` **and** their new pins; resume at the first row whose row-stage is `pending` |
+| `computing` | first detect an active rebase left by a crash after Git created a conflict but before `conflict-paused` was saved; durably reconcile the first pending row to `conflict-paused`. Otherwise re-verify completed rows against their `planned_new_sha` **and** new pins, then resume at the first pending row |
 | `conflict-paused` | refuse `conflict-unresolved` while a rebase is in progress; otherwise record `HEAD` as that row's `planned_new_sha`, pin it immediately, validate, and advance |
 | `building-post-image` | rebuild and re-persist the post-image bytes and hash; they are a pure function of state |
 | `pinning-computed` | verify every new pin against its recorded `planned_new_sha`; re-create missing pins; refuse `probe-failed` on a mismatch |
@@ -2461,8 +2698,7 @@ direction, and reversing it mid-rollback would leave a half-restored closure.
 Cleanup MUST release in this order, and MUST tolerate any step already being
 done:
 
-1. delete every pin under `refs/tws/reparent/<run-id>/`;
-2. confirm the scratch worktree has no tracked or non-ignored untracked
+1. confirm the scratch worktree has no tracked or non-ignored untracked
    residue, then remove it (`git worktree remove --force`, then
    `git worktree prune`) — external only. If residue remains from conflict
    resolution or validation, refuse `context-dirty`, preserve the state and
@@ -2471,13 +2707,18 @@ done:
    after the commit point, the command MUST say that the topology change is
    already committed and that only cleanup is pending; the launch exclusion
    remains active deliberately until the artifact can be removed;
+   only `ENOENT` means the scratch is absent. Any other `stat` error and any
+   prune failure refuses `probe-failed`, preserving state, pins, and locks;
+2. delete every pin under `refs/tws/reparent/<run-id>/`;
 3. delete the legacy sentinel `.sync-state.yaml` (external);
 4. delete the v4 payload `.sync-state.v2.yaml` (external) or the compatibility
    transaction (checkout);
 5. release the sync lock (`ReleaseSyncRunGuard` / `ReleaseCheckoutLock`);
 6. delete the reparent state artifact **last**.
 
-The artifact is deleted last because it is the only record of steps 1–5. A
+Scratch cleanup precedes pin deletion specifically so an uncertain stat/remove/
+prune result leaves every recovery anchor intact. The artifact is deleted last
+because it is the only record of steps 1–5. A
 crash at any point leaves an artifact whose stage is `cleanup`, and the next
 `--continue` or `--abort` repeats the whole ordered list harmlessly. Deleting
 it first would strand pins and a lock with nothing to describe them.
@@ -2502,7 +2743,10 @@ gain one merely for this feature; the detailed reparent artifact carries
 `owner_token`. A live foreign holder returns an error the caller surfaces as
 `sync-state-present`, with detail saying that another reparent recovery
 currently owns the shared checkout-sync lock. `forceAcquireCheckoutLock` MUST
-keep all of its existing callers and behavior.
+keep all of its existing callers and behavior. The transferred-lock crash
+case in §11.2 is decided by the matching token-bound global lock plus the
+authoritative run identity, never by treating every dead PID-only feature lock
+as owned.
 
 ### 11.7 Per-ref classification after a partial commit
 
@@ -2557,7 +2801,13 @@ stage `aborting` before its first action and `aborted` when it finishes.
    rollback is about to move; moving a ref out from under an attached worktree
    leaves that worktree's index and HEAD inconsistent. Each such holder is
    re-detached at its current tip, with its §9.4b untracked gate, before any
-   CAS.
+   CAS, but only after `git symbolic-ref --short HEAD` proves it is still
+   attached to the recorded `git_branch`. If the operator detached it or
+   switched it cleanly to another branch after restoration, refuse
+   `holder-unsafe` without changing that checkout or any affected ref. The
+   computation-context exception is an originally detached checkout already
+   restored to the exact recorded `original_head`: it is detached from every
+   affected branch and is therefore already safe on a repeated abort.
 4. Restore public refs in one CAS transaction. Emit
    `update <ref> <preimage> <planned>` for each planned-tip row and
    `verify <ref> <preimage>` for every pre-image or no-op row, all in
@@ -2567,12 +2817,25 @@ stage `aborting` before its first action and `aborted` when it finishes.
 5. Restore `stack.yaml` per §11.8a.
 6. Re-attach every recorded detached holder, and restore the checkout's
    `original_branch` or `original_head` explicitly (§9.9). A holder that cannot
-   be re-attached warns `holder-restore-deferred`.
+   be re-attached warns `holder-restore-deferred`, leaves stage `aborting` and
+   the authoritative artifact/locks intact, and stops before remote-record or
+   artifact cleanup so a later `--abort` retries restoration. This applies
+   before and after the commit point.
 7. Process the pending remote follow-up entries this run created exactly as
    §11.8a permits (`remote_record_written` tells it whether there are any):
    before the commit point, delete those entries and delete the file when it
    becomes empty; after the commit point, preserve the record **unchanged**,
-   including no-op target rows whose PR base still changed.
+   including no-op target rows whose PR base still changed. Before restoring
+   the captured prior bytes or prior absence, persist
+   `remote_record_restore_pending: true` together with the exact live
+   source image (bytes or absence) that the restore is allowed to replace.
+   Before journaling, that source must be the prior image, an absence or
+   monotonic clear produced by this run, or this run's current record. A crash
+   or post-rename error leaves the source and intent durable. The next
+   `--abort` accepts only the exact journaled source or exact captured target,
+   completes/re-fsyncs and re-verifies the target idempotently, then clears the
+   pending/source fields. Foreign or unreadable bytes are never overwritten or
+   removed.
 8. Run the §11.6a cleanup order.
 
 `--abort` MUST NOT roll back any commit the operator created after the run,
@@ -2596,9 +2859,19 @@ but before that state update is recovered by re-evaluating the conjunction. If
 the post-image hash matches and a live ref is a descendant of its planned tip,
 that row is also sufficient evidence that the planned tip landed and was
 subsequently advanced; the run persists the marker and reports that movement
-informationally. A ref unrelated to its planned tip cannot establish the
-commit point and remains a pre-commit `ref-foreign-value` /
+informationally **only when that live value is distinct from both the exact
+pre-image and the planned tip**. An exact `pre-image` classification is never
+commit evidence, even when the planned tip is its ancestor: that topology can
+exist before the CAS runs. A ref unrelated to its planned tip cannot establish
+the commit point and remains a pre-commit `ref-foreign-value` /
 `abort-foreign-value` refusal.
+
+When **every** row is a no-op, ref classification cannot prove that the
+required verify transaction ran because pre-image and planned values are
+identical. The commit point therefore additionally requires the persisted
+post-success CAS marker. Forged post-image metadata before that marker remains
+pre-commit: `--abort` rolls back, while `--continue` runs the verify
+transaction.
 
 | Position | `--abort` behaviour |
 | --- | --- |
@@ -2625,7 +2898,7 @@ landed, so the commit-point conjunction is false). Any other hash refuses
 | 1 | artifact written, no compatibility artifacts | complete them under §11.2a and advance | remove artifact and pins |
 | 2 | compatibility artifacts written, nothing computed | advance | remove artifact, compatibility artifacts, pins |
 | 3 | scratch worktree created | reuse it | prove it clean, then `worktree remove --force` and prune; otherwise preserve it and refuse `context-dirty` |
-| 4 | mid-row rebase, conflict | native `rebase --continue`, then reparent `--continue` | `rebase --abort`, then §11.8 |
+| 4 | mid-row rebase conflict, including crash after Git creates rebase state but before `conflict-paused` persists | reconcile state, native `rebase --continue`, then reparent `--continue` | detect active rebase, `rebase --abort`, then §11.8 |
 | 5 | row computed, pin not yet written | re-verify `HEAD`, re-pin, validate | §11.8 (no public ref moved) |
 | 6 | row pinned, validation not run | re-validate that row | §11.8 |
 | 7 | all rows computed, post-image not built | rebuild and persist the post-image | §11.8 |
@@ -2648,13 +2921,12 @@ While a reparent **state artifact** exists for a feature, `tws doctor`,
 `tws list` (both modes), `tws status`, `tws stack status`, and the checkout and
 external sync reports MUST:
 
-1. write exactly one anchored line per affected feature **on stderr** before
-   issuing any write of ancestry output on stdout (the requirement is command
-   write order; cross-stream display interleaving remains terminal-dependent):
-
-   ```text
-   reparent in progress: <feature> target <entry> run <run-id> stage <stage>; continue with: tws stack reparent <feature> --continue (or --abort)
-   ```
+1. write exactly one sanitized line per affected feature **on stderr** before
+   issuing any ancestry output on stdout. Its prefix is
+   `reparent <status>:` where status is one of the six values below. Detail is
+   CR/LF-sanitized. Continue/abort guidance appears only for actionable stale
+   or complete residue (and only `--abort` for aborting/aborted residue), never
+   for live-active, unsupported, corrupt, or foreign state.
 
 2. suppress ordinary repair guidance for every affected entry — specifically
    every `ancestryGuidance` string that recommends `tws sync <feature>` or a
@@ -2728,6 +3000,11 @@ MUST publish, in this order, one line each:
 5. `if you force publish, use: git push --force-with-lease --force-if-includes
    origin <branch>`.
 
+For a stack-entry parent whose logical `Name` differs from `GitBranch()`,
+`pr_base_before` / `pr_base_after`, the persisted remote record, and fresh or
+resumed success guidance MUST use the Git branch from
+`old_parent.ref` / `new_parent.ref` (`refs/heads/...`), never the logical name.
+
 The guidance MUST NOT recommend a plain `git push`, MUST NOT recommend
 `--force-with-lease=<ref>:<sha>` bound to a freshly observed remote tip, and
 MUST NOT imply that `--force-if-includes` strengthens an explicit
@@ -2752,7 +3029,7 @@ feature         string
 run_id          string
 created_at      RFC3339 UTC
 entries[]:
-  name, git_branch
+  name, git_branch, repo
   remote                      constant "origin"
   remote_ref
   new_tip_sha                 the computed tip this run publishes locally
@@ -2760,6 +3037,18 @@ entries[]:
   pr_base_before, pr_base_after
   state                       pending|cleared
 ```
+
+The loader is strict: `record_version` MUST equal `1`; `feature` MUST match
+the requested feature; `run_id` is exactly 32 lowercase hex; `entries` is
+non-empty with unique non-empty names; every row has `remote: origin`, the
+canonical `refs/remotes/origin/<git_branch>` ref, valid lowercase 40- or
+64-hex OIDs, a valid state, and all required fields. Any present invalid,
+empty, duplicate, unsupported, foreign, or malformed record fails closed.
+
+`repo` carries the row's execution repository identity (empty means the
+workspace repository). Clearing and post-push observation resolve each entry
+in its own stack/record repository context; no invocation may reuse the first
+pushed entry's repository for the rest.
 
 An entry whose `refs/remotes/origin/<branch>` does not resolve and whose
 `remote_sha_at_write` is empty is written `cleared`: no published branch was
@@ -2769,6 +3058,17 @@ appears concurrently because Git rejects the missing local lease information
 rather than clobbering the newly appeared ref. An entry with a non-empty
 `remote_sha_at_write` is written `pending`. When every entry is `cleared`, the
 record file MUST be deleted by whichever mutating route observed it (§12.5).
+
+Replacing an older record row with a newer run is transactional across runs.
+If an older same-name row is pending with non-empty publication evidence and
+the incoming row is `cleared` only because its tracking ref is temporarily
+unresolvable, the merged row MUST keep the incoming topology and
+`new_tip_sha` while carrying forward the older `remote_sha_at_write` and
+remaining `pending`. Missing local tracking data is not a positive §12.5
+clear. Only a positive local clear may discard that evidence. A pre-commit
+abort of the newer run still restores the complete prior record bytes; a
+committed newer run supersedes the topology without weakening the next
+fetch/push lease protection.
 
 ### 12.3a Write point (before any public ref moves)
 
@@ -2792,6 +3092,17 @@ Concretely:
 - A `--continue` that re-enters at `writing-remote-record` writes or verifies
   the record before proceeding to the CAS.
 - `remote_record_written` in state says whether there is anything to clean up.
+- Recovery validates compatibility ownership, the live stack hash, and every
+  affected ref before any clear. The shared recovery prelude persists clears
+  only for `--continue`; `--abort` decides its pre/post-commit arm without
+  changing the record. A post-commit abort preserves the current remote record
+  byte-for-byte, while a pre-commit abort restores the captured prior record.
+  A removed/archived entry in drifted metadata MUST NOT clear protection.
+  Immediately before the CAS it
+  re-verifies that a required record exists, belongs to this run, and matches
+  every protected row, or that the recorded empty proof still corresponds to
+  an absent path. Missing, foreign, corrupt, or newly appeared evidence
+  refuses before any ref moves.
 
 ### 12.4 Push-path rule (exact, covers all three live bare-lease paths)
 
@@ -2807,12 +3118,31 @@ The three live bare-`--force-with-lease` entry points are:
 fails on `RequireWorktreePath` with `ErrWorktreeUnsupported` before any Git
 push. It is not a fourth path and MUST stay unsupported.)
 
+A real top-level external `tws push <feature>` MUST hold the same token-bound
+feature mutation guard used by external reparent/sync from before stack and
+record preflight until every entry has finished and clearing has been
+persisted. A reparent therefore cannot begin between invocation-wide preflight
+and a later entry. Lock acquisition/release is silent, dry-run remains
+write-free, and with no pending record argv, stdout, stderr, and exit status
+remain byte-identical.
+
 **Rule R-PUSH.** For every entry `E` a push invocation would push, given a
 pending record `R` for that feature:
 
-1. `E` not listed in `R`, or `R` absent → **behavior is byte-identical to
+0. If the same feature has an authoritative reparent state whose monotonic
+   `commit_point_reached` is not true, every real push path refuses
+   `reparent-state-present` before Git and before any record clear. A dry run
+   reports the same result as `reparent-remote: would refuse: ...` and writes
+   nothing. Once the commit point is proven, the remaining rules apply.
+
+1. Under the invocation's mutation lock, evaluate all §12.5 local clearing
+   observations **before** capability/lease preflight, persist them, then
+   reload the envelope. Removed, archived, already-published and otherwise
+   no-longer-pending rows clear even when no entry will be pushed. Dry-run
+   evaluates the identical transition in memory and does not write.
+2. `E` not listed in the reloaded `R`, or `R` absent → **behavior is byte-identical to
    today**: same argv, same output, same exit status.
-2. **Invocation-wide preflight, before the first real push of the
+3. **Invocation-wide preflight, before the first real push of the
    invocation.** For every entry of this invocation that *is* listed in `R`
    with `state: pending`, the invocation MUST verify both:
    - `ReparentGitCapabilities.CapForceIfIncludes` is true;
@@ -2826,14 +3156,14 @@ pending record `R` for that feature:
    alternative. The gate is invocation-wide, never per-entry: pushing half a
    stack and then discovering the lease cannot be strengthened is the outcome
    the gate exists to prevent.
-3. For each pending entry, before pushing it, print exactly one anchored
+4. For each pending entry, before pushing it, print exactly one anchored
    warning line on stderr:
 
    ```text
    reparent-remote: <name> was reparented (<pr_base_before> -> <pr_base_after>); retarget the pull request before publishing
    ```
 
-4. For such an entry, the argv MUST become
+5. For such an entry, the argv MUST become
 
    ```text
    git push --force-with-lease --force-if-includes origin <git branch>
@@ -2841,7 +3171,8 @@ pending record `R` for that feature:
 
    i.e. the **bare** lease plus `--force-if-includes`. An explicit
    `--force-with-lease=<ref>:<sha>` MUST NOT be used.
-5. On success, the invocation MUST persist the clear (§12.5 observation 2).
+6. On success, the invocation MUST re-evaluate and persist clearing so
+   push-produced tracking observations can satisfy §12.5 observation 3.
 6. No provider call and no PR mutation is performed on any path.
 
 Because rule 1 leaves unaffected invocations untouched, the frozen push
@@ -2856,7 +3187,10 @@ top-level `tws push`, including its dry-run form, remains unsupported and MUST
 still fail before `pushFeatureCheckout` can preview an entry. A reachable
 preview that names an argv the real run would not use is a defect, so:
 
-1. For a pending entry, the dry-run MUST print the §12.4 rule 3 warning line on
+0. Evaluate §12.5 clears in memory before preflight and decisions. Never
+   persist, mark, or delete the record.
+
+1. For a pending entry, the dry-run MUST print the §12.4 rule 4 warning line on
    stderr, then render the preview as
 
    ```text
@@ -2974,7 +3308,7 @@ func SelectPrimaryReparentRefusal(blockers []ReparentPlanBlocker) (ReparentRefus
 | 35 | `reparent-state-unsupported` | artifact `state_version` / `record_version` is newer than supported |
 | 36 | `reparent-state-corrupt` | artifact cannot be decoded |
 | 37 | `reparent-state-foreign` | artifact belongs to another feature/workspace |
-| 38 | `compat-artifact-missing` | reparent artifact exists but its compatibility artifacts do not |
+| 38 | `compat-artifact-missing` | compatibility reconstruction is required but ownership/safety cannot be proven; ordinary owned absence is automatic recovery work |
 | 39 | `probe-failed` | a required read-only Git probe failed, or a pin resolves to an unexpected object |
 | 40 | `capability-unsupported` | a required Git capability is absent or unknown (§9.10) |
 | 41 | `validation-failed` | the frozen validation command exited non-zero or left residue |
@@ -3039,6 +3373,9 @@ Exactly three reparent-owned stderr prefixes exist, and no line carries two:
   ```
 
   Tests MUST anchor it as `^reparent: [a-z][a-z-]*: .*$`.
+  Every `ReparentRefusalError` detail is normalized at construction and render
+  boundaries: CRLF, LF and CR become spaces and repeated whitespace collapses,
+  so hook/Git/validation output can never create a second physical line.
 - Every **recovery progress fact that is not a failure** MUST use:
 
   ```text
@@ -3062,21 +3399,35 @@ Additionally:
   NOT print both a `reparent:` and a `plan-guard:` refusal for the same
   failure. `reparent-recovery:` and `reparent-remote:` lines are progress, not
   refusals, and may coexist with exactly one refusal line.
+- Holder restoration deferral uses the established
+  `reparent: holder-restore-deferred: <detail>` warning/refusal contract on
+  continue and abort. No generic `reparent: <count> holder(s)` fourth shape is
+  permitted, and package cli MUST NOT append a second unanchored summary after
+  the executor has emitted the owned warning line(s).
 
 ### 13.3 Cells
 
-- **Plan route**: every applicable kind appears in `blockers`;
+- **Plan route**: every plannability/measurement failure — including
+  pre-fetch target repository resolution, unreadable or malformed stack,
+  duplicate identity, unknown target, cross-repo closure and unavailable
+  repository — is normalized into a `ReparentPlan`; every applicable kind appears in `blockers`;
   `refusal.kind` is `SelectPrimaryReparentRefusal(blockers)` or `null`;
   `runnable` is `false`; exit 0.
 - **Unavailable plan**: `summary.plannability = "unavailable"`,
-  `refusal.kind = "plan-unavailable"`, `target`/`descendants` populated as far
-  as they could be resolved, every unknown cell `null`; exit 0. A **deferred**
-  cell (§7.5a) is not an unknown cell and never produces this state.
+  `refusal.kind` is the ranked specific blocker (or `plan-unavailable` when no
+  more specific kind exists), `target`/`descendants` populated as far
+  as they could be resolved, every unknown cell `null`, and
+  `policy.oid_width` is `null` rather than `0`; exit 0. Its human form uses
+  `unknown`, `unavailable`, or `unresolved` and never `(computed at replay)`.
+  A **deferred** cell (§7.5a) is not an unknown cell and never produces this
+  state.
 - **No-work plan**: `summary.plannability = "no-work"`,
   `summary.has_work = false`, `refusal.kind = null`,
   `approval.fingerprint = null`, `runnable = false`; exit 0.
 - **Execution route**: the primary refusal is printed as §13.2 and the process
   exits 1.
+- Only command-line/arity validation, or an actual output/render I/O failure
+  before a document can be written, may make a plan invocation exit nonzero.
 - **Recovery progress**: a `reparent-recovery:` line is printed and the run
   continues; it never changes the exit status.
 
@@ -3152,10 +3503,43 @@ session would sit on; §6.2's `session-live` refusal protects the reparent from
 sessions, and this protects sessions from the reparent. The refusal MUST be
 lifted the instant the artifact is gone.
 
+Launch exclusion is an atomic handshake, not two independent prechecks.
+Checkout launch MUST acquire and publish its workspace-global session intent
+before its final mutation/reparent check; reparent treats a live or
+unverifiable checkout session intent/lock as `session-live`. External reparent
+MUST publish its shared feature mutation guard before the final `SessionProbe`.
+Every external direct, tmux, feature-directory, and `--all` launch MUST publish
+its starting record or scoped launch intent before its final mutation check and
+before spawning or attaching; that final check observes both authoritative
+state and the shared guard. Reparent admission observes direct records, scoped
+launch intents, per-branch tmux sessions, and the feature-wide `--all` session.
+Recovery reruns the same probe after reclaim. Refusal removes the launcher's
+own intent, and a mutating reparent admission removes only provably dead
+crash-left intents after taking the guard. Neither direction waits while
+holding the other lock.
+
+Checkout `tws open <feature> --feature-dir` follows the same handshake: it
+publishes the workspace-global checkout launch intent, performs the final
+reparent/global-mutation/session check, then calls `openDirect` while retaining
+the intent through the agent and shell. Every refusal/exit removes only its own
+intent by rooted ownership checks.
+
+A checkout launch intent is absent only on `ENOENT` or when its valid owner PID
+is provably dead. Live and unverifiable PIDs, stat/read failures, malformed
+owner data, symlink lock paths, and non-directory lock paths remain
+`session-live`. The intent directory is inspected with `Lstat`; a symlink is
+never followed, including when it points outside the workspace. Read-only
+planning may classify a dead intent as non-blocking but MUST NOT delete it.
+Fresh and recovery execution remove it only after acquiring the
+workspace-global checkout mutation lock, re-reading and comparing the exact
+directory identity and owner-file identity plus exact owner bytes immediately
+before rooted, targeted removal; a changed, live, or unverifiable intent is
+preserved and the final `SessionProbe` refuses.
+
 ### 14.3 Downgrade
 
-An older `tws` release MUST fail closed against every artifact this feature
-writes:
+The downgrade guarantee is intentionally narrow. After the compatibility
+envelope exists, shipped v1.2.16 **same-feature `tws sync`** behaves as follows:
 
 - external plain sync → refuses on the v2 payload / legacy sentinel pair,
   whose write order (§11.2) guarantees no lone-sentinel window;
@@ -3174,11 +3558,18 @@ writes:
   the lock, the `git rebase --abort`, `restoreOriginal`, or any deletion. This
   is precisely why an integer `4` is not used: shipped `AbortCheckoutSync`
   performs no version check at all (§11.2);
-- the reparent artifact itself is at a path no older release reads, so it
-  survives a foreign `--abort` and is reported by the current release as
-  `compat-artifact-missing`.
+- the reparent artifact itself is at a path no older release reads.
 
-No older release may resume, reinterpret, or silently discard a reparent run.
+Released v1.2.16 cannot observe crash window 1 between authoritative state and
+compatibility-envelope birth, the workspace-global checkout mutation lock, a
+checkout reparent for an unrelated feature, external launch intents, or the
+top-level external push mutation lock. It also has no reparent-aware top-level
+push path. Therefore operators **MUST NOT use an older tws while any reparent
+is active or recoverable**, including crash window 1. Current tws remains
+globally safe and is the only supported recovery binary. Writing an
+old-readable sentinel before authoritative state would merely replace window 1
+with an unowned sentinel-only crash window and violate §11.4 birth order, so
+v1 does not pretend that workaround closes the released-code gap.
 
 ### 14.4 Documentation surfaces (all required to land)
 
@@ -3208,6 +3599,11 @@ and planned/no-op refs, and forward recovery. It MUST also state that
 `--continue` and `--abort` never take an approval token, and that a reparent
 stores a **full ref** as the new base.
 
+All eight documentation surfaces MUST describe a reparent preview with the
+exact semantic sentence `moves no branch and writes no tws state; may fetch
+according to policy`. A docs test MUST reject any reparent-plan paragraph that
+instead says it “moves nothing”.
+
 ---
 
 ## 15. File ledger (new and touched)
@@ -3224,6 +3620,7 @@ internal/reparent_state.go             ReparentState, versions, paths, load/save
 internal/reparent_refs.go              pin helpers, ReparentEntryRefID, CAS transaction, classification
 internal/reparent_exec.go              computation worktree, per-row rebase, holders, metadata write
 internal/reparent_remote.go            follow-up record, guidance, rule R-PUSH helpers
+internal/external_session_intent.go     external direct/tmux/all launch-intent IO and liveness
 internal/cli/stack_reparent.go         cobra command, routes, validation order, streams
 ```
 
@@ -3233,13 +3630,15 @@ internal/cli/stack_reparent.go         cobra command, routes, validation order, 
 internal/cli/stack.go        register stackReparentCmd(); suppress `reparent` completion
 internal/stack.go            add WriteStackBytesAtomic, SaveStackAtomic, durableWriteFile, ReparentClosureOrder
 internal/syncstate.go        append four syncIOFault tokens (§10.3b)
+internal/sync_run_state.go   token-bound short-lived feature mutation guard release
 internal/git_capability.go   add ReparentGitCapabilities
 internal/cli/sync.go         one reparent-aware pre-check, before mode dispatch
 internal/checkout_sync.go    rule R-PUSH in gitPush; add ReclaimCheckoutLock
-internal/cli/push.go         rule R-PUSH in pushEntries / pushScoped; §12.4a external dry-run in pushEntries
+internal/cli/push.go         top-level external push mutation guard; rule R-PUSH; §12.4a dry-run
 internal/cli/doctor.go       reparent-in-progress line, guidance suppression
 internal/cli/list.go         reparent-in-progress line
-internal/cli/open.go         §14.2a launch exclusion
+internal/cli/open.go         §14.2a direct/tmux/feature-dir/all launch handshake
+internal/cli/importcmd.go    exclude token-named external launch intents from import
 internal/health.go           reparent-aware guidance suppression (external doctor/list)
 internal/checkout_health.go  suppress unreadable/corrupt compatibility-state guidance
 internal/stack_ancestry.go   ancestryGuidance suppression seam (no ancestry logic change)
@@ -3304,9 +3703,14 @@ by the tests that cover them.
   one object refuses `destination-ambiguous` via `git rev-parse --disambiguate`
   listing every OID; an abbreviated OID matching none falls through to
   short-name resolution; hex recognition is case-insensitive and the stored OID
-  is lowercase.
+  is lowercase. Non-empty destination and cutoff tokens preserve the exact
+  operator bytes; surrounding whitespace is not silently trimmed into a
+  different resolvable token.
 - **AC-016** `policy.oid_width` is `40` in a SHA-1 repository and `64` in a
-  SHA-256 repository, and no code path assumes 40.
+  SHA-256 repository, and no code path assumes 40. An unavailable plan
+  publishes JSON `null` and human `unknown`, never `0`. A failed or unsupported
+  `--show-object-format` probe retains the typed `capability-unsupported`
+  refusal and is never rewritten as `probe-failed`.
 - **AC-017** `HEAD`, `FETCH_HEAD`, and `ORIG_HEAD` each refuse
   `destination-unresolvable` as `--onto` and `cutoff-unresolvable` as
   `--cutoff`, with the pseudo-ref detail.
@@ -3321,7 +3725,10 @@ by the tests that cover them.
   full `refs/heads/<default>`.
 - **AC-021** All four §4.3c resolvers agree on the stored token for every
   destination kind; an injected divergence refuses
-  `destination-resolver-divergent` naming the resolver.
+  `destination-resolver-divergent` naming the resolver. A canonical literal
+  full-ref or raw-OID token that equals any stack entry `Name` refuses with
+  that same kind even when both currently resolve to the same commit, and
+  still refuses after the entry branch moves.
 
 **Cutoff**
 
@@ -3367,7 +3774,12 @@ by the tests that cover them.
 - **AC-034** A genuine closure row in another repository refuses
   `cross-repo-closure` by execution common-dir; an unrelated entry in another
   repository whose `Base` merely spells the target's name is neither pulled
-  into the closure nor refused.
+  into the closure nor refused. A symlink/`..` alias resolving to the same
+  common dir remains visible in the candidate closure but is refused
+  `destination-resolver-divergent` when its stored `Repo` spelling differs
+  from its logical parent/target, because shipped sync resolvers are not yet
+  common-dir-aware. Exact equal raw repo tokens remain accepted, and raw
+  metadata is never rewritten.
 - **AC-035** An archived target refuses `target-archived`; an archived closure
   row refuses `affected-archived`.
 - **AC-036** Duplicate `Name` refuses `duplicate-entry-name`; duplicate
@@ -3379,7 +3791,11 @@ by the tests that cover them.
 - **AC-038** Dirty tree, active Git operation, unsafe holder, and
   live/unverifiable session each refuse before mutation.
 - **AC-039** Same parent with a current edge yields a no-work plan with a null
-  fingerprint and a fresh-execution refusal `no-work`.
+  fingerprint and a fresh-execution refusal `no-work`; replay/cutoff/merge and
+  capability-only blockers are suppressed once no-work is known. Its metadata
+  delta is strictly unchanged for target and descendants, has no deferred
+  `last_base_sha_after`, no post-image hash, and renders `stack.yaml after:
+  unchanged`.
 - **AC-040** Same parent with a stale edge refuses
   `destination-same-parent-stale` and names `tws sync <feature> --from
   <entry>`.
@@ -3388,12 +3804,21 @@ by the tests that cover them.
 
 - **AC-041** `ReparentPlan` emits exactly the 25 keys of §7.3, in order;
   `ReparentPlanRow` exactly 23; `ReparentPlanSummary` exactly 11;
-  `ReparentPlanApprovalCovers` exactly 8.
+  `ReparentPlanApprovalCovers` exactly 8. Every plan-route plannability failure
+  — including a missing Git executable when workspace identity can still be
+  resolved — is a human/JSON document with exit 0; only CLI/arity or document
+  render I/O without output may exit nonzero. Reparent uses an error-returning
+  `exec.LookPath`, never `RequireTool`/`os.Exit`. Workspace resolution mirrors
+  `RequireWorkspace`: plans run from a repository/worktree, the external
+  workspace root, or a feature directory via `DetectWorkspaceRoot` plus the
+  external repo inference fallback, while every Git probe uses `Cmd.Dir`.
 - **AC-042** `RebasePlan` key order, `RefusalKind` count/order, the
   eight-member `PlanWarning` domain, and `PlanFingerprint` values are unchanged
   by this feature.
 - **AC-043** `MarshalReparentPlan` emits exactly one JSON value plus exactly
   one newline on stdout; arrays are never `null` except where documented.
+  In particular `state.files.external_run_payload.selected` is `[]` on fresh
+  external, checkout, and unavailable documents.
 - **AC-044** Human document and JSON go to stdout; mode header, fetch prose,
   progress, conflict text, and refusals go to stderr.
 - **AC-045** A plan that publishes a refusal still exits 0.
@@ -3401,37 +3826,57 @@ by the tests that cover them.
   `new_parent.sha`, and `last_base_sha_after` as `null`, and any plan with such
   a row publishes `stack_sha256_after_expected`, `strategy.run_id`, and
   `strategy.computation_path` as `null` — while remaining `runnable`, blocker
-  free, and `plannability = "rows"`. The human render shows
-  `(computed at replay)`.
-- **AC-047** The fingerprint tuple has exactly 33 fields. Changing the
+  free, and `plannability = "rows"`. The human render uses
+  `(computed at replay)` only for descendant-derived facts; unavailable facts
+  render `unavailable`/`unknown`, and an ordinary plan-only run id/path render
+  `not assigned`.
+- **AC-047** Fingerprint tuple schema v3 has exactly 33 top-level fields.
+  Nested identity structures bind canonical target repository/common-dir,
+  every row execution context, ref backend, original checkout
+  branch/head/detached state, and stable ordered holder
+  path/branch/HEAD/action tuples. The target repository structure also binds
+  the raw new-parent `requested_token`, and every cutoff structure binds its
+  raw `supplied_token`. Changing the
   destination, any cutoff, any pre-image tip, the closure order, any argv
-  template, either limit, or any **known** metadata cell changes the
+  template, either limit, either raw operator token, or any **known** metadata cell changes the
   fingerprint; changing nothing reproduces it byte-for-byte; and a `--plan`
   immediately followed by a fresh execution over unchanged state produces
-  identical fingerprints even though the execution mints a run id and a scratch
-  path.
+  identical fingerprints even though the execution mints a run id and a
+  scratch path. The post-lock equality gate remains a second defense over the
+  same identities and refuses `revalidation-mismatch` before state birth.
 - **AC-048** A sync fingerprint is never accepted by `--approve-plan` here, and
   a reparent fingerprint is never accepted by `tws sync --approve-plan`.
+  T-035 drives both real admission gates, not only the two encoding prefixes.
 - **AC-049** The fresh predicate (§7.12) and the continue predicate (§7.12a)
   are asserted as tables, including that a healthy `--continue --plan` is
   admissible under §7.12a and inadmissible under §7.12, publishes
   `approval.scope = "resume"`, `supplied = false`, `accepted = null`,
   `approval.fingerprint = null`, `covers.requires_limits = false`, and exposes
   the persisted token only as `state.approved_fingerprint`, which §3.5 rule 4
-  then refuses to accept back.
+  then refuses to accept back. Its live-ref assessment is shared with
+  execution: symbolic refs refuse, the four ref classes agree, and post-image
+  descendants of planned tips infer the same commit point read-only. Session
+  liveness and conflict state agree; owned missing compatibility and completed
+  residue are automatic recovery work, not fatal blockers.
 - **AC-050** A plan route without limits publishes `approval.fingerprint =
   null` and `approval.usable = false`.
 - **AC-051** A plan route creates no pin, no scratch worktree, no state file,
   and no compatibility artifact; it fetches exactly where the described
   execution fetches (external default fetch, checkout default no-fetch), and
-  `--continue` / `--abort` never fetch.
+  `--continue` / `--abort` never fetch. Its reused `PlanFetch` JSON uses the
+  exact sync policy-source/outcome/freshness domains, leaves no-fetch
+  unsuppressed and local-only, copies complete measured repo/effect facts, and
+  reports a failed contacting fetch as failed/possibly-stale with unknown
+  mutation facts rather than fetched.
 
 **Execution**
 
 - **AC-052** Every materialized row argv contains `-c rebase.backend=merge`,
   `--merge`, `--no-fork-point`, `--no-update-refs`, `--no-autostash`,
   `--no-rebase-merges`, `--onto <oid>`, `<oid>`; `effective_backend` is the
-  constant `merge`; and no argv anywhere contains `-C`.
+  constant `merge`; and no argv anywhere contains `-C`. A PATH-level shim
+  audits every Git process in the route, including workspace, ancestry,
+  inventory and resolver probes.
 - **AC-053** `row.argv` is the canonical template; materialization replaces at
   most one element — the single `<computed-tip:{parent}>` placeholder — and for
   a target row `materialized_argv == argv` byte-for-byte. The fingerprint binds
@@ -3445,12 +3890,17 @@ by the tests that cover them.
 - **AC-056** External mode creates exactly one scratch linked worktree at
   `<featurePath>/.reparent/<run-id>/scratch` and removes it at cleanup step 2;
   checkout mode creates no second checkout and restores the original branch or
-  detached HEAD explicitly on **both** completion and abort. No enumeration
-  surface reports a `.reparent*` path.
+  detached HEAD explicitly on **both** completion and abort. Directory
+  import/adoption filters skip `.reparent*`; worktree/status inventories hide
+  only the exact active recorded scratch path and retain unrelated
+  `.reparent*` paths when no state owns them.
 - **AC-057** A descendant's destination is read only from its parent row's
   persisted `planned_new_sha`, confirmed against the parent's `new` pin, and
   never from `refs/heads/<parent>`; an injected divergence between the pin and
-  the record refuses `probe-failed`.
+  the record refuses `probe-failed`. Exact approved over-limit evaluations
+  persist waiver IDs/kinds and succeed fresh and on resume while the digest is
+  unchanged; changed inputs refuse revalidation and newly exceeded unwaived
+  evaluations refuse their limit kind.
 - **AC-058** Public refs move exactly once, in one `update-ref --stdin`
   `start/prepare/commit` transaction whose every `update` carries the expected
   old value, whose rows follow `ReparentClosureOrder`, and whose stdout and
@@ -3474,8 +3924,10 @@ by the tests that cover them.
   `merge-commit-in-replay-set`.
 - **AC-063** Configured validation runs once per computed row, after that row's
   pin; a non-zero exit refuses `validation-failed` with no public ref moved; a
-  command that leaves tracked modifications or new untracked files refuses
-  `validation-failed`, names the residue, and neither cleans nor stashes it.
+  command that leaves tracked modifications or untracked files absent from the
+  pre-command snapshot refuses `validation-failed`, names the residue, and
+  neither cleans nor stashes it. Preexisting untracked paths may remain or be
+  modified without becoming validation residue.
 - **AC-064** `untracked-overwrite` is never raised statically: preflight only
   warns `untracked-present`. It is raised just-in-time before a switch and
   before a holder restoration whose destination tree would clobber an untracked
@@ -3497,9 +3949,26 @@ by the tests that cover them.
   bytes, and session liveness and re-compares the approved fingerprint; an
   injected concurrent ref move or stack edit refuses
   `plan-guard: revalidation-mismatch: state-preserved:` and leaves nothing
-  behind, and a newly live session refuses `session-live`.
-- **AC-068** `tws open` and checkout agent-session launch refuse for a feature
-  with a live reparent artifact, and succeed again once it is gone.
+  behind, and a newly live session refuses `session-live`. Fresh execution
+  requires authoritative state absent both before and immediately after mode
+  lock acquisition; crash-window-1 state is recoverable ownership and is
+  never overwritten even with a dead guard and missing compatibility.
+  Checkout identity
+  probing treats only symbolic-ref exit 1 as detached, fails closed on other
+  errors or an empty/unresolvable HEAD, and restoration never accepts an empty
+  recorded identity.
+- **AC-068** Checkout and every external direct/tmux/all launch publish intent
+  before their final mutation check. A visible reparent guard makes the launch
+  refuse before spawn/attach; a visible launch intent makes fresh or recovered
+  reparent refuse `session-live`; losing/refused intents are cleaned and a
+  provably dead crash intent is non-blocking to a read-only plan and is removed
+  only after the workspace-global mutation lock through rooted directory/file
+  identity plus exact-owner-byte comparison. Symlink/non-directory intents are
+  unverifiable/live, are never followed, and never expose or remove an outside
+  target. Live/unverifiable or changed intents remain blocking and are never
+  deleted. Checkout `--feature-dir` retains that same intent through
+  `openDirect`, after a final global mutation/reparent/session check, and
+  cleans it safely on refusal or exit.
 
 **Metadata**
 
@@ -3516,7 +3985,9 @@ by the tests that cover them.
 - **AC-072** `durableWriteFile` fsyncs the file and the parent directory after
   rename, and every §10.3a artifact uses it. An injected failure before the
   rename leaves the previous file intact; an injected failure after the rename
-  but before the directory fsync is recoverable. `atomicWriteFile` and
+  but before the directory fsync is recoverable; recovery fsyncs the parent
+  before accepting visible state, post-image, abort pre-image, or compatibility
+  bytes. `atomicWriteFile` and
   `SaveStack` are unchanged.
 - **AC-073** No new `StackEntry` field and no new `stack.yaml` key exist.
 
@@ -3524,8 +3995,18 @@ by the tests that cover them.
 
 - **AC-074** Each of the 17 crash windows of §11.9 resumes correctly with
   `--continue` and with `--abort`, and each is idempotent when its verb is run
-  twice. Stage `metadata-written` is spelled identically in state, in §11.3,
-  in §11.6, and in §11.9.
+  twice. Tests assert the concrete persisted stage/artifact/ref shape rather
+  than assigning only an owner function: window 2 has the complete
+  compatibility envelope with no scratch/context and every row pending;
+  window 15 is `aborting` with one durable restored `abort_rows[]` entry and
+  another ref still at its planned tip. Window 4 includes a crash after Git
+  creates conflict state but before `conflict-paused` is persisted. An
+  originally detached checkout has a run-owned `original-head` pin created
+  before the first switch, verified/recreated on recovery, retained through
+  restoration, and removed afterward; aggressive reflog expiry and GC cannot
+  strand success or abort. Stage
+  `metadata-written` is spelled
+  identically in state, in §11.3, in §11.6, and in §11.9.
 - **AC-075** A partial commit is reconciled row-by-row after classifying
   **every** row first: pre-image rows are completed, planned-tip rows are
   skipped, no-op rows are complete only while their live ref still equals the
@@ -3535,7 +4016,13 @@ by the tests that cover them.
   exits 0.
 - **AC-076** Before the commit-point conjunction, `--abort` restores refs and the exact
   pre-image `stack.yaml` bytes and re-detaches any already-restored holder
-  first. Once the exact post-image is durable **and** every affected ref is at
+  first, but refuses `holder-unsafe` without touching anything if the operator
+  switched that holder away from its recorded branch. An exact pre-image ref
+  never proves the commit point merely because it descends from the planned
+  tip. For an originally detached checkout, a repeated abort recognizes the
+  computation context already detached at `original_head` after an earlier
+  restore-before-cleanup crash as safe and completes idempotently. Once the
+  exact post-image is durable **and** every affected ref is at
   its planned tip or is a no-op, `--abort` performs **forward completion
   only**: it moves no ref, rewrites no metadata, restores holders, cleans up,
   and reports that the reparent had already committed. Operator work refuses
@@ -3545,33 +4032,63 @@ by the tests that cover them.
   crashed abort resumes idempotently from `abort_rows[]`, and `--continue`
   against `aborting` / `aborted` refuses `reparent-state-present` with the
   re-run-abort detail.
+  Remote pre-image restoration is likewise journaled before file mutation and
+  resumes idempotently after post-rename or post-remove crashes.
 - **AC-077** `--continue` and `--abort` never require or accept an approval
   token or a replay limit.
 - **AC-078** Cleanup releases in the §11.6a order and deletes the state
   artifact **last**; a crash at any step is repaired by re-running either verb.
+  Scratch stat/remove/prune precedes pin deletion; only ENOENT means absent,
+  and any other stat or prune failure preserves state, pins and locks.
 - **AC-079** Reparent and sync are mutually exclusive in both modes; the sync
   pre-check runs before mode dispatch, plan dispatch, and classification, so
   `--plan`, plain, `--continue`, and `--abort` all print the exact §11.2
-  sentence rather than a plan, version error, or decode error.
-- **AC-080** `compat-artifact-missing` is raised when the artifact survives
-  without its compatibility files; `--continue` re-creates them only after the
-  four §11.2a proofs; `--abort` cleans up entirely from the detailed state
-  without re-creating anything.
+  sentence rather than a plan, version error, or decode error. Every mutating
+  external sync route, including legacy/no-flag and recovery, then owns the
+  shared feature guard, rechecks authoritative reparent state, and holds that
+  guard through rebase/metadata plus optional push/remote-clear, releasing it
+  last.
+- **AC-080** An owned missing compatibility envelope is visible as incomplete
+  recovery work, not a fatal plan blocker. `--plan --continue` remains
+  admissible, `--continue` re-creates missing files only after the four §11.2a
+  proofs, and `--abort` cleans up entirely from authoritative state without
+  re-creating anything. Foreign or unrepairable compatibility state still
+  fails closed under its ownership/corruption kind.
 - **AC-081** `ReclaimCheckoutLock` takes an absent, self-owned, or dead-PID
-  lock and **never** steals a live foreign lock;
-  `forceAcquireCheckoutLock` is unchanged and keeps its callers.
-- **AC-082** An older release fails closed on every artifact (§14.3), in both
-  modes, for plain, `--continue`, and `--abort`. In checkout mode the
+  lock and **never** steals a live foreign lock. A crash after transferring
+  the PID-only feature lock but before saving `owner_pid` is recoverable only
+  through the matching dead token-bound global lock and authoritative
+  run/feature/operation/state identity; a mismatch remains foreign;
+  `forceAcquireCheckoutLock` is unchanged and keeps its callers. Fresh
+  workspace-global reclaim uses error-aware `Lstat`: only ENOENT means no owner
+  state; symlink, permission and I/O uncertainty refuse without stealing.
+  When the global lock is absent, fresh acquisition scans every feature's
+  checkout-sync/reparent state and refuses any recoverable record; recovery
+  reconstructs the reservation only around its exact own state (plus its
+  same-feature reparent compatibility transaction) and refuses another
+  feature's state.
+- **AC-082** Shipped v1.2.16 same-feature sync fails closed after the complete
+  compatibility envelope exists, in both modes, for plain, `--continue`, and
+  `--abort`. In checkout mode the
   compatibility transaction's non-integer `state_version` makes the shipped
   `AbortCheckoutSync` — which has no version check — fail at
   `LoadCheckoutTransaction`, before the lock, the rebase abort, the original
-  restoration, and any deletion.
+  restoration, and any deletion. The downgrade test parses `tws --version`
+  into an exact version token equal to `v1.2.16`, runs all six real-binary legs
+  through a Git argv shim, snapshots checkout global/feature lock
+  presence/bytes, asserts no `git rebase --abort`, and pins the exact shipped
+  plain-checkout refusal sentence. Tests and documentation explicitly state
+  that artifact-before-compat, unrelated-feature checkout mutation,
+  workspace-global locks and top-level push are invisible to that old binary,
+  and prohibit using it during any active/recoverable reparent.
 - **AC-083** The external compatibility artifacts are written v2-payload-first,
   legacy-sentinel-second, and the v4 payload is produced by the reparent-owned
   raw writer; `SaveSyncRunState` is neither called nor modified.
 - **AC-084** While reparent state exists, `tws doctor`, `tws list`,
   `tws status`, `tws stack status`, and the checkout/external sync reports
-  print the reparent-in-progress line on stderr and suppress both
+  print one sanitized status-specific line (`active|complete|unsupported|
+  corrupt|foreign|stale`) on stderr, include recovery guidance only when
+  actionable, and suppress both
   `tws sync` / `git rebase --onto` repair guidance and every sync
   `--continue` / `--abort` suggestion for affected entries. They also suppress
   every `IssueSyncStateInvalid`, `state file unreadable`,
@@ -3581,22 +4098,34 @@ by the tests that cover them.
 - **AC-085** Without reparent state, `tws doctor`, `tws list`,
   `tws stack status` (human and JSON), `tws status`, and the agent status JSON
   are byte-identical to before; the `reparent` key is **absent**, not `null`,
-  and `schema_version` is still 1.
+  and `schema_version` is still 1. Stack ancestry repository resolution keeps
+  its pre-feature `MainRepoRootIn`/show-toplevel-visible behavior; this feature
+  changes only guidance suppression while reparent state exists.
 
 **Remote**
 
 - **AC-086** No provider binary or HTTP call is made on any route.
 - **AC-087** Plan and success publish old → new PR base and divergence for
-  every affected row, and every guidance line names `origin`.
+  every affected row, and every guidance line names `origin`. Stack-entry
+  parents use Git branch names from the canonical parent refs, not logical
+  entry names, including persisted records and resumed success.
 - **AC-088** The pending record is written at `writing-remote-record`, after
   the new tips are pinned and **before** holder detachment and the CAS, so
   every ref the CAS moves is already covered. A crash after the record but
-  before the CAS leaves a record that `--abort` removes.
+  before the CAS leaves a record that a pre-commit `--abort` removes/restores.
+  Recovery validates ownership, refs and live stack hash before applying local
+  clears on `--continue`; post-commit `--abort` preserves the current record
+  byte-for-byte. Recovery
+  immediately pre-CAS re-proves the required owned record or absent empty
+  proof.
 - **AC-089** With a pending record, all three live push paths run the
   invocation-wide preflight, warn, and use
   `--force-with-lease --force-if-includes origin <branch>`; without a record,
   their argv and output are byte-identical to today and the
-  `sync_noflag/declared_c2/{push,sync-push}` goldens are unchanged.
+  `sync_noflag/declared_c2/{push,sync-push}` goldens are unchanged. A real
+  top-level external push holds the shared feature mutation guard across the
+  entire multi-entry invocation, so reparent cannot enter between preflight
+  and a later bare-lease push.
 - **AC-090** For a pending row whose `remote_sha_at_write` is non-empty, a
   missing `--force-if-includes` capability or an unresolvable
   `origin/<branch>` refuses `remote-followup-unsafe-lease` **before any entry
@@ -3611,8 +4140,14 @@ by the tests that cover them.
 - **AC-092** The record clears by each of the four §12.5 observations. A
   row with no observed remote-tracking ref starts cleared; a row with a
   non-empty `remote_sha_at_write` remains pending if that ref later
-  disappears. Only real push, push-enabled sync, and non-plan reparent routes
-  persist a clear or delete the emptied file. `tws doctor`, `tws list`,
+  disappears. A newer same-name run whose tracking ref is temporarily absent
+  inherits that older positive publication evidence and remains pending while
+  taking the newer topology/new tip; only a positive clear may discard it.
+  Every push path evaluates and persists clears under its
+  invocation lock before capability/lease preflight, then reloads; dry-run
+  performs the same transition in memory only. Only real push, push-enabled
+  sync, and fresh/continue reparent routes persist a clear or delete the
+  emptied file; abort does not. `tws doctor`, `tws list`,
   `tws status`, and
   `tws stack status` neither evaluate nor write it, while a reparent plan may
   read it only to publish `remote-followup-pending`; no read-only route writes
@@ -3637,14 +4172,23 @@ by the tests that cover them.
 - **AC-097** The three reparent stderr prefixes are exactly `reparent:`,
   `reparent-recovery:`, and `reparent-remote:`; guard refusals keep
   `plan-guard:`; §3.5 rules, native Git errors, and the conflict pause carry no
-  marker; at most one refusal line is printed per process.
+  marker; at most one refusal line is printed per process. Refusal details
+  sanitize CR/LF, and holder deferral uses only
+  `reparent: holder-restore-deferred:`.
 - **AC-098** Validation order §6.3 is asserted: a fixture violating several
   rules reports the highest-ranked kind only.
 - **AC-099** The `tws sync --help` snapshot and all 126 `sync_noflag` fixtures
-  are unchanged; the new `tws stack --help` golden is added deliberately.
+  are unchanged; the new `tws stack --help` golden and byte-frozen legacy
+  `tws stack -- reparent` output are added deliberately.
 - **AC-100** README, cheatsheet, CHANGELOG, the three embedded skills, roadmap,
-  and engineering-workflow are updated, and the docs test asserts the new next
-  target.
+  and engineering-workflow are updated. The orchestrator names reparent rows
+  as `target` plus `descendants[]`, never sync's `entries[]`; README carries
+  one unsplit “A refusal tws already performs” paragraph; every reparent
+  preview example carries the same replay limit as execution and explains
+  that a limitless preview has a null fingerprint; and a docs test executes
+  the documented plan → extract fingerprint → execute workflow. All eight
+  surfaces state `moves no branch and writes no tws state; may fetch according
+  to policy`, and no reparent-plan paragraph claims it “moves nothing”.
 ---
 
 ## 17. Test matrix
@@ -3674,7 +4218,7 @@ closure ordering over a branching graph, not only a linear chain.
 | ID | Cell | Covers |
 | --- | --- | --- |
 | T-001 | customer topology, external, plan then execute | AC-001, AC-032, AC-033 |
-| T-002 | customer topology, checkout, plan then execute | AC-032, AC-033, AC-056 |
+| T-002 | customer topology, checkout, plan then execute; checkout/non-applicable `external_run_payload.selected == []`; checkout cross-repo gate before planning Git | AC-032, AC-033, AC-043, AC-056 |
 | T-003 | issue #4 branching closure, both modes, full success | AC-069, AC-033 |
 | T-004 | cutoff ladder: recorded / conflict / unresolvable | AC-022, AC-023 |
 | T-005 | cutoff ladder: supplied / old-parent-tip / absent | AC-024–AC-026 |
@@ -3685,85 +4229,95 @@ closure ordering over a branching graph, not only a linear chain.
 | T-010 | destination kinds: entry, branch, tag, annotated tag, remote-tracking, full ref, full OID | AC-015 |
 | T-011 | destination ambiguity: branch+tag same short name; `for-each-ref` exact-equality filter | AC-014 |
 | T-012 | abbreviated OID via `--disambiguate`: 0 / 1 / many; mixed OID-and-ref token; case-insensitive hex | AC-015 |
-| T-013 | SHA-256 repository: `oid_width == 64` end to end | AC-016 |
+| T-013 | SHA-256 repository: `oid_width == 64` end to end; object-format failure remains typed capability-unsupported with nullable unavailable width | AC-016 |
 | T-014 | pseudo refs rejected as destination and as cutoff | AC-017 |
 | T-015 | `--onto-kind` auto/entry/ref matrix, including `ref` with an entry-name token | AC-011–AC-013 |
 | T-016 | canonical stored token for every literal kind; short token never persisted | AC-013, AC-020 |
-| T-017 | four-resolver agreement, plus an injected divergence | AC-021 |
+| T-017 | four-resolver agreement, injected divergence, and full-ref/raw-OID stored-token collision with entry names before and after entry movement | AC-021 |
 | T-018 | literal-ref root, no `--root` flag | AC-018 |
 | T-019 | cycle / self / descendant destinations; post-image cycle check for literal refs | AC-019 |
 | T-020 | default-branch token is not rewritten | AC-020 |
 | T-021 | destination is an ancestor of the old parent → warning, still runs | §7.11 warning domain |
-| T-022 | genuine cross-repo descendant refuses; same-named unrelated entry in another repo is ignored | AC-034 |
+| T-022 | canonical common-dir identity keeps symlink/`..` alias children visible but refuses their raw-token resolver mismatch (including a decoupled Git branch); exact raw token accepted; genuine cross-repo destination refuses; unrelated same-named entry ignored | AC-034 |
 | T-023 | archived target and archived descendant | AC-035 |
-| T-024 | duplicate name / duplicate git branch, no Git process spawned | AC-036 |
+| T-024 | duplicate name / duplicate git branch before Git; raw destination/cutoff operator-token preservation; external workspace-root/feature-dir cwd plans; fresh external/unavailable `external_run_payload.selected == []`; missing-Git default/no-fetch plan documents and in-process execution error | AC-015, AC-036, AC-041, AC-043 |
 | T-025 | `ReparentClosureOrder` determinism, declaration-order tie-break, `TopoSort` untouched | AC-037 |
 | T-026 | decoupled names with `/`, pin ref id collision (`a` vs `a/b`) | §9.8, AC-036 |
 | T-027 | dirty / active Git op / holder / session refusals | AC-038 |
 | T-028 | holder held elsewhere, prunable holder, holder drift | AC-038, §9.9 |
 | T-029 | live and undecodable tws session refusals, both session kinds | AC-038 |
-| T-030 | same parent current → no-work; same parent stale → sync guidance | AC-039, AC-040 |
-| T-031 | plan schema key counts, order, nullability, stream routing, and refusal-still-exits-0 | AC-041, AC-043, AC-044, AC-045 |
+| T-030 | same parent current → strict no-work with replay/capability blockers suppressed; stale → sync guidance | AC-039, AC-040 |
+| T-031 | plan schema plus default/no-fetch unavailable documents for malformed stack, unknown target, cross-repo and repo-unavailable; nullable OID width and unavailable human rendering; exit 0 | AC-016, AC-041, AC-043, AC-044, AC-045, AC-046 |
 | T-032 | deferred descendant facts: nulls, `runnable`, `(computed at replay)` render | AC-046 |
 | T-033 | sync schema/fingerprint/refusal/warning domains unchanged | AC-042 |
-| T-034 | fingerprint sensitivity and stability across all 33 tuple fields; plan-then-execute parity | AC-047 |
-| T-035 | cross-domain token rejection both directions | AC-048 |
-| T-036 | both admission predicate tables, fresh and continue | AC-049, AC-050 |
-| T-037 | plan side-effect audit: argv log has no mutating verb; fetch exactly where declared; no fetch on continue/abort | AC-051 |
-| T-038 | §3.5 order, fresh-only rules 13/14, bare continue/abort pass, arity table, shipped message parity, usage-block behaviour | AC-004–AC-010 |
-| T-039 | argv template vs materialization; no `-C` anywhere; guarded run equals its unguarded twin | AC-052, AC-053 |
+| T-034 | fingerprint schema-v3 sensitivity/stability across 33 top-level fields and nested raw-token/repository/context/backend/original-checkout/holder identities; holder order canonical; plan-then-execute parity | AC-047 |
+| T-035 | cross-domain token rejection through both admission gates, both directions | AC-048 |
+| T-036 | both admission predicates plus continue-plan/execution agreement for sessions, conflict, compat repair, completed cleanup, refs and metadata | AC-049, AC-050 |
+| T-037 | plan side-effect audit: argv log has no mutating verb; fetch exactly where declared; no-fetch/failed-fetch JSON reuses policy/outcome/freshness/mutation semantics; no fetch on continue/abort | AC-051 |
+| T-038 | §3.5 order, fresh-only rules 13/14, bare continue/abort pass, route-aware arity table, argv-impossible boolean sentinel + monotonic duplicate detection, shipped message parity, and direct Cobra usage-block behaviour | AC-004–AC-010 |
+| T-039 | argv template vs materialization; PATH-level audit finds no `-C` process; guarded run equals its unguarded twin | AC-052, AC-053 |
 | T-040 | hostile `rebase.*` config including `rebase.backend=apply` | AC-054 |
 | T-041 | forbidden-verb source and argv audit | AC-055 |
-| T-042 | external scratch worktree lifecycle; checkout no second checkout; `.reparent*` filtered from every enumeration | AC-056 |
-| T-043 | descendant destination read from pin + record, never from `refs/heads`; injected divergence | AC-057 |
+| T-042 | external scratch lifecycle; checkout no second checkout; import `.reparent*` filtering vs exact active status scratch filtering | AC-056 |
+| T-043 | descendant destination read from pin + record, never from `refs/heads`; injected divergence and JIT limit revalidation | AC-057 |
 | T-044 | single CAS transaction shape, order, expected old values, captured output, no-op `verify` rows, all-no-op transaction | AC-058 |
 | T-045 | CAS race under files backend (**mandatory**) | AC-059 |
 | T-046 | CAS race under reftable backend (skipped when unsupported) | AC-059 |
 | T-047 | `reference-transaction` hook veto | AC-060 |
 | T-048 | pin-before-validate ordering; GC survival across conflict, validation failure, and `pinning-computed` re-verify | AC-061 |
 | T-049 | merge commit in replay range | AC-062 |
-| T-050 | validation pass, failure, and dirty-residue refusal per row | AC-063 |
+| T-050 | validation pass, failure, tracked/new-untracked residue refusal, and preexisting-untracked allowance per row | AC-063 |
 | T-051 | untracked: preflight warning only; JIT refusal before switch and before holder restore; no force option | AC-064 |
-| T-052 | conflict pause/native continue/reparent continue; non-conflict native Git failure persistence and resume | AC-065 |
+| T-052 | conflict pause/native continue/reparent continue; crash after Git conflict before state reconciliation; non-conflict native failure resume | AC-065, AC-074 |
 | T-053 | conflict pause then `--abort` | AC-076 |
 | T-054 | capability floor 2.38, unparseable version, unknown ref backend treated as files | AC-066 |
-| T-055 | post-lock re-snapshot race: concurrent ref move, concurrent stack edit, newly live session | AC-067 |
-| T-056 | `tws open` / checkout session launch exclusion during a run | AC-068 |
+| T-055 | post-lock re-snapshot race: ref/stack/session plus fingerprint-bound canonical repo/common-dir and holder path/branch/HEAD/action identity changes; fresh window-1 state cannot be overwritten | AC-047, AC-067 |
+| T-056 | checkout branch/feature-dir plus external direct/tmux/all launch handshakes in both race orders; recovery re-probe; dead checkout intent is plan-read-only and cleaned by rooted directory/file identity plus exact bytes only post-global-lock; symlink/non-directory intent never followed | AC-068 |
 | T-057 | metadata exactness, including entries outside the closure and `Branches` order | AC-069, AC-073 |
 | T-058 | post-image built and persisted before the CAS; written once from persisted bytes | AC-070 |
 | T-059 | before-hash check on every forward write; concurrent edit refuses `metadata-drift` | AC-071 |
-| T-060 | `durableWriteFile` fsync behaviour; injected pre-rename and post-rename failures; frozen writers untouched | AC-072 |
-| T-061 | all 17 crash windows of §11.9, each verb, each run twice; stage-name consistency | AC-074 |
+| T-060 | `durableWriteFile` fsync behaviour; injected pre-rename and post-rename failures; recovery directory-fsync for visible state/post-image/pre-image/compat bytes; frozen writers untouched | AC-072 |
+| T-061 | all 17 crash windows of §11.9, each verb, each run twice; concrete setup/state-shape ledger; initially-detached intent plus original-HEAD pin recreation and aggressive-GC survival | AC-074 |
 | T-062 | partial commit reconciliation, classify-all-first, no-op and drifted-no-op rows, `reparent-recovery:` exit 0 | AC-075 |
-| T-063 | abort before vs after the commit point; re-detach restored holders; exact byte restore; crashed abort resumes | AC-076 |
+| T-063 | abort before vs after the commit point; exact pre-image ancestry cannot forge commit; re-detach only a holder still on its recorded branch; originally-detached restored context is repeat-abort safe; remote pre-image restore intent survives post-rename/post-remove crashes; post-commit abort preserves current remote record; exact byte restore; crashed abort resumes | AC-076, AC-092 |
 | T-064 | operator branch commit before the commit point refuses; after the commit point both verbs report it and complete cleanup | AC-076 |
 | T-065 | continue/abort reject approval and limit flags | AC-005, AC-077 |
 | T-066 | cleanup order, artifact deleted last, crash at each step | AC-078 |
-| T-067 | sync ↔ reparent mutual exclusion, both modes, plan/plain/continue/abort, pre-check before dispatch | AC-079 |
-| T-068 | `compat-artifact-missing`; §11.2a re-creation proofs; abort without re-creation | AC-080 |
-| T-069 | `ReclaimCheckoutLock`: absent / self / dead / live-foreign | AC-081 |
-| T-070 | downgrade: prior binary, plain/continue/abort, both modes, incl. the non-integer checkout marker | AC-082 |
+| T-067 | sync ↔ reparent mutual exclusion, both modes, plan/plain/continue/abort, pre-check before dispatch; every mutating external sync holds the shared guard through optional push and post-lock rechecks reparent state | AC-079 |
+| T-068 | owned missing compatibility is a non-blocking continuation-plan repair; §11.2a re-creation proofs; abort without re-creation; foreign/unrepairable state still refuses | AC-080 |
+| T-069 | feature/global reclaim: absent/self/dead/live-foreign, transferred PID crash, mismatched token, workspace-wide orphan state with no global lock, safe own-state reconstruction, and Lstat symlink/permission/I-O refusals without stealing | AC-081 |
+| T-070 | downgrade: exact parsed v1.2.16; six real-binary/frozen legs through Git argv tracing; checkout lock byte/presence snapshots and exact plain refusal; explicit artifact-before-compat/global-lock/unrelated-feature/top-level-push limitations | AC-082 |
 | T-071 | external compat write order and raw v4 writer | AC-083 |
-| T-072 | doctor/list/status/stack status/sync reports during reparent; no compatibility artifact is called invalid/corrupt or paired with manual-removal guidance | AC-084 |
-| T-073 | all read-only surfaces unchanged without reparent; `reparent` key absent; schema still 1 | AC-085 |
+| T-072 | all six artifact statuses across human surfaces, sanitized detail, actionable-only guidance, compatibility hint suppression | AC-084 |
+| T-073 | all read-only surfaces and ancestry repository resolution unchanged without reparent; `reparent` key absent; schema still 1; only active-run guidance is suppressed | AC-085 |
 | T-074 | zero provider calls (PATH shim asserting no `gh`/`az` invocation) | AC-086 |
-| T-075 | remote guidance content and ordering; `origin` everywhere | AC-087, AC-093 |
+| T-075 | remote guidance content and ordering; `origin` everywhere; decoupled stack-entry parents use Git branch PR bases in plan, record and resumed success | AC-087, AC-093 |
 | T-076 | record write point before holder detach and CAS; crash between record and CAS | AC-088 |
-| T-077 | all three push paths with and without a pending record | AC-089 |
-| T-078 | invocation-wide lease preflight: capability gate, disappeared published tracking ref, and never-published branch | AC-090 |
-| T-079 | `tws push --dry-run` with and without a record; would-refuse diagnostic; exit 0; no writes | AC-091 |
-| T-080 | record clearing by each observation; only mutating routes persist; read-only surfaces write nothing | AC-092 |
-| T-081 | refusal domain count/order, the swap, and the three anchored prefixes | AC-094, AC-097 |
-| T-082 | `waived_kinds` typing and `failure_domain` persistence | AC-095 |
+| T-077 | all three push paths with and without a pending record; top-level multi-entry push/reparent barrier race | AC-089 |
+| T-078 | clear/reload before invocation-wide lease preflight on all push paths; capability gate, disappeared tracking ref, never-published branch | AC-090, AC-092 |
+| T-079 | `tws push --dry-run` with/without record; in-memory clear before preflight; would-refuse diagnostic; exit 0; no writes | AC-091, AC-092 |
+| T-080 | record clearing by each observation; same-name second-run missing-ref replacement preserves prior publication evidence across abort/commit/fetch/push; fresh/continue/push persist clears; read-only surfaces write nothing | AC-092 |
+| T-081 | refusal domain/order, anchored prefixes, CR/LF sanitization and holder-deferral prefix | AC-094, AC-097 |
+| T-082 | dedicated actual-run owner: `waived_kinds` is `[]RefusalKind` and a non-conflict native Git failure persists `failure_domain: native-git` then resumes | AC-095 |
 | T-083 | `holder-restore-deferred` warning, 11-member domain, persisted deferrals, re-attempt on continue | AC-096 |
 | T-084 | validation-order precedence fixture | AC-098 |
-| T-085 | help/golden snapshots and feature named `reparent` | AC-002, AC-003, AC-008, AC-099 |
+| T-085 | byte-frozen legacy `tws stack -- reparent`, collision escape/completion, stack+reparent help goldens, and closed flag set | AC-002, AC-003, AC-008, AC-099 |
 | T-086 | documentation and skill surfaces | AC-100 |
 | T-087 | source assertion: reparent is the only path that re-points an existing entry's `Base` as a topology operation (creation, import, and rename remain legitimate writers) | §10 |
 
 Exactly 87 cells. Every AC-001..AC-100 is cited by at least one cell, and every
-cell cites at least one AC or a named section; a test MUST assert both
-directions of that mapping so the matrix cannot rot.
+cell cites at least one AC or a named section. The executable normative table
+in `internal/cli/reparent_normative_matrix_test.go` is the **only**
+T→requirement→owning-function ledger. Tests MUST verify that each named
+function exists. The test MUST parse this §17.2 table, expand AC ranges, reduce
+annotated section cells to their named section, and compare every executable
+row's requirement list exactly; a missing, extra, duplicated, or relabeled
+requirement fails. A canonical table supplies the exact behavioral fact list
+for every T-001…T-087 row, and the mapped owner MUST emit that row ID exactly
+once with exactly those facts through function-local
+`assertReparentMatrixBehavior` calls. Missing, extra, duplicated, reordered,
+or relabeled markers/facts fail. Citation strings and aggregate counts of
+arbitrary `t.Fatal` calls are never evidence.
 
 ### 17.3 Process and runtime budgets
 
@@ -3773,11 +4327,16 @@ directions of that mapping so the matrix cannot rot.
   fingerprint tuple, both admission predicates, argv template construction,
   argv materialization) MUST be tested as pure functions, not through a
   real-Git run.
-- **A real-Git cell is one `t.Run` leaf that spawns at least one `git`
-  process.** Sub-cases of a table-driven test each count as one leaf. The
-  feature MUST NOT exceed **120** real-Git leaves in total, counted by a test
-  helper that the suite itself asserts, so the budget is measured rather than
-  estimated.
+- A real-Git scenario is every independent repository-building scenario owned
+  by a normative matrix function, including scenarios inside anonymous
+  closures and table iterations. Every fixture-constructor invocation counts;
+  scenarios that truly share one fixture count once. Supporting tests own no
+  matrix row and are tracked separately from this normative budget. The feature
+  MUST NOT exceed **120** normative real-Git scenarios in total; the runtime
+  counters currently measure **76 internal + 44 CLI = 120** after T-061 was
+  expanded to execute every crash window for both recovery verbs. An unfiltered
+  full package run MUST equal those package counts exactly; a partial
+  `-run`/`-skip` selection retains ceiling-only enforcement.
 - Runtime MUST be reported as **evidence, not a prediction**. The landing
   record MUST carry a measured pair — `go test ./... -count=1` wall clock on
   the same machine immediately before and immediately after the change — and
@@ -3789,8 +4348,17 @@ directions of that mapping so the matrix cannot rot.
   `git init --ref-format=reftable` fails; the files-backend twin of every such
   cell is **mandatory** and never skipped. CI pins no Git version, so a
   reftable-only assertion would silently vanish on the older matrix leg.
-- Every real-Git test MUST record an `argv.log` and assert against it, so
-  forbidden-verb audits are cheap.
+- Every counted real-Git scenario MUST record a non-empty `argv.log`.
+  Package-central counters register the exact scenario id; every fixture-side
+  Git helper, including direct/special helpers, contributes argv evidence; and
+  each package TestMain fails if any counted id has no recorded Git command.
+  This is in addition to route-level PATH shims that audit production
+  processes, and keeps forbidden-verb audits cheap.
+- Package test entrypoints MUST set `GIT_CONFIG_COUNT=0` and
+  `GIT_CONFIG_NOSYSTEM=1` before the first test can spawn Git, so an
+  unqualified CLI suite is hermetic even when the parent environment injects
+  `safe.bareRepository=explicit`. Individual tests may intentionally override
+  those values after entrypoint sanitization.
 
 ### 17.4 Required gates before landing
 
@@ -3818,19 +4386,89 @@ loader test:
 
 - add `v1.2.16` as the reparent-era downgrade tag beside the existing
   `v1.2.15` constant, keeping both reachable;
+- accept a candidate binary only when parsed `tws --version` output equals
+  `v1.2.16` exactly; substring matches and dirty/suffixed versions are not
+  evidence;
 - run the real prior binary against a real reparent fixture for **plain**,
   `--continue`, and `--abort`, in **both** workspace modes;
+- always run an executable frozen v1.2.16 route over those same artifact bytes:
+  it reads the real compatibility paths, decodes them through frozen
+  v1.2.16-only YAML structs/version gates, follows the old plain/continue/abort
+  decision order, executes under a Git PATH shim, and snapshots artifact and
+  lock bytes before/after. Hard-coded expected strings are not a fallback;
 - assert the checkout arm specifically: the prior `AbortCheckoutSync` must fail
   at `LoadCheckoutTransaction` on the non-integer `state_version`, leaving the
-  lock untaken, no `git rebase --abort` run, `restoreOriginal` uncalled, and
-  every artifact still on disk;
-- keep the existing fidelity comparison so the replay harness stays proven
-  equivalent whenever a real binary is available.
+  global and feature locks byte/presence-identical, no `git rebase --abort`
+  present in the shimmed argv, `restoreOriginal` uncalled, the exact shipped
+  plain refusal preserved, and every artifact still on disk;
+- compare the frozen route's classified outcome with the exact prior binary
+  whenever that binary is available, so the fallback remains fidelity-proven.
+
+The harness MUST also encode the boundary it cannot prove away: released
+v1.2.16 has no observer for crash window 1, the workspace-global lock,
+unrelated-feature checkout reparent, or top-level external push. A documentation
+test MUST require the operator prohibition against using an older binary while
+any reparent is active/recoverable.
 
 Asserting the shipped loader functions directly is a **necessary** supplement
 and an insufficient substitute: the defect this guards against is a prior
 binary's control flow reaching a mutation before its version check, which only
 an executed prior binary can demonstrate.
+
+### 17.5 v6 recovery and state-certification amendments
+
+The following rules are normative refinements of §§9–12:
+
+1. A conflict-paused row appends one run-scoped `exec git update-ref
+   refs/tws/reparent/<run-id>/conflict-complete/<entry-id> HEAD` command to the
+   native merge-backend rebase todo. Recovery accepts completion only when the
+   rebase is absent, the computation context is clean, and that marker resolves
+   exactly to `HEAD`. `rebase --abort` and `rebase --quit` never satisfy it.
+2. `approved_holders[]` is immutable admission evidence, separate from
+   `detached_holders[]` progress. Every continuation plan and execution attempt
+   rejects a new/missing holder, changed common-dir identity, or clean detached
+   HEAD that differs from the persisted detachment target. The computation
+   context is subject to the same rule.
+3. A dead checkout launch intent is removable only when no checkout session
+   state exists. A direct or tmux state—live, stale, or undecodable—must be
+   closed/recovered before cleanup or a later launch can create a new intent.
+4. Checkout-global mutation admission scans both
+   `<metadata>/.tws/state`-style/current and pre-upgrade sibling `state`
+   directories for sync and reparent recovery artifacts, independently of the
+   target feature layout, and fsyncs the global reservation.
+5. Supported-version reparent state uses known-field decoding and strict
+   semantic validation before any Git command, lock reclamation, or cleanup.
+   The artifact must be a regular non-symlink file; paths, object ids, hashes,
+   pins, refs, rows, orders, stages, argv, base64 images, holder evidence, and
+   remote journals must agree exactly with the run/location schema.
+6. Fresh routes resolve the target repository before loading validation
+   configuration. The frozen command is the global config overlaid by
+   `<target-repo>/.tws/config.yaml`, never the caller repository's config.
+7. Every remote clear/delete is a state-journaled exact source→target
+   transition. A recovery or continuation plan accepts only either exact image;
+   the plan classifies the target read-only, while execution reconciles and
+   fsyncs it before clearing the journal.
+8. Cleanup fsyncs every compatibility-artifact and feature/global-lock parent
+   directory after removal, including a separate legacy checkout directory.
+   It removes the authoritative state last and then fsyncs its state directory.
+9. If cleanup released the mutation lock and then crashed, a later push may
+   legitimately clear/delete the last remote record. Recovery accepts the
+   absence only after proving every state-listed pending row is published
+   (tracking ref equals or contains `planned_new_sha`) or left the stack, then
+   durably records `remote_record_empty` before repeated cleanup.
+10. Push envelopes retain the workspace/default repository for entries whose
+    recorded `Repo` is empty. A non-empty per-entry `Repo` overrides that
+    default; push order never rebinds it to the first pushed repository.
+11. Replay candidates are measured with exactly
+    `git rev-list --no-merges --reverse <cutoff>..<branch-ref>`; count and
+    digest cover that exact oldest-first non-merge sequence.
+12. Every descendant remote row/record stores its unchanged logical parent's
+    **Git branch** as both PR-base-before and PR-base-after. Cleared rows with a
+    missing tracking ref project `no-upstream`, and warnings never render empty
+    `( -> )` base pairs.
+13. The just-in-time untracked gate treats component-prefix collisions in both
+    directions as overwrite hazards, including symlink components, and reports
+    every complete `untracked -> target` path pair before switching.
 
 ---
 

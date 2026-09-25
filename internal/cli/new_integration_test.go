@@ -179,6 +179,7 @@ func writeAndCommit(t *testing.T, repo, name, content, message string) {
 
 func gitRun(t *testing.T, dir string, args ...string) {
 	t.Helper()
+	reparentRecordGitArgv(t, args...)
 	cmd := exec.Command("git", args...)
 	if dir != "" {
 		cmd.Dir = dir
@@ -190,6 +191,7 @@ func gitRun(t *testing.T, dir string, args ...string) {
 
 func gitOutput(t *testing.T, dir string, args ...string) string {
 	t.Helper()
+	reparentRecordGitArgv(t, args...)
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()

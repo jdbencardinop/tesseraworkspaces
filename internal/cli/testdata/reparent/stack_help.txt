@@ -1,0 +1,14 @@
+Show branch dependency tree
+
+Usage:
+  tws stack <feature> [flags]
+  tws stack [command]
+
+Available Commands:
+  reparent    Move a stack entry onto a new parent and replay its descendants
+  status      Show stack ancestry, materialization, and upstream status
+
+Flags:
+  -h, --help   help for stack
+
+Use "tws stack [command] --help" for more information about a command.

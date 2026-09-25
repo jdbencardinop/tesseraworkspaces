@@ -52,9 +52,14 @@ type directOpenOpts struct {
 	Shell       directRunner
 	LookPath    func(string) (string, error)
 	Store       directSessionStore
+	FinalGuard  func() error
 	Out         io.Writer
 	Err         io.Writer
 }
+
+// DirectSessionLaunchIntentHook is a test-only seam after the starting record
+// is durable and before the final reparent exclusion check.
+var DirectSessionLaunchIntentHook func() error
 
 // ---------- real implementations ----------
 
@@ -241,6 +246,20 @@ func openDirect(opts directOpenOpts) error {
 		}
 		if err := store.RemoveOwned(opts.FeaturePath, branchID, token); err != nil {
 			_, _ = fmt.Fprintf(errOut, "Warning: could not remove session record: %v\n", err)
+		}
+	}
+	if tracked {
+		if DirectSessionLaunchIntentHook != nil {
+			if err := DirectSessionLaunchIntentHook(); err != nil {
+				removeOwned()
+				return err
+			}
+		}
+		if opts.FinalGuard != nil {
+			if err := opts.FinalGuard(); err != nil {
+				removeOwned()
+				return err
+			}
 		}
 	}
 

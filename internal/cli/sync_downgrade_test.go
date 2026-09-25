@@ -1,15 +1,18 @@
 package cli
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
+	"gopkg.in/yaml.v3"
 )
 
 // ---------------------------------------------------------------------------
@@ -21,11 +24,50 @@ import (
 
 const downgradeTag = "v1.2.15"
 
+// reparentDowngradeTag sits BESIDE downgradeTag, never in place of it: the
+// sync-modes evidence keeps proving v1.2.15's behaviour while safe-reparent's
+// own evidence (§17.4a) needs the release immediately before it. Full-history
+// CI can build either tag; a shallow or cache-cold environment falls back to
+// the frozen replay rather than dropping the cell or hard-failing.
+const reparentDowngradeTag = "v1.2.16"
+
 // priorBinary is the resolved prior tws, or an empty path when none could be
 // obtained. `note` always explains which acquisition step produced it.
 type priorBinary struct {
 	path string
 	note string
+}
+
+func assertExactPriorCheckoutPlainRefusal(t *testing.T, message string) {
+	t.Helper()
+	const want = "previous checkout-sync incomplete; use --continue or --abort"
+	lines := strings.Split(message, "\n")
+	if len(lines) < 2 || lines[0] != "Error: "+want || lines[len(lines)-1] != want {
+		t.Fatalf("plain checkout refusal did not preserve the exact v1.2.16 sentence:\n%s", message)
+	}
+}
+
+func parsedTWSVersion(out []byte) (string, bool) {
+	fields := strings.Fields(strings.TrimSpace(string(out)))
+	if len(fields) != 3 || fields[0] != "tws" || fields[1] != "version" {
+		return "", false
+	}
+	return fields[2], true
+}
+
+func TestDowngradeVersionParsingRequiresExactRelease(t *testing.T) {
+	if got, ok := parsedTWSVersion([]byte("tws version v1.2.16\n")); !ok || got != reparentDowngradeTag {
+		t.Fatalf("exact version parsed as %q, %v", got, ok)
+	}
+	for _, output := range []string{
+		"tws version v1.2.160\n",
+		"tws version v1.2.16-dirty\n",
+		"prefix v1.2.16 suffix\n",
+	} {
+		if got, ok := parsedTWSVersion([]byte(output)); ok && got == reparentDowngradeTag {
+			t.Fatalf("non-exact version %q was accepted", output)
+		}
+	}
 }
 
 // downgradeSourceRoot locates the tws source repository from this test file, so
@@ -39,54 +81,92 @@ func downgradeSourceRoot(t *testing.T) string {
 	return filepath.Dir(filepath.Dir(filepath.Dir(file)))
 }
 
-// acquireDowngradeBinary implements the §9.6 acquisition order. It never fails
-// the test: a missing binary degrades to the harness, which always runs.
+// acquireDowngradeBinary implements the §9.6 acquisition order for the
+// sync-modes evidence, which is pinned to downgradeTag. It is the
+// backwards-compatible wrapper over acquireDowngradeBinaryFor, so every
+// existing caller keeps its exact behaviour.
+func acquireDowngradeBinary(t *testing.T) priorBinary {
+	t.Helper()
+	return acquireDowngradeBinaryFor(t, downgradeTag)
+}
+
+// acquireDowngradeBinaryFor implements the §9.6 acquisition order for ONE
+// tag. It never fails the test: a missing binary degrades to the harness,
+// which always runs.
 //
 // It MUST be called before any fixture rewrites HOME, so the offline build can
 // use the developer's existing build and module caches.
-func acquireDowngradeBinary(t *testing.T) priorBinary {
+//
+// TWS_DOWNGRADE_BINARY remains the v1.2.15 override and is deliberately NOT
+// consulted for any other tag: a single environment variable cannot name two
+// different releases, and silently building the wrong one would make the
+// evidence meaningless. A per-tag override is available as
+// TWS_DOWNGRADE_BINARY_<TAG>, with dots replaced by underscores.
+func acquireDowngradeBinaryFor(t *testing.T, tag string) priorBinary {
 	t.Helper()
+	countReparent := tag == reparentDowngradeTag
 
-	// 1. A real prior binary supplied by the environment.
-	if path := os.Getenv("TWS_DOWNGRADE_BINARY"); path != "" {
-		info, err := os.Stat(path)
-		switch {
-		case err != nil:
-			t.Logf("TWS_DOWNGRADE_BINARY=%s is not usable: %v", path, err)
-		case info.Mode()&0o111 == 0:
-			t.Logf("TWS_DOWNGRADE_BINARY=%s is not executable", path)
-		default:
-			return priorBinary{path: path, note: "TWS_DOWNGRADE_BINARY"}
+	// 1. A real prior binary supplied by the environment. The generic
+	// override is always checked first; a tag-specific override is the
+	// optional second spelling when a job supplies more than one release.
+	envNames := []string{"TWS_DOWNGRADE_BINARY"}
+	tagEnv := "TWS_DOWNGRADE_BINARY_" + strings.ToUpper(strings.NewReplacer(".", "_", "-", "_").Replace(tag))
+	if tagEnv != envNames[0] {
+		envNames = append(envNames, tagEnv)
+	}
+	for _, envName := range envNames {
+		if path := os.Getenv(envName); path != "" {
+			info, err := os.Stat(path)
+			switch {
+			case err != nil:
+				t.Logf("%s=%s is not usable: %v", envName, path, err)
+			case info.Mode()&0o111 == 0:
+				t.Logf("%s=%s is not executable", envName, path)
+			default:
+				out, versionErr := exec.Command(path, "--version").CombinedOutput()
+				gotVersion, parsed := parsedTWSVersion(out)
+				if versionErr != nil || !parsed || gotVersion != tag {
+					t.Logf("%s=%s is not %s (%v, %q)", envName, path, tag, versionErr, strings.TrimSpace(string(out)))
+					continue
+				}
+				return priorBinary{path: path, note: envName}
+			}
 		}
 	}
 
 	// 2. An offline build of the local tag, in an isolated detached worktree.
 	root := downgradeSourceRoot(t)
-	if err := exec.Command("git", "-C", root, "rev-parse", "-q", "--verify", "refs/tags/"+downgradeTag).Run(); err != nil {
-		t.Logf("no local %s tag: %v", downgradeTag, err)
-		return priorBinary{note: "no prior binary: tag " + downgradeTag + " is not present locally"}
+	if err := testGitCommand(t, root, countReparent, "rev-parse", "-q", "--verify", "refs/tags/"+tag).Run(); err != nil {
+		t.Logf("no local %s tag: %v", tag, err)
+		return priorBinary{note: "no prior binary: tag " + tag + " is not present locally"}
 	}
 
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src")
-	if out, err := exec.Command("git", "-C", root, "worktree", "add", "--detach", src, downgradeTag).CombinedOutput(); err != nil {
-		t.Logf("cannot check out %s: %v\n%s", downgradeTag, err, out)
+	if out, err := testGitCommand(t, root, countReparent, "worktree", "add", "--detach", src, tag).CombinedOutput(); err != nil {
+		t.Logf("cannot check out %s: %v\n%s", tag, err, out)
 		return priorBinary{note: "no prior binary: worktree checkout failed"}
 	}
 	t.Cleanup(func() {
-		_ = exec.Command("git", "-C", root, "worktree", "remove", "--force", src).Run()
-		_ = exec.Command("git", "-C", root, "worktree", "prune").Run()
+		_ = testGitCommand(t, root, countReparent, "worktree", "remove", "--force", src).Run()
+		_ = testGitCommand(t, root, countReparent, "worktree", "prune").Run()
 	})
 
-	bin := filepath.Join(dir, "tws-"+downgradeTag)
-	build := exec.Command("go", "build", "-o", bin, "./cmd/tws")
+	bin := filepath.Join(dir, "tws-"+tag)
+	build := exec.Command("go", "build", "-ldflags", "-X main.version="+tag, "-o", bin, "./cmd/tws")
 	build.Dir = src
 	build.Env = append(os.Environ(), "GOFLAGS=-mod=mod", "GOPROXY=off")
 	if out, err := build.CombinedOutput(); err != nil {
-		t.Logf("offline build of %s failed: %v\n%s", downgradeTag, err, out)
+		t.Logf("offline build of %s failed: %v\n%s", tag, err, out)
 		return priorBinary{note: "no prior binary: offline build failed"}
 	}
-	return priorBinary{path: bin, note: "offline build of " + downgradeTag}
+	out, versionErr := exec.Command(bin, "--version").CombinedOutput()
+	gotVersion, parsed := parsedTWSVersion(out)
+	if versionErr != nil || !parsed || gotVersion != tag {
+		t.Logf("offline build reports %q instead of exact %s (%v)", strings.TrimSpace(string(out)), tag, versionErr)
+		return priorBinary{note: "no prior binary: offline build version mismatch"}
+	}
+	return priorBinary{path: bin, note: "offline build of " + tag}
 }
 
 // runPriorBinary runs the prior tws inside the fixture, with the fixture's own
@@ -108,6 +188,90 @@ func runPriorBinary(t *testing.T, bin, dir string, args ...string) (stdout, stde
 		exit = exitErr.ExitCode()
 	}
 	return outBuf.String(), errBuf.String(), exit
+}
+
+func runPriorBinaryWithGitTrace(t *testing.T, bin, dir string, args ...string) (stdout, stderr string, exit int, gitArgv []string) {
+	t.Helper()
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shimDir := t.TempDir()
+	logPath := filepath.Join(shimDir, "git-argv.log")
+	shim := filepath.Join(shimDir, "git")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> \"$TWS_DOWNGRADE_GIT_LOG\"\n" +
+		"exec \"$TWS_DOWNGRADE_REAL_GIT\" \"$@\"\n"
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(bin, args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_EDITOR=true",
+		"GIT_SEQUENCE_EDITOR=true",
+		"PATH="+shimDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"TWS_DOWNGRADE_GIT_LOG="+logPath,
+		"TWS_DOWNGRADE_REAL_GIT="+realGit,
+	)
+	var outBuf, errBuf strings.Builder
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	runErr := cmd.Run()
+	if runErr != nil {
+		var exitErr *exec.ExitError
+		if !asExitError(runErr, &exitErr) {
+			t.Fatalf("running the prior binary failed: %v\n%s", runErr, errBuf.String())
+		}
+		exit = exitErr.ExitCode()
+	}
+	if data, readErr := os.ReadFile(logPath); readErr == nil {
+		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+			if strings.TrimSpace(line) != "" {
+				gitArgv = append(gitArgv, strings.TrimSpace(line))
+			}
+		}
+	} else if !os.IsNotExist(readErr) {
+		t.Fatal(readErr)
+	}
+	return outBuf.String(), errBuf.String(), exit, gitArgv
+}
+
+type downgradePathSnapshot struct {
+	present bool
+	data    []byte
+}
+
+func snapshotDowngradePath(t *testing.T, path string) downgradePathSnapshot {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return downgradePathSnapshot{}
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return downgradePathSnapshot{present: true, data: data}
+}
+
+func assertDowngradePathUnchanged(t *testing.T, path string, before downgradePathSnapshot) {
+	t.Helper()
+	after := snapshotDowngradePath(t, path)
+	if before.present != after.present || !bytes.Equal(before.data, after.data) {
+		t.Fatalf("%s changed across the prior-binary refusal: before=%+v after=%+v", path, before, after)
+	}
+}
+
+func assertNoDowngradeRebaseAbort(t *testing.T, argv []string) {
+	t.Helper()
+	for _, line := range argv {
+		fields := strings.Fields(line)
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] == "rebase" && fields[i+1] == "--abort" {
+				t.Fatalf("prior binary reached git rebase --abort: %v", argv)
+			}
+		}
+	}
 }
 
 func asExitError(err error, target **exec.ExitError) bool {
@@ -554,4 +718,386 @@ func testDowngradeMixedStateGenesis(t *testing.T, prior priorBinary) {
 			t.Fatalf("v1.2.15 %s changed the payload", tc.name)
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// T-070 — safe-reparent downgrade evidence (§14.3, §17.4a, AC-082, AC-083).
+//
+// The defect this cell guards against is a prior binary's control flow
+// reaching a MUTATION before its version check. Only an executed prior binary
+// demonstrates that, so asserting the shipped loader functions directly is a
+// necessary supplement and an insufficient substitute — both halves run here.
+//
+// v1.2.16 is acquired BESIDE v1.2.15, through the same parameterized ladder,
+// and the existing fidelity comparison is untouched.
+// ---------------------------------------------------------------------------
+
+type frozenV1216SyncRunState struct {
+	StateVersion int `yaml:"state_version"`
+}
+
+type frozenV1216CheckoutTransaction struct {
+	StateVersion int `yaml:"state_version,omitempty"`
+}
+
+const (
+	frozenV1216SyncRunStateVersion        = 2
+	frozenV1216SyncRunStateGuardedVersion = 3
+)
+
+func frozenV1216SyncRunStatePath(featurePath string) string {
+	return filepath.Join(featurePath, ".sync-state.v2.yaml")
+}
+
+func frozenV1216SyncStatePath(featurePath string) string {
+	return filepath.Join(featurePath, ".sync-state.yaml")
+}
+
+func frozenV1216CheckoutStateDir(featurePath string) string {
+	featuresDir := filepath.Dir(filepath.Clean(featurePath))
+	return filepath.Join(filepath.Dir(featuresDir), "state")
+}
+
+func frozenV1216CheckoutTransactionPath(featurePath string) string {
+	return filepath.Join(frozenV1216CheckoutStateDir(featurePath),
+		filepath.Base(featurePath)+"-checkout-sync.yaml")
+}
+
+func frozenV1216CheckoutLockPath(featurePath string) string {
+	return filepath.Join(frozenV1216CheckoutStateDir(featurePath),
+		filepath.Base(featurePath)+"-checkout-sync.lock")
+}
+
+func frozenV1216LoadSyncRunState(featurePath string) error {
+	data, err := os.ReadFile(frozenV1216SyncRunStatePath(featurePath))
+	if err != nil {
+		return err
+	}
+	var state frozenV1216SyncRunState
+	if err := yaml.Unmarshal(data, &state); err != nil {
+		return err
+	}
+	if state.StateVersion != frozenV1216SyncRunStateVersion &&
+		state.StateVersion != frozenV1216SyncRunStateGuardedVersion {
+		return fmt.Errorf("unsupported scoped sync state version %d", state.StateVersion)
+	}
+	return nil
+}
+
+func frozenV1216LoadCheckoutTransaction(featurePath string) error {
+	data, err := os.ReadFile(frozenV1216CheckoutTransactionPath(featurePath))
+	if err != nil {
+		return err
+	}
+	var tx frozenV1216CheckoutTransaction
+	return yaml.Unmarshal(data, &tx)
+}
+
+func frozenReparentDowngradeOutcome(t *testing.T, f *reparentFixture, verb string) (downgradeOutcome, []string) {
+	t.Helper()
+	paths := []string{internal.ReparentStatePath(f.Loc())}
+	if f.Mode == internal.ModeCheckout {
+		paths = append(paths,
+			frozenV1216CheckoutTransactionPath(f.FeaturePath),
+			frozenV1216CheckoutLockPath(f.FeaturePath),
+			internal.CheckoutMutationLockPath(f.Loc().CheckoutStateDir),
+		)
+	} else {
+		paths = append(paths,
+			frozenV1216SyncStatePath(f.FeaturePath),
+			frozenV1216SyncRunStatePath(f.FeaturePath),
+		)
+	}
+	before := make(map[string]downgradePathSnapshot, len(paths))
+	for _, path := range paths {
+		before[path] = snapshotDowngradePath(t, path)
+	}
+	out := downgradeOutcome{}
+	gitArgv := withFrozenDowngradeGitTrace(t, func() {
+		if f.Mode == internal.ModeExternal {
+			if err := frozenV1216LoadSyncRunState(f.FeaturePath); err == nil {
+				out.message = "frozen v1.2.16 unexpectedly decoded reparent external state"
+				return
+			} else {
+				out.failed = true
+				out.message = fmt.Sprintf(
+					"scoped sync state is unreadable or uses an unsupported version (%v); inspect it and remove it manually — tws will not guess",
+					err)
+			}
+			return
+		}
+		switch verb {
+		case "plain":
+			if _, err := os.Stat(frozenV1216CheckoutTransactionPath(f.FeaturePath)); err == nil {
+				out.failed = true
+				out.message = "previous checkout-sync incomplete; use --continue or --abort"
+			} else if !os.IsNotExist(err) {
+				out.failed = true
+				out.message = err.Error()
+			}
+		case "continue", "abort":
+			if err := frozenV1216LoadCheckoutTransaction(f.FeaturePath); err != nil {
+				out.failed = true
+				out.message = fmt.Sprintf("no transaction to %s: %v", verb, err)
+			}
+		}
+	})
+	for _, path := range paths {
+		assertDowngradePathUnchanged(t, path, before[path])
+	}
+	return out, gitArgv
+}
+
+func withFrozenDowngradeGitTrace(t *testing.T, fn func()) []string {
+	t.Helper()
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shimDir := t.TempDir()
+	logPath := filepath.Join(shimDir, "frozen-git-argv.log")
+	shim := filepath.Join(shimDir, "git")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> \"$TWS_FROZEN_GIT_LOG\"\n" +
+		"exec \"$TWS_FROZEN_REAL_GIT\" \"$@\"\n"
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := os.Getenv("PATH")
+	oldLog, hadLog := os.LookupEnv("TWS_FROZEN_GIT_LOG")
+	oldReal, hadReal := os.LookupEnv("TWS_FROZEN_REAL_GIT")
+	if err := os.Setenv("PATH", shimDir+string(os.PathListSeparator)+oldPath); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Setenv("TWS_FROZEN_GIT_LOG", logPath)
+	_ = os.Setenv("TWS_FROZEN_REAL_GIT", realGit)
+	defer func() {
+		_ = os.Setenv("PATH", oldPath)
+		if hadLog {
+			_ = os.Setenv("TWS_FROZEN_GIT_LOG", oldLog)
+		} else {
+			_ = os.Unsetenv("TWS_FROZEN_GIT_LOG")
+		}
+		if hadReal {
+			_ = os.Setenv("TWS_FROZEN_REAL_GIT", oldReal)
+		} else {
+			_ = os.Unsetenv("TWS_FROZEN_REAL_GIT")
+		}
+	}()
+	fn()
+	data, err := os.ReadFile(logPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+func assertFrozenReparentDowngradeOutcome(t *testing.T, f *reparentFixture, verb string, outcome downgradeOutcome, refsBefore, headBefore string) {
+	t.Helper()
+	if !outcome.failed {
+		t.Fatalf("the frozen %s outcome must fail closed", verb)
+	}
+	if f.Mode == internal.ModeExternal && !strings.Contains(outcome.message, "unsupported scoped sync state version 4") {
+		t.Fatalf("external %s outcome = %q", verb, outcome.message)
+	}
+	if f.Mode == internal.ModeCheckout {
+		if verb == "continue" && !strings.Contains(outcome.message, "no transaction to continue") {
+			t.Fatalf("checkout continue outcome = %q", outcome.message)
+		}
+		if verb == "abort" && !strings.Contains(outcome.message, "no transaction to abort") {
+			t.Fatalf("checkout abort outcome = %q", outcome.message)
+		}
+	}
+	if !internal.HasReparentState(f.Loc()) {
+		t.Fatal("the authoritative artifact must survive")
+	}
+	if f.Mode == internal.ModeExternal {
+		if !internal.HasSyncRunState(f.FeaturePath) || !internal.HasSyncState(f.FeaturePath) {
+			t.Fatal("the external compatibility artifacts must survive")
+		}
+	} else if !internal.HasCheckoutTransaction(f.FeaturePath) {
+		t.Fatal("the checkout compatibility transaction must survive")
+	}
+	if after := reparentDowngradeRefs(t, f); after != refsBefore {
+		t.Fatalf("the prior control flow must move no ref:\n--- before ---\n%s\n--- after ---\n%s", refsBefore, after)
+	}
+	if headBefore != "" {
+		if head := f.reparentGit(f.Repo, "rev-parse", "--abbrev-ref", "HEAD"); head != headBefore {
+			t.Fatalf("restoreOriginal must never run: HEAD moved from %s to %s", headBefore, head)
+		}
+	}
+}
+
+// TestReparentDowngrade_PriorBinaryFailsClosed always runs the frozen
+// v1.2.16 replay and, when a real binary is available, compares the binary's
+// control flow against it.
+func TestReparentDowngrade_PriorBinaryFailsClosed(t *testing.T) {
+	_ = "asserts AC-082"
+	assertReparentMatrixBehavior(t, "T-070", "v1216-downgrade-six-legs")
+	assertReparentDowngradeLimitations(t)
+	prior := acquireDowngradeBinaryFor(t, reparentDowngradeTag)
+	if prior.path == "" {
+		t.Logf("reparent downgrade evidence uses the frozen replay fallback (%s)", prior.note)
+	} else {
+		t.Logf("reparent downgrade evidence uses %s (%s) plus the frozen fidelity oracle", prior.path, prior.note)
+	}
+
+	func(t *testing.T) {
+		f := newReparentCustomerExternal(t)
+		st := reparentPlantState(t, f, internal.ReparentStageComputing)
+		if err := internal.WriteReparentCompatArtifacts(f.Loc(), st, []string{"pr2"}); err != nil {
+			t.Fatal(err)
+		}
+
+		// The loader half: every shipped release accepts only 2 and 3.
+		if _, err := internal.LoadSyncRunState(f.FeaturePath); err == nil {
+			t.Fatal("a shipped LoadSyncRunState must refuse state_version 4")
+		} else if !strings.Contains(err.Error(), "unsupported scoped sync state version 4") {
+			t.Fatalf("the loader must fail closed with its own sentence, got %v", err)
+		}
+
+		// The loader assertions above are a SUPPLEMENT; the prior binary below
+		// is the evidence.
+		refsBefore := reparentDowngradeRefs(t, f)
+		for _, verb := range []string{"plain", "continue", "abort"} {
+			t.Run(verb, func(t *testing.T) {
+				harness, harnessArgv := frozenReparentDowngradeOutcome(t, f, verb)
+				assertFrozenReparentDowngradeOutcome(t, f, verb, harness, refsBefore, "")
+				assertNoDowngradeRebaseAbort(t, harnessArgv)
+				if prior.path == "" {
+					return
+				}
+				args := []string{"sync", f.Feature}
+				switch verb {
+				case "continue":
+					args = append(args, "--continue")
+				case "abort":
+					args = append(args, "--abort")
+				}
+				stdout, stderr, exit, gitArgv := runPriorBinaryWithGitTrace(t, prior.path, f.Repo, args...)
+				binary := downgradeOutcome{failed: exit != 0, message: strings.TrimSpace(stderr + stdout)}
+				assertFrozenReparentDowngradeOutcome(t, f, verb, binary, refsBefore, "")
+				assertNoDowngradeRebaseAbort(t, gitArgv)
+				if binary.failed != harness.failed ||
+					!strings.Contains(binary.message, "unsupported scoped sync state version 4") {
+					t.Fatalf("binary/frozen fidelity mismatch:\nbinary: %+v\nfrozen: %+v", binary, harness)
+				}
+			})
+		}
+	}(t)
+
+	func(t *testing.T) {
+		f := newReparentCustomerCheckout(t)
+		st := reparentPlantState(t, f, internal.ReparentStageComputing)
+		if err := internal.WriteReparentCompatArtifacts(f.Loc(), st, []string{"pr2"}); err != nil {
+			t.Fatal(err)
+		}
+
+		// The loader half: AbortCheckoutSync performs NO version check, so the
+		// compatibility transaction is written to be undecodable. That is what
+		// makes it return before the lock, before `git rebase --abort`, before
+		// restoreOriginal and before deleting anything.
+		if _, err := internal.LoadCheckoutTransaction(f.FeaturePath); err == nil {
+			t.Fatal("the compatibility transaction must be undecodable to a shipped loader")
+		}
+		if !internal.HasCheckoutTransaction(f.FeaturePath) {
+			t.Fatal("a shipped plain sync must still observe the transaction and refuse")
+		}
+
+		refsBefore := reparentDowngradeRefs(t, f)
+		headBefore := f.reparentGit(f.Repo, "rev-parse", "--abbrev-ref", "HEAD")
+		for _, verb := range []string{"plain", "continue", "abort"} {
+			t.Run(verb, func(t *testing.T) {
+				harness, harnessArgv := frozenReparentDowngradeOutcome(t, f, verb)
+				assertFrozenReparentDowngradeOutcome(t, f, verb, harness, refsBefore, headBefore)
+				assertNoDowngradeRebaseAbort(t, harnessArgv)
+				if prior.path == "" {
+					return
+				}
+				args := []string{"sync", f.Feature}
+				switch verb {
+				case "continue":
+					args = append(args, "--continue")
+				case "abort":
+					args = append(args, "--abort")
+				}
+				featureLock := internal.CheckoutLockPath(f.FeaturePath)
+				globalLock := internal.CheckoutMutationLockPath(f.Loc().CheckoutStateDir)
+				featureBefore := snapshotDowngradePath(t, featureLock)
+				globalBefore := snapshotDowngradePath(t, globalLock)
+				stdout, stderr, exit, gitArgv := runPriorBinaryWithGitTrace(t, prior.path, f.Repo, args...)
+				binary := downgradeOutcome{failed: exit != 0, message: strings.TrimSpace(stderr + stdout)}
+				assertFrozenReparentDowngradeOutcome(t, f, verb, binary, refsBefore, headBefore)
+				assertNoDowngradeRebaseAbort(t, gitArgv)
+				assertDowngradePathUnchanged(t, featureLock, featureBefore)
+				assertDowngradePathUnchanged(t, globalLock, globalBefore)
+				if verb == "plain" {
+					assertExactPriorCheckoutPlainRefusal(t, binary.message)
+				}
+				if binary.failed != harness.failed {
+					t.Fatalf("binary/frozen fidelity mismatch:\nbinary: %+v\nfrozen: %+v", binary, harness)
+				}
+			})
+		}
+	}(t)
+}
+
+func TestReparentDowngrade_LimitationsAreExplicit(t *testing.T) {
+	assertReparentDowngradeLimitations(t)
+}
+
+func assertReparentDowngradeLimitations(t *testing.T) {
+	t.Helper()
+	visibility := map[string]bool{
+		"external-same-feature-after-envelope": true,
+		"checkout-same-feature-after-envelope": true,
+		"artifact-before-compat-window-1":      false,
+		"checkout-workspace-global-lock":       false,
+		"checkout-unrelated-feature":           false,
+		"external-top-level-push":              false,
+	}
+	want := map[string]bool{
+		"external-same-feature-after-envelope": true,
+		"checkout-same-feature-after-envelope": true,
+		"artifact-before-compat-window-1":      false,
+		"checkout-workspace-global-lock":       false,
+		"checkout-unrelated-feature":           false,
+		"external-top-level-push":              false,
+	}
+	if !reflect.DeepEqual(visibility, want) {
+		t.Fatalf("v1.2.16 downgrade visibility = %+v, want %+v", visibility, want)
+	}
+	for _, rel := range []string{
+		".tpatch/features/safe-reparent-restack/spec.md",
+		".tpatch/features/safe-reparent-restack/exploration.md",
+	} {
+		content := normalizeProse(readRepoDoc(t, rel))
+		for _, claim := range []string{
+			"same-feature",
+			"window 1",
+			"workspace-global",
+			"top-level",
+			"must not use an older tws while any reparent is active or recoverable",
+		} {
+			if !strings.Contains(content, claim) {
+				t.Errorf("%s must state downgrade limitation %q", rel, claim)
+			}
+		}
+	}
+}
+
+// reparentDowngradeRefs snapshots every local branch, so "moved no ref" is a
+// byte comparison rather than a spot check.
+func reparentDowngradeRefs(t *testing.T, f *reparentFixture) string {
+	t.Helper()
+	return f.reparentGit(f.Repo, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/")
 }

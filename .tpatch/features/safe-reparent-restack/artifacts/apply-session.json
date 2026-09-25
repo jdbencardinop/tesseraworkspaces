@@ -1,0 +1,9 @@
+{
+  "slug": "safe-reparent-restack",
+  "completed_at": "2026-09-25T23:07:08Z",
+  "base_commit": "aef6239765a9314369b641b473d8b8a72b3f3749",
+  "has_patch": true,
+  "operator_notes": "Deterministic recipe e064b4a211f42944ff79af7a40ef8fbb3b7d1f8e8c30a4d9f035afc91fd049af targets aef6239765a9314369b641b473d8b8a72b3f3749 with 51 exact base preimages and 39 absence preconditions.",
+  "validation_status": "passed",
+  "validation_notes": "Three explicit gpt-5.6-sol certifiers approved v10 c760c5e8bc5fea8ad9ea4919d7bc2afe4ddde53749f67a5b3e89f09dc9b17785. Sequential revision, parent and replay focused/package/full tests, vet, lint, build, gofmt, diff and DAG gates passed. Real execute replay twice reproduced all 90 payload files exactly; user-approved separate metadata audit preserved spec/exploration and observed only lifecycle updated_at."
+}

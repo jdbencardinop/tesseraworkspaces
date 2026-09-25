@@ -84,12 +84,12 @@ Largest relevant non-test files: `rebase_plan_build.go` 3 778, `agent_status.go`
 
 | Artifact | SHA-256 | Size |
 |---|---|---|
-| `spec.md`, **working tree** (normative for this exploration) | `dbf248f3a094304da3b27769a1bde47762a139ed6e3c71dddb338b04aa81d24f` | **203 507 B / 3 892 lines** |
+| `spec.md`, **working tree** (normative for this exploration) | `a84227dc3407b9555394250578e9bd4522146048c94564408b6a320826672de0` | **250 884 B / 4 529 lines** |
 | `spec.md`, as committed at `d39e934` | `f75680ee4378db7990b4fe5fb6bb03c1e66f333f4eeb47f6307a7cd4fafd4077` | 203 066 B / 3 888 lines |
 | `analysis.md` | — | 51 619 B / 1 275 lines |
 | `request.md` | — | 1 961 B / 8 lines |
 
-The two spec hashes differ by **26 insertions / 22 deletions** across four hunks:
+The two spec hashes differ across the reviewed corrections below:
 
 1. **§11.2 legacy-sentinel rationale** — corrected: `SaveGuardedLegacySentinel`'s compare-and-swap
    "checks only the legacy sentinel path and does not reject a v4 payload beside it; that is not the
@@ -99,8 +99,101 @@ The two spec hashes differ by **26 insertions / 22 deletions** across four hunks
    covers `tws sync --plan`, plain sync, `tws sync --continue`, and `tws sync --abort`".
 3. **§11.6b `ReclaimCheckoutLock`** — the "steals unconditionally" claim removed (§11 P-7).
 4. **AC-079 and T-067** — both now name `--plan` explicitly.
+5. **§9.11 symbolic-ref race** — the transaction uses command-level
+   `git update-ref --no-deref --stdin`; the existing ban remains on stdin
+   `option no-deref` lines.
+6. **Second-review hardening** — workspace-global checkout mutation exclusion,
+   session launch intents, native-conflict completion evidence, pre-commit
+   push refusal, all-noop commit proof, strict remote records/per-entry repos,
+   live continuation-plan blockers, retryable abort holder restoration, and
+   exact active scratch filtering.
+7. **Downgrade boundary** — v1.2.16 same-feature sync fails closed only after
+   compatibility-envelope birth. It cannot see window 1, new global locks,
+   unrelated-feature checkout reparent, or top-level push; using an older tws
+   during any active/recoverable reparent is unsupported.
+8. **Final CLI contract hardening** — every planning failure is a document;
+   identity gates precede all Git; strict same-parent no-work suppresses
+   replay-only blockers; refusal details are single-line sanitized; all six
+   observability statuses render distinctly; and the normative matrix has one
+   executable table with scenario-level accounting.
+9. **Frozen recovery certification** — checkout feature-lock owner transfer is
+   crash-decidable through the token-bound global lock; same-name remote
+   replacement preserves prior publication evidence across missing tracking
+   refs; exact pre-images cannot imply commit; dead checkout launch intents are
+   cleaned only post-lock; restored holders are redetached only from their
+   recorded branch; and T-061 asserts true compatibility-only window 2 plus
+   partial-rollback window 15 state.
+10. **Frozen CLI certification** — package TestMain sanitizes inherited Git
+    config before any test; plan JSON normalizes external payload selection to
+    `[]`; abort emits no duplicate holder line; reparent returns missing-Git
+    errors and plans an unavailable document; matrix ownership uses executable
+    assertion schemas; downgrade evidence pins exact v1.2.16 plus argv/lock
+    proofs; and full-run leaf counts are exact.
+11. **v2 CLI certification** — checkout `Repo` rejection is gated to fresh
+    explicit new-mode sync and reparent, leaving legacy/no-flag and recovery
+    byte-compatible; T-031 and T-082 own their real behaviors; package
+    `internal` gains the same pre-`m.Run` Git hygiene; and strict no-work
+    metadata is wholly unchanged.
+12. **v3 CLI/recovery certification** — exact approved limit waivers persist
+    through JIT/resume; docs execute a bounded plan/approve round trip;
+    presence-only booleans use a NUL sentinel and monotonic explicitness;
+    reparent has a PATH-level no-`-C` proof; every matrix row has canonical
+    facts; recovery validates before remote clears and re-proves pre-CAS
+    evidence; checkout identity, scratch cleanup and global-lock owner-state
+    probes fail closed.
+13. **v3 code certification** — canonical literal tokens cannot collide with
+    logical entry names; fingerprint schema v2 binds repository, context,
+    backend, checkout and holder identities; fresh admission cannot overwrite
+    crash-window-1 state; recovery confirms post-rename directory durability;
+    originally detached checkout HEADs are pinned through restoration; and
+    remote PR bases use Git branches rather than logical names.
+14. **v4 CLI certification** — unavailable plans publish nullable OID width
+    and never mislabel unknown facts as replay-computable; non-empty operator
+    destination/cutoff bytes are preserved and bound by fingerprint schema v3;
+    the v1.2.16 fallback executes frozen route logic over real artifacts; the
+    executable matrix is compared exactly with spec §17.2 and rejects duplicate
+    markers; every counted Git scenario has TestMain-enforced argv evidence;
+    and all eight docs surfaces state the qualified plan side-effect contract.
+15. **v4 recovery certification** — every mutating external sync route now
+    shares the feature guard with reparent, rechecks authoritative state after
+    acquisition, and retains guard/state through optional push; repeated abort
+    accepts an originally detached computation context already restored to its
+    recorded HEAD; and checkout launch-intent inspection/removal uses rooted
+    directory handles plus directory/file identity and exact-byte checks,
+    never following symlink or non-directory intents.
+16. **v4 code certification** — an absent checkout-global lock now scans all
+    feature recovery state before fresh admission and reconstructs only its
+    own recovery reservation; closure/destination identity uses canonical Git
+    common dirs while preserving raw repo tokens; `PlanFetch` reuses the sync
+    outcome/source/freshness/mutation semantics; abort never persists remote
+    clears; object-format failures retain `capability-unsupported`; stack
+    ancestry repo resolution is restored byte-for-byte; and owned missing
+    compatibility remains automatic recovery work.
+17. **v5 code certification** — checkout feature-directory opens now retain
+    the workspace launch intent through `openDirect`; same-common-dir repo
+    aliases are visible but refused until shipped sync readers are identity
+    aware; abort journals the exact remote restore source and target across
+    intent-only and post-rename crashes; reparent workspace resolution supports
+    external metadata/feature directories via the standard fallback without
+    `-C`; and validation compares the untracked set before/after the command.
+18. **v6 recovery certification** — conflict recovery now requires a clean
+    context plus a run-scoped native rebase completion ref; immutable approved
+    holders are separate from detachment progress and every exact detached HEAD
+    is re-proved before CAS/abort/restoration; dead checkout intents cannot
+    outlive recorded sessions; both checkout state directories are scanned;
+    supported state is known-field/semantic validated before Git or cleanup;
+    validation config is loaded from the resolved target repository; remote
+    clears are exact journaled transitions; and every cleanup removal is
+    directory-fsynced before authoritative state deletion.
+19. **v6 CLI certification follow-up** — cleanup residue accepts a
+    positively-proven post-lock push clear; external push retains its
+    workspace/default repository across secondary-first ordering; replay
+    measurement uses the normative `--no-merges --reverse` argv; descendants
+    carry unchanged parent Git-branch PR bases and cleared missing tracking is
+    `no-upstream`; and the untracked gate detects every file/directory/symlink
+    component-prefix collision in both directions.
 
-**The working-tree hash `dbf248f3…` is the one this exploration maps.** A tree hashing to
+**The working-tree spec hash `a84227dc…` is the one this exploration maps.** A tree hashing to
 `f75680ee…` is pre-correction and §11 P-7 / P-9 / §2.5 will not match it.
 
 This document's own SHA-256 cannot appear inside itself; it is reported in the delivery summary and
@@ -418,26 +511,31 @@ reparent function touches `os.Stdout`. `renderReparentDocument` / `…To` copy
 ```
  1  stackReparentValidate(cmd)                             # §3.5, pure, no Git, no workspace
  2  cmd.SilenceUsage = true
- 3  ws, err := internal.RequireWorkspace()                 # internal/workspace.go:440
+ 3  _, gitLookupErr := exec.LookPath("git")                # returned, never RequireTool/os.Exit
  4  cfg := internal.LoadConfig()                           # internal/config.go:60 (repo override :73-74)
- 5  feature := args[0]
- 6  internal.GuardFeatureName(ws.MetadataRoot, feature)    # internal/spaces.go:692
- 7  mode split:
-      external: twsRoot := internal.TwsRoot()              # internal/paths.go:77
+ 5  ws, err := internal.RequireWorkspace(); when Git is missing, a cwd-based
+    ResolveCurrentWorkspaceE fallback may still establish plan identity
+ 6  feature := args[0]
+ 7  internal.GuardFeatureName(ws.MetadataRoot, feature)    # internal/spaces.go:692
+ 8  mode split:
+      external: twsRoot := explicit TWS_ROOT when present, else ws.MetadataRoot
                 layout, err := resolveExternalSyncLayout(ws, twsRoot, feature)  # sync_modes.go:215
       checkout: featurePath, err := ws.ResolveFeaturePath(feature)              # internal/resolve.go:43
- 8  lay := internal.RebasePlanLayout{FeaturePath: …, WorktreesRoot: …, RepoRoot: ws.RepoRoot}
+ 9  lay := internal.RebasePlanLayout{FeaturePath: …, WorktreesRoot: …, RepoRoot: ws.RepoRoot}
       external: planLayout(layout)                         # sync_plan_guard.go:283
- 9  entry := args[1]   (fresh route only)
-10  fetch measurement (§3.8) happens HERE, in package cli for external
-11  hand off to internal.PlanReparent / internal.BeginReparentRun + RunReparent / …Continue / …Abort
+10  entry := args[1]   (fresh route only)
+11  missing Git: execution returns stderr error; plan renders unavailable JSON/human and exits 0
+12  fetch measurement (§3.8) happens HERE, in package cli for external
+13  hand off to internal.PlanReparent / internal.BeginReparentRun + RunReparent / …Continue / …Abort
 ```
 
 Rung 6 uses `ws.MetadataRoot` (as `stack_status.go:62` and `push.go:35` do), **not**
 `internal.TwsRoot()` (as `sync.go:113` does): `stackStatusCmd` is the correct sibling precedent for
 a `tws stack …` child, and `ws.MetadataRoot` is mode-correct in checkout mode where `TwsRoot()` is
-not. Rung 7's external arm still needs `TwsRoot()` because `resolveExternalSyncLayout`'s contract
-(`sync_modes.go:210-214`) is that `twsRoot` is the caller's own single `internal.TwsRoot()` value.
+not. The external arm does not call `TwsRoot()`: that shipped helper re-enters
+`MainRepoRootIn` and emits hidden `git -C`. Reparent uses the already resolved
+workspace metadata root, while honoring an explicit `TWS_ROOT`, and leaves
+sync's caller/argv behavior unchanged.
 
 `ws.ResolveFeaturePath` (`internal/resolve.go:43`) is the checkout resolver;
 `RequireFeaturePath` (`internal/resolve.go:294`) re-enters `RequireWorkspace` + `GuardFeatureName`
@@ -538,8 +636,11 @@ Refusal text (§11.2), one line:
 a stack reparent is in progress for "<feature>" (run <run-id>, stage <stage>); finish it with: tws stack reparent <feature> --continue
 ```
 
-`tws push` (`internal/cli/push.go:24-46`) gets **no** such precheck: §12.4/§12.4a give the push paths
-their own record-driven behaviour, and §14.1 freezes push output absent a record.
+Real top-level external `tws push` takes the same feature mutation guard as
+external sync/reparent before it loads the stack or record and holds it through
+the whole entry loop. The guard is silent and token-bound on release, so §12.4
+still owns the operator-visible behaviour and §14.1's no-record bytes remain
+frozen. Dry-run remains write-free and takes no guard.
 
 ### 2.6 Where the authoritative artifact wins over its own compatibility files
 
@@ -656,7 +757,14 @@ before comparison — load-bearing for annotated tags, because `gitResolveRef`
 (`internal/checkout_sync.go:422`) does a bare `rev-parse` and observes the **tag object** OID while
 the normalized answer must be the peeled commit. Divergence refuses
 `destination-resolver-divergent` (rank 17). `ResolveSyncBase` and `stackBaseRef` are called
-**unmodified**.
+with shipped behavior unchanged: `ResolveSyncBase` now delegates its token
+decision to pure `ResolveSyncBaseWithDefaultBranch`, while reparent supplies a
+default branch measured through `runReparentGit` and never emits `-C`.
+
+Before those four answers are compared, a literal full-ref or raw-OID stored
+token that equals any `StackEntry.Name` refuses
+`destination-resolver-divergent`, even at an equal current OID. Entry-first
+readers would otherwise reinterpret the stored edge after that entry moves.
 
 ### 3.3 Stable closure order
 
@@ -717,13 +825,28 @@ and §14.2 item 10 states the pairing as a product fact. `internal/stack_test.go
 sync-activity probe. Call it once per affected entry and attribute its two failure classes to the
 right kinds (`session-live` vs `sync-state-present`); re-implement neither.
 
+Production closure construction resolves and caches canonical Git common-dir
+identity for each distinct repository context before it builds edges.
+Exact raw-equal repo tokens remain ordinary candidate edges; any raw-different
+canonical-path, symlink, `..`, or whitespace aliases with one common dir stay
+visible in the closure but raise `destination-resolver-divergent`, because
+shipped sync readers still use raw `SameStackRepo`. Genuine
+different-common-dir lookalikes remain unrelated. Raw `Repo` bytes are never
+rewritten. The pure `ReparentClosureOrder` helper stays available, while
+production uses `ReparentClosureOrderByRepoIdentity`.
+
 ### 3.5 Schema and render
 
 `internal/reparent_plan.go` **NEW** declares, in §7.3 order, `ReparentPlan` with **exactly 25**
 fields; `ReparentPlanRow` **23**; `ReparentPlanSummary` **11**; `ReparentPlanApprovalCovers` **8**.
 Counts are asserted by AC-041/T-031 with a reflect-based key-order test;
 `internal/rebase_plan_test.go` already owns the analogous assertion for `RebasePlan` and is the
-shape to copy.
+shape to copy. `ReparentPlanPolicy.OIDWidth` is `*int`: resolved documents
+publish 40/64, while unavailable JSON publishes `null` and human output
+publishes `unknown`, never zero. A failed/unsupported object-format probe keeps
+the typed `capability-unsupported` blocker rather than becoming
+`probe-failed` or assuming SHA-1. Raw non-empty `--onto`/`--cutoff` bytes pass
+unchanged through resolution and are bound by fingerprint schema v3.
 
 **Reused verbatim (§7.2), resolved to declaring file:**
 
@@ -745,8 +868,23 @@ shape to copy.
 `internal/reparent_plan_render.go` **NEW**: `FormatReparentPlan` / `MarshalReparentPlan` mirror
 `FormatRebasePlan` (`internal/rebase_plan_render.go:39`) and `MarshalRebasePlan` (`:383`) — one
 compact JSON value plus exactly one `\n`, HTML-unescaped. **Reuse `ensureSlice[T]`**
-(`internal/rebase_plan_render.go:440`) for array normalization. Deferred cells (§7.5a) render as the
-literal `(computed at replay)`.
+(`internal/rebase_plan_render.go:440`) for array normalization.
+Descendant-derived deferred cells (§7.5a) render as the literal
+`(computed at replay)`; unavailable facts render `unavailable`/`unknown`, and
+ordinary plan-only execution identity renders `not assigned`.
+
+Reparent's `PlanFetch` projection delegates to the existing sync-domain
+helpers: policy source is `flag | route-default | persisted-transaction`,
+no-fetch has null suppression and `freshness: local-only`, measured repo rows
+copy every context/candidate/effect/result field, and a failed contacting fetch
+is `failed`/`possibly-stale` with unknown mutation facts.
+
+`ResolveReparentWorkspace` mirrors `RequireWorkspace`'s repository-first then
+`DetectWorkspaceRoot`/external-inference fallback. The inference algorithm is
+shared through a resolver callback, so ordinary commands retain
+`MainRepoRootIn` while reparent uses `runReparentGit` with `Cmd.Dir`. Plans
+therefore work from the external workspace root and feature directory without
+introducing `git -C`.
 
 Goldens: `internal/cli/testdata/reparent/plan_human.txt`, `.../reparent_help.txt`,
 `.../stack_help.txt` — three new files in a new fourth testdata tree.
@@ -764,7 +902,7 @@ New constants (own domain, §7.13):
 ```go
 reparentFingerprintPrefix             = "tws-reparent-fp\x00"
 reparentFingerprintEncodingVersion    = 0x0001
-reparentFingerprintTupleSchemaVersion = 0x0001
+reparentFingerprintTupleSchemaVersion = 0x0003
 ```
 
 The sync domain (`planFingerprintPrefix = "tws-plan-fp\x00"`, encoding `0x0001`, tuple schema
@@ -774,6 +912,15 @@ fields, then a length-framed root STRUCT. The **33** field ids of §7.13 get the
 the existing doc table at `:172`. `PlanFingerprint` (`:298`) and `PlanFingerprintPreimage` (`:313`)
 stay untouched. `null` (`:80`) is what §7.5a's "explicit absence, never a guess" compiles to: every
 deferred cell is written with `enc.null(fieldID)`, never omitted.
+
+Schema v3 keeps 33 top-level fields, retains schema v2's identity binding, and
+also binds the raw requested destination in field 7 plus each row's raw
+supplied cutoff in field 22. Schema v2 enriched field 7 with canonical target
+repository/context identity, field 20 with every row's repo/context identity,
+and field 32 with ref backend, original checkout identity, and canonical
+sorted holder path/branch/HEAD/kind/action tuples. Context IDs hash canonical
+repository root plus NUL plus canonical common-dir. Post-lock comparisons
+remain a second defense over the same facts.
 
 **Resolved: `RevalidationDigest` is NOT reusable; add a reparent-owned digest.** The shipped
 signature is `func RevalidationDigest(entry PlanEntry) (string, error)`
@@ -946,6 +1093,10 @@ per-repository override at `:73-74`, so `policy.validation.source`
 (`internal/config.go:16`, `yaml:"test_command"`). `ValidationDigest`
 (`internal/rebase_plan_guard.go:219`) and `PlanValidationIdentity` (`:207`) are reused for
 `command_digest`. This construction is pure and lives in `internal`.
+Execution snapshots `git ls-files --others --exclude-standard` immediately
+before each validation command. After the command, every tracked modification
+still refuses, but only untracked paths absent from that snapshot count as new
+residue; an allowed preexisting checkout untracked path may remain or change.
 
 **Capabilities.** `GitCapabilities` (`internal/git_capability.go:95`) is the closed six-gate table;
 §9.10 and §14.1 forbid extending it. `CapRebaseUpdateRefs` (Git ≥ 2.38) is the required floor.
@@ -980,15 +1131,20 @@ internal/cli/stack_reparent.go  RunE (fresh execution)
   |      internal/reparent_exec.go
   |      3  acquireReparentModeLock(mode, featurePath)
   |             external: ClaimSyncRunGuard (internal/sync_run_state.go:246)
-  |             checkout: AcquireCheckoutLock (internal/checkout_sync.go:287)
-  |                       -- fresh route only; recovery uses ReclaimCheckoutLock (§4.10)
-  |      4  resnapshotAndCompareFingerprint(...)      §8.5 steps 1-5
+  |             checkout: acquire token-bound workspace-global mutation lock,
+  |                       then AcquireCheckoutLock (internal/checkout_sync.go:287);
+  |                       recovery reclaims both in that order (§4.10)
+  |             external guard is now visible to every external launch
+  |      4  clean only provably dead session launch intents; then
+  |         resnapshotAndCompareFingerprint(...)      §8.5 steps 1-5
   |             re-read stack.yaml + SHA-256; re-resolve every row tip,
   |             the pinned destination and every cutoff; re-run the
-  |             session-liveness probes; rebuild the plan; re-compute and
-  |             compare the fingerprint. Mismatch -> plan-guard:
+  |             session-liveness probes; explicitly compare canonical target
+  |             repo/common-dir plus holder path/branch/HEAD/action; rebuild
+  |             the plan; re-compute and compare the fingerprint. Mismatch -> plan-guard:
   |             revalidation-mismatch: state-preserved:, release the lock,
-  |             leave NOTHING behind. Newly live session -> session-live.
+  |             leave NOTHING behind. Newly live direct/tmux/all session or
+  |             unverifiable launch intent -> session-live.
   |      5  captureReparentPreImage(...)              §11.4 step 5 / §11.5
   |             every closure row's branch SHA; the EXACT stack.yaml bytes
   |             + SHA-256; every holder path/branch/HEAD; original_branch,
@@ -1002,15 +1158,76 @@ internal/cli/stack_reparent.go  RunE (fresh execution)
   |-- internal.RunReparent(...) ................................. first mutation onward
 ```
 
+The plan route has a document boundary around both pre-fetch repository
+resolution and `PlanReparent`: any measurement/plannability error is converted
+with `BuildUnavailableReparentPlan` and rendered with exit 0. Immediately after
+stack decode, duplicate Name then duplicate GitBranch gates run before target,
+closure, topology, fetch or Git. A strict current same-parent verdict then
+suppresses cutoff/replay/merge/capability-only blockers.
+`BuildReparentPlan` normalizes
+`state.files.external_run_payload.selected` through `ensureSlice`, so fresh
+external, checkout/non-applicable and unavailable documents all encode `[]`,
+never `null`.
+
+`PlanReparentContinue` and recovery execution share one read-only affected-ref
+assessment: require direct `refs/heads/*` before the commit point, classify
+planned/pre-image/no-op/foreign, and infer a commit point when the post-image
+is present and every non-exact live ref descends from its planned tip. Exact
+pre-image values are never descendant-based commit evidence: the planned tip
+may already be their ancestor before the forward CAS has run. The
+plan also runs SessionProbe, reads conflict state, and projects missing owned
+compatibility plus completed residue as automatic repair/cleanup rather than
+fatal blockers. Pending rows remain under their JIT digest/limit assessment.
+The plan never persists the monotonic marker or repairs files; execution does.
+
+Strict current same-parent no-work bypasses the ordinary metadata recipe:
+every target/descendant row publishes identical before/after Base and
+LastBaseSHA values, source `unchanged`, and `changed: false`; there is no
+deferred descendant cell, expected post-image hash, or known post-image. The
+human formatter prints `stack.yaml after: unchanged`.
+
+An approved over-limit fresh plan persists both waived evaluation IDs and
+waived limit kinds in authoritative state. JIT/resume require both to match
+and require the approved digest to remain exact; changed counts/digests still
+refuse revalidation, while a newly resolved unwaived exceedance refuses its
+limit kind.
+
 `--continue` and `--abort` enter through `internal.ContinueReparent` / `internal.AbortReparent`,
-which **skip steps 4–7** (no token, no re-approval, no re-capture) and instead reclaim the lock,
-load the authoritative artifact, and re-enter at `resume_stage` (§4.8). §11.2a is the only path that
-may re-create a missing compatibility artifact, and only after its four proofs.
+which **skip re-approval and re-capture**, reclaim the lock, clean only
+provably dead launch intents, rerun `SessionProbe`, load the authoritative
+artifact, and re-enter at `resume_stage` (§4.8). §11.2a is the only path that
+may re-create a missing compatibility artifact, and only after its proofs.
 
 Crash-window mapping for this ladder (§11.9): **window 1** = crash between step 6 and step 7
 (artifact at `initializing`, no compatibility artifacts, nothing mutated) → `--continue` completes
 step 7 under §11.2a, `--abort` removes the artifact and any pins. **Window 2** = crash after step 7,
-nothing computed. Both are exercised by T-061.
+nothing computed, with the compatibility envelope complete but before any scratch/context exists.
+Both are exercised by T-061 with concrete state/artifact assertions rather than a function-pointer
+claim.
+Fresh entry checks authoritative state both before and immediately after mode
+lock acquisition. Therefore a dead external guard beside window-1 state is
+recoverable ownership, not an orphan a second fresh run may reclaim; state and
+the captured prior remote record remain byte-identical.
+Window 4 includes the sub-window where Git has created rebase state but the
+`conflict-paused` write did not happen; computing-entry detection reconciles
+the first pending row durably before continue/abort proceeds.
+
+All `ReparentRefusalError` construction and rendering passes through one CR/LF
+sanitizer. Conflict pause remains the sole dedicated multiline block; holder
+deferral always uses `reparent: holder-restore-deferred:` and package cli adds
+no second unanchored abort summary.
+
+The checkout sync `validateCheckoutStackRepos` call remains on fresh
+`opts.NewMode` only. Legacy/no-flag fresh sync and both recovery verbs bypass
+it, preserving transactions created when checkout sync ignored
+`StackEntry.Repo`; reparent keeps its stricter all-stack rejection.
+
+Recovery takes ownership and then validates the live stack hash plus every ref
+before applying local remote-record clears. Immediately before the ref CAS it
+re-proves the current run's record entries or an absent empty proof. Checkout
+identity measurement accepts symbolic-ref exit 1 only as detached and requires
+a nonempty HEAD. Scratch cleanup treats only ENOENT as absent and runs before
+pin deletion so stat/remove/prune failures retain state, pins and locks.
 
 ### 4.1 The buffered Dir-based runner
 
@@ -1022,6 +1239,11 @@ that remains in package `cli` and delegates to `fetchQuietTo`:
 `--stdin` payload and §18 item 13's no-TTY rule); exit code via the existing `gitExitCode`
 (`internal/rebase_plan_probe.go:63`); an `argv.log` hook for cheap audits.
 `reparentIsAncestor` (§1.3) replaces `mergeBaseIsAncestor` inside the boundary.
+`ResolveSyncBaseWithDefaultBranch` is the extracted pure token resolver;
+shipped `ResolveSyncBase` still measures its default branch exactly as before,
+while reparent supplies a Dir-measured value. Reparent also uses Dir-based
+workspace/common-dir, ancestry and worktree-inventory probes. A PATH shim
+asserts every Git process in a full plan+execution contains no `-C`.
 
 ### 4.2 External scratch vs checkout single checkout
 
@@ -1058,7 +1280,9 @@ therefore appears in porcelain output. Every consumer of `BuildWorktreeInventory
 (`internal/agent_status.go:527`, parser `:538`) MUST exclude the run's **recorded `scratch_path`**:
 the holder projection (§4.9), the `tws status` worktree rows, `tws doctor`/`tws list`, and any
 adoption scan. The exclusion is applied by reparent-aware callers, never inside
-`BuildWorktreeInventory` itself, which stays frozen.
+`BuildWorktreeInventory` itself, which stays frozen. This is an exact
+active-state join, not prefix filtering: without an authoritative
+`scratch_path`, a user worktree such as `~/.reparent-lab/...` remains visible.
 
 ### 4.3 JIT destinations and the untracked gate
 
@@ -1113,7 +1337,7 @@ pins survive until `cleanup`, across conflict pauses, validation failures, crash
 One invocation, `Dir = repoRoot`, stdin from a buffer:
 
 ```
-git update-ref -m "tws reparent <feature> <target> <run-id>" --stdin
+git update-ref --no-deref -m "tws reparent <feature> <target> <run-id>" --stdin
 start
 update refs/heads/<row 1 branch> <new 1> <old 1>
 verify refs/heads/<no-op row branch> <old value>
@@ -1128,7 +1352,8 @@ commit
   emit `update <ref> X X`;
 - an all-no-op closure still runs `start`/ordered `verify`s/`prepare`/`commit` — the verification is
   the race barrier;
-- no `create`, no `delete`, no `option no-deref`, no ref outside the closure;
+- command-level `--no-deref` is required to close a symbolic-ref race; no
+  `create`, no `delete`, no stdin `option no-deref`, no ref outside the closure;
 - **both** child streams captured — precisely why `RunDirTo` is insufficient (it would inherit
   `os.Stdin` and could not carry the payload);
 - a failed `prepare` refuses `ref-transaction-mismatch` (rank 43) **after** attempting to re-attach
@@ -1224,13 +1449,21 @@ name, git_branch, repo, role, `preimage_sha`, `cutoff_sha`, `cutoff_provenance`,
 write; `cas_rows[]`, `abort_rows[]`, `remote_record_written` and `remote_followup_entries[]` as they
 occur.
 
+When a post-rename fault leaves expected bytes visible without a durable
+success marker, recovery fsyncs the parent directory before advancing:
+authoritative state, forward post-image, abort pre-image, and complete
+external/checkout compatibility envelopes all use this confirmation.
+
 `stack_before_base64`/`stack_after_base64` carry the **exact bytes**, not a re-marshalled struct.
 
 **Monotonic `commit_point_reached`.** Set durably the instant §11.8a's conjunction first holds —
 the exact post-image bytes durable in `stack.yaml` (SHA-256 == `stack_sha256_after_expected`)
 **and** every affected ref classifying `planned tip` or `no-op` — and **never cleared**, even if an
 operator later advances a branch. A live ref that is a *descendant* of its planned tip is also
-sufficient evidence and the movement is reported informationally; a ref *unrelated* to its planned
+sufficient evidence only when it is a distinct foreign value, not the exact
+pre-image; the movement is then reported informationally. A planned tip can
+already be an ancestor of the pre-image before the CAS, so
+`ReparentRefPreimage` always remains pre-commit. A ref *unrelated* to its planned
 tip cannot establish the commit point and remains a pre-commit
 `ref-foreign-value`/`abort-foreign-value` refusal. A crash after the metadata rename but before the
 marker update is recovered by re-evaluating the conjunction from disk.
@@ -1267,13 +1500,29 @@ crashed abort resumes idempotently. The verify lines close the race between the 
 Step 3's **re-detach of already-restored holders** is load-bearing and easy to miss: a holder
 restored by a completed `restoring-holders` stage is attached to a branch the rollback is about to
 move, and moving a ref out from under an attached worktree leaves its index and HEAD inconsistent.
+Before persisting the redetach intent, execution requires the live symbolic
+branch to equal the recorded holder `git_branch`. A clean operator switch to
+another branch is refused as `holder-unsafe`; tws neither detaches that branch
+nor moves an affected ref.
+
+The computation-context exception is an originally detached checkout already
+restored to the exact recorded `OriginalHead`: no affected branch is attached,
+so a repeated abort after a restore-before-cleanup crash treats that state as
+already safe and proceeds idempotently.
+
+An originally detached checkout also gets
+`refs/tws/reparent/<run-id>/original-head` before the first switch. Recovery
+verifies or recreates it, and cleanup removes it only after success/abort has
+restored the checkout. Aggressive reflog expiry and `git gc --prune=now`
+therefore cannot strand an otherwise unreachable original HEAD.
 
 **All 17 crash windows of §11.9** must be exercised for both verbs, each run twice (T-061/AC-074):
 1 artifact-without-compat · 2 compat-written-nothing-computed · 3 scratch-created ·
 4 mid-row conflict · 5 computed-not-pinned · 6 pinned-not-validated · 7 all-computed-no-post-image ·
 8 post-image-no-record · 9 record-no-CAS · 10 CAS-prepare-failed · 11 files-backend-partial-commit ·
 12 CAS-committed-metadata-unwritten · 13 metadata-written-holders-unrestored ·
-14 holders-restored-cleanup-incomplete · 15 mid-abort · 16 operator ref move **before** the commit
+14 holders-restored-cleanup-incomplete · 15 mid-abort with one durable
+`abort_rows[]` restoration and another ref still planned · 16 operator ref move **before** the commit
 point · 17 operator ref advance **after** the commit point.
 
 ### 4.9 Holders and the worktree inventory filter
@@ -1300,10 +1549,22 @@ reparent-specific filters layer **on top**, never inside it:
    published as `holders.preimage_holder_excluded`. Without this exclusion **every** checkout-mode
    run refuses `holder-unsafe`.
 
+The computation-context intent records the actual switch target separately.
+For an initially detached checkout, recovery seeing HEAD still at
+`original_head` means the crash happened after intent persistence but before
+`git switch --detach`; continue retries and abort restores idempotently.
+
 A post-commit-point restore failure warns `holder-restore-deferred` (never the refusal
 `holder-unsafe`), is persisted, and is re-attempted by a later `--continue` (AC-096).
 
 ### 4.10 Compatibility artifacts, locks, and old-binary downgrade
+
+This is a bounded compatibility envelope, not universal old-binary exclusion.
+Current tws owns the workspace-global/session/push locks. Released v1.2.16 sees
+only same-feature shipped sync artifacts after steps 2-3 below; it cannot see
+the authoritative-artifact-before-compat window or new lock paths. Moving a
+legacy sentinel before authoritative state would create an unowned
+sentinel-only crash window and is rejected.
 
 **External**, in this exact order (§11.2), all after the authoritative artifact (§4.0 step 6):
 
@@ -1325,6 +1586,19 @@ other than 2 (`:21`) or 3 (`:25`) by design, and `LoadSyncRunState` (`:131`) in 
 accepts only those two, which is what makes an old binary emit
 `unsupported scoped sync state version 4`.
 
+The same guard now closes the reverse direction for **every mutating external
+sync route**, including legacy/no-flag and recovery. Each route claims or
+reclaims it, rechecks authoritative reparent state, and keeps it through
+rebase/metadata, optional push, remote-follow-up clearing, and sync teardown.
+Legacy/no-flag ownership is transient and leaves its frozen output/argv/state
+shape unchanged. Guarded legacy/scoped state is cleared only after push.
+
+An owned missing compatibility envelope remains automatic recovery work:
+continuation planning reports it as repairable, `--continue` reconstructs it
+only after the authoritative ownership/ref/metadata proofs, and `--abort`
+does not recreate it. `compat-artifact-missing` is not emitted merely because
+owned files are absent.
+
 **`SaveGuardedLegacySentinel` — corrected rationale (§11 P-9).** The sentinel is likewise serialized
 and written by the reparent-owned writer, but **not** because
 `SaveGuardedLegacySentinel`'s compare-and-swap rejects an adjacent v4 payload. Measured:
@@ -1344,9 +1618,11 @@ reparent identity, and writes durably at mode `0644`.
 
 **Checkout** (§11.2):
 
-1. lock via `AcquireCheckoutLock(featurePath)` (`internal/checkout_sync.go:287`) for
+1. current tws first takes the new workspace-global checkout mutation lock,
+   which v1.2.16 does not read;
+2. lock via `AcquireCheckoutLock(featurePath)` (`internal/checkout_sync.go:287`) for
    `CheckoutLockPath(featurePath)` (`:122`) on the **fresh** route;
-2. `CheckoutTransactionPath(featurePath)` (`:118`) written as a **deliberately undecodable**
+3. `CheckoutTransactionPath(featurePath)` (`:118`) written as a **deliberately undecodable**
    compatibility transaction: `state_version: "4-reparent"` — a **string** where every shipped binary
    declares an `int` — plus `route`, `feature`, `reparent_run_id`,
    `reparent_marker: tws-reparent-compat-v1`, and both limits. Mode `0600`, `durableWriteFile`.
@@ -1363,6 +1639,27 @@ Verified against shipped control flow, which is exactly why a string is used:
 New reparent code MUST NOT parse this file as a `CheckoutTransaction` (`:64`); it detects its own run
 by reading raw YAML and matching `reparent_marker`. The real `original_branch`/`original_head` live
 **only** in the authoritative artifact (§11.5).
+
+Recovery has one extra crash-decision case because `CheckoutLockPath` stores
+only `LockInfo.PID`: it may rewrite that feature lock and crash before saving
+the new authoritative `owner_pid`. A later recovery accepts the dead
+transferred PID only when the concurrently present workspace-global lock has
+that same PID and exactly matches the authoritative owner token, feature,
+`operation: reparent`, and state path. A live PID or any identity/token/path
+mismatch remains foreign, so this does not generalize into stealing arbitrary
+dead feature locks.
+
+The global-lock primitive also handles pre-upgrade orphan state. After a fresh
+O_EXCL reservation it scans the workspace state directory for every
+`*-checkout-sync.yaml` and `*-reparent.v1.yaml`; any record or unverifiable
+entry releases only that new token-owned reservation and refuses. Recovery
+performs the same scan while allowing exactly its authoritative state path and,
+for reparent, its same-feature compatibility transaction, so an absent global
+lock is safely reconstructed without admitting a second feature's mutation.
+
+Consequently the shipped-binary proof is same-feature only. An old checkout
+command for another feature, and old top-level external push, are outside the
+released observer set and MUST NOT be run while reparent state is recoverable.
 
 **`ReclaimCheckoutLock` — typed verdict, not a trivial wrapper (§11 P-7).** Measured
 `forceAcquireCheckoutLock` (`internal/checkout_sync.go:364-389`): `MkdirAll` the lock dir →
@@ -1398,6 +1695,13 @@ currently steals live locks**. Route assignment: a **fresh** reparent execution 
 `…cannot steal live lock`); **recovery** routes (`--continue`, `--abort`) use
 `ReclaimCheckoutLock`. `ReleaseCheckoutLock` (`:353`) is a bare `os.Remove`.
 
+Checkout session intents use the same fail-closed split as external intents:
+only `ENOENT` or a valid, provably dead owner is non-blocking to planning;
+malformed/stat/read/liveness-unknown cases remain `session-live`. Planning
+never cleans. Fresh execution and recovery, after taking the workspace-global
+mutation lock, re-read the exact owner bytes, prove the PID dead, compare the
+bytes again, and remove only that intent before the final `SessionProbe`.
+
 ### 4.11 Cleanup order
 
 §11.6a, tolerant of any step already being done, artifact **last**:
@@ -1430,8 +1734,15 @@ item 6).
 
 **Rule R-PUSH edits, per path (smallest coherent):**
 
-- **`pushEntries` (`:123-153`)** — load the record once **before** the loop; run the invocation-wide
-  preflight (§12.4 rule 2) before the first real push; inside the loop, for a pending entry print the
+- **Top-level external `tws push`** — a wrapper acquires the token-bound shared
+  feature mutation guard before `LoadStack`, retains it across preflight and
+  every entry, and releases by byte/token ownership. External sync-owned calls
+  continue using their existing guard/compatibility envelope and do not
+  recursively acquire it.
+- **`pushEntries` (`:123-153`)** — while the caller's mutation lock is held,
+  evaluate/persist local clears, reload the envelope, then run invocation-wide
+  preflight before the first real push; dry-run applies the same clears only to
+  its in-memory envelope. Inside the loop, for a remaining pending entry print the
   `reparent-remote:` line on stderr and swap `:144`'s argv for
   `"git","push","--force-with-lease","--force-if-includes","origin",entry.GitBranch()`. The
   **dry-run branch at `:133-136` gets §12.4a**: the same warning line on stderr, the preview text
@@ -1440,8 +1751,8 @@ item 6).
   refusal, exit 0 and **no write**. `:134` currently uses `fmt.Printf` (stdout); the new warning goes
   to **stderr** while the `[~]` preview keeps its current stream, so the no-record golden is
   byte-identical.
-- **`pushScoped` (`:70-121`)** — same record load and invocation-wide preflight before the loop; argv
-  swap at `:103`. It has **no** dry-run branch and gains none.
+- **`pushScoped` (`:70-121`)** — same clear/reload/preflight order under the
+  sync-owned guard; argv swap at `:103`. It has **no** dry-run branch.
 - **`gitPush` (`internal/checkout_sync.go:540`) is edited directly** — §15 says
   "`internal/checkout_sync.go`  rule R-PUSH in gitPush", and that is the normative instruction. A
   sibling function would leave both shipped call sites (`:1628`, `:1645`) on the old argv and the
@@ -1458,7 +1769,7 @@ item 6).
   ```
 
   Both call sites pass a per-branch decision computed from the record, and the
-  **invocation-wide preflight runs above each loop** — once before the normal push loop containing
+  the clear/reload pass and **invocation-wide preflight run above each loop** — once before the normal push loop containing
   `:1628` and once before the retry path containing `:1645` — never per entry, because pushing half
   a stack and then discovering the lease cannot be strengthened is exactly what §12.4 rule 2
   prevents. With no record, both sites pass the zero value and the argv, the output and the exit
@@ -1489,6 +1800,34 @@ every real push path, every push-enabled sync, and a fresh reparent execution or
 `ReparentPlan` may read it only to publish `remote-followup-pending`. That warning MUST NOT be added
 to `RebasePlan`, whose warning domain is frozen at eight members (§14.1, AC-042).
 
+`MergeReparentRemoteRecord` replaces same-name topology with the newest run,
+but an incoming row cleared only because its tracking ref is missing carries
+forward an older pending row's non-empty `remote_sha_at_write`. This avoids a
+temporary local observation discarding already-published evidence. Positive
+§12.5 clearing still wins; pre-commit abort restores the previous record bytes
+exactly, while a committed replacement retains the strengthened next-push
+lease until fetch/push proves a clear.
+
+The shared recovery prelude validates the record for both verbs but persists
+clears only for `--continue`. `--abort` first selects its rollback or
+forward-only arm without changing remote protection: pre-commit abort restores
+the captured prior bytes, and post-commit abort leaves the current record
+byte-identical through cleanup.
+
+Pre-commit remote restoration is itself journaled:
+`remote_record_restore_pending` and the exact live source bytes/absence are
+saved before restoring exact captured bytes or captured absence. The source is
+admitted only when it is the captured prior image, this run's record, or
+monotonic clear progress this run could have persisted into the prior record.
+Retry accepts only that exact source or the exact target, confirms directory
+durability and re-verifies the target after a visible post-rename/remove
+window, finishes idempotently, and only then clears the pending/source fields.
+
+PR-base projection and record creation read stack-entry parents from
+`old_parent.ref` / `new_parent.ref`, so decoupled `Name != GitBranch()` stacks
+publish and persist the Git branch (for example `user/jd/api`), not the
+logical name (`team/api`). Resumed success consumes the same record/ref facts.
+
 ### 5.4 Status/doctor/list/agent projections and forbidden compatibility hints
 
 | Surface | Site | Edit |
@@ -1507,16 +1846,15 @@ authoritative artifact, it is the type both `stack_status.go` and `agent_status.
 placing it in `reparent_state.go` keeps the artifact's decode logic and its projection adjacent.
 Both embedders import nothing new — they are already in package `internal`.
 
-The anchored line, on **stderr**, exactly once per affected feature, **before** any ancestry write to
-stdout (§11.10 rule 1 is a command write-order requirement, not a terminal-interleaving claim):
-
-```
-reparent in progress: <feature> target <entry> run <run-id> stage <stage>; continue with: tws stack reparent <feature> --continue (or --abort)
-```
-
-All surfaces stay **strictly read-only**: no fetch, no ref write, no state repair, and no marking or
-deletion of the remote record (§11.10 rule 3). The artifact is classified as exactly one of
-`active | complete | unsupported | corrupt | foreign | stale` (rule 4).
+The stderr notice is exactly one sanitized line per feature and begins
+`reparent <status>:` for `active | complete | unsupported | corrupt | foreign |
+stale`. Only actionable stale/complete residue receives continue/abort
+guidance; live-active and untrusted statuses do not. All surfaces stay
+**strictly read-only**: no fetch, ref write, repair, or remote-record mutation.
+`internal/stack_ancestry.go` retains its pre-feature `MainRepoRootIn`
+repository validation/candidate resolution and therefore its no-reparent JSON;
+the only behavioral addition in that file is guidance suppression while an
+authoritative reparent artifact exists.
 
 **Forbidden compatibility hints (AC-084).** While the authoritative artifact exists, no surface may
 emit `IssueSyncStateInvalid`, `state file unreadable`, `corrupt transaction state`,
@@ -1527,9 +1865,28 @@ would bypass the transaction, and the sync verbs named are refused by §11.2 any
 
 ### 5.5 Session launch exclusion
 
-§14.2a: while a reparent artifact exists for a feature, `tws open <feature> …`
-(`internal/cli/open.go:14` `openCmd`, `:203` `resolveOpenArgs`, `:248` `openAll`, `:288`
-`openWithTmux`) and every checkout agent-session launch
+§14.2a is a two-sided handshake. External reparent publishes the shared
+feature mutation guard before its final session probe. Direct open writes its
+starting record; per-branch tmux, feature-directory, and `--all` publish
+scoped launch intents; only then do they re-check state plus the guard, before
+spawn or attach. Reparent probes those records/intents plus live per-branch and
+feature-wide tmux names. Recovery repeats the probe after reclaim, and
+mutating admission removes only provably dead crash-left intents.
+
+Checkout intent inspection starts with `Lstat` and opens the verified real
+directory through `os.Root`; symlink/non-directory intents are unverifiable
+and never followed. Stale cleanup reopens through the parent root and compares
+the directory identity, owner-file identity, and exact owner bytes immediately
+before removing only `owner.json` and that same empty directory. Any identity
+or byte change refuses and preserves both paths.
+
+Checkout `tws open <feature> --feature-dir` now uses that same workspace intent
+wrapper. It publishes intent, runs the final global mutation/reparent/session
+check, retains the intent throughout the untracked `openDirect` agent/shell,
+and releases only its own rooted owner record on every exit.
+
+While a reparent artifact exists for a feature, `tws open <feature> …`
+(`internal/cli/open.go` `openCmd`, `openAll`, `openWithTmux`) and every checkout agent-session launch
 (`internal/session.go:279` `CheckoutSessionPreconditions`, reached by `OpenCheckoutDirect` `:557`
 and `OpenCheckoutTmux` `:616`) MUST refuse with the §11.2 sentence, start no session and attach no
 terminal. The refusal lifts the instant the artifact is gone.
@@ -1538,9 +1895,8 @@ terminal. The refusal lifts the instant the artifact is gone.
 open paths funnel through it and it already calls `anyCheckoutSyncActive(ws.MetadataRoot)` at `:295`
 (declaration `:311`). `tws open`'s external half needs its own check in `openCmd`/`openAll`.
 
-Symmetry worth a code comment: §6.2's `session-live` protects the reparent from sessions; §14.2a
-protects sessions from the reparent, which has detached holders and is about to move the very
-branches a session would sit on.
+Neither direction waits while holding the other's intent. The loser refuses
+and removes only what it owns; the winner proceeds without a deadlock.
 
 ### 5.6 Help and completion
 
@@ -1569,7 +1925,7 @@ branches a session would sit on.
 | 5 | `internal/reparent_destination.go` | `internal` | `ResolveReparentDestination`, the five-candidate enumeration, `--disambiguate` OID resolution, `reparentOIDWidth`, the cutoff ladders, **`reparentIsAncestor`**, the four-resolver agreement adapter | calls `ResolveSyncBase` (`rebase_planner.go:215`), `stackBaseRef` (`stack_ancestry.go:318`) and `checkoutBaseTokenFor` unmodified |
 | 6 | `internal/reparent_state.go` | `internal` | `ReparentStateVersion = 1`, the 19 stages, the §11.5 payload, both path helpers, load/save/remove, `RefuseIfReparentActive`, artifact classification, the compatibility writers incl. `writeReparentCompatSyncPayload`, **`ReparentProjection`** | `RefuseIfReparentActive` = `Stat` + at most one `ReadFile`, **zero Git processes** |
 | 7 | `internal/reparent_refs.go` | `internal` | pin namespace, `ReparentEntryRefID`, `sanitizeReparentRefPart`, the `update-ref --stdin` CAS builder/executor, the §11.7 four-way classifier | reuses `hashedSessionID`'s algorithm shape (`session.go:127`), **not** `sanitizeSessionPart` |
-| 8 | `internal/reparent_exec.go` | `internal` | **`runReparentGit`** + `reparentGitResult`, `BeginReparentRun`, `RunReparent`, `ContinueReparent`, `AbortReparent`, scratch/checkout context, per-row rebase, holders, metadata write, cleanup, `fetchReparentCheckoutRepo` | reuses `gitExitCode` (`rebase_plan_probe.go:63`) and delegates to `fetchCheckoutRepoTo` (`checkout_sync.go:777`) |
+| 8 | `internal/reparent_exec.go` | `internal` | **`runReparentGit`** + `reparentGitResult`, `BeginReparentRun`, `PlanReparentContinue`, shared live-ref assessment, `RunReparent`, `ContinueReparent`, `AbortReparent`, scratch/checkout context, per-row rebase, holders, metadata write, cleanup, `fetchReparentCheckoutRepo` | reuses `gitExitCode` (`rebase_plan_probe.go:63`) and delegates to `fetchCheckoutRepoTo` (`checkout_sync.go:777`) |
 | 9 | `internal/reparent_remote.go` | `internal` | the record type + durable IO, §12.2 guidance, §12.5 clearing, rule R-PUSH decision helpers | supplies `reparentPushDecision` inputs to all three push paths |
 | 10 | `internal/cli/stack_reparent.go` | `cli` | `stackReparentCmd`, `stackReparentArgs`, `stackReparentValidate`, `reparentOntoCompletion`, `reparentOptions`, route dispatch, **the external fetch execution via `fetchQuietTo`**, stream selection, the `reparent:` / `reparent-recovery:` / `reparent-remote:` marker writers | the only new Cobra file |
 
@@ -1587,10 +1943,11 @@ without a stage machine.
 | `internal/git_capability.go` | `ReparentGitCapabilities` + `ReparentGitCapabilitiesForVersion` **beside** the frozen table | after `:150` | yes |
 | `internal/cli/sync.go` | the reparent precheck block; hoist `feature`/`twsRoot`/`GuardFeatureName` above the mode dispatch | between `:88` and `:93`; `:108`/`:112`/`:113` folded into the hoist; `:116` keeps its `twsRoot` argument | yes |
 | `internal/checkout_sync.go` | extract `checkoutBaseTokenFor` from `:590-596`; add `ReclaimCheckoutLock` + the typed live-lock error at `:383-385`; **rule R-PUSH inside `gitPush` (`:540`)**, both call sites `:1628` and `:1645`; per-loop invocation-wide preflight | as listed | yes |
-| `internal/cli/push.go` | rule R-PUSH in `pushEntries` (`:123`, argv `:144`) and `pushScoped` (`:70`, argv `:103`); §12.4a in `pushEntries`' dry-run branch (`:133-136`) | as listed | yes |
+| `internal/cli/push.go` | token-bound top-level external push guard; rule R-PUSH in `pushEntries` and `pushScoped`; §12.4a in the dry-run branch | as listed | yes |
 | `internal/cli/doctor.go` | reparent line + guidance suppression | `:12`, `:94`, `:139` | yes |
 | `internal/cli/list.go` | reparent line | `:12`, `:117` | yes |
-| `internal/cli/open.go` | §14.2a launch exclusion | `:14`, `:248` | yes |
+| `internal/cli/open.go` | §14.2a direct/tmux/feature-dir/all launch intents and final exclusion check | `openCmd`, `openAll`, `openWithTmux` | yes |
+| `internal/external_session_intent.go` | strict external launch-intent IO, liveness classification, owned cleanup | new | additive |
 | `internal/health.go` | consume the ancestry guidance seam | `:53` | yes |
 | `internal/checkout_health.go` | suppress `:412` / `:420` / `:453` guidance under an artifact | `:402` | yes |
 | `internal/stack_ancestry.go` | guidance **seam** only | `:625` | yes |
@@ -1616,6 +1973,10 @@ obligation and §9.2's "every runtime-artifact filter" obligation are what make 
 **next** target; `docs/engineering-workflow.md` appends slice 13 and updates
 `Next roadmap feature:`. `internal/cli/sync_plan_docs_test.go:154-155` and `:179-180` assert the
 current wording and MUST be retargeted deliberately (AC-100).
+Every reparent preview example on README, cheatsheet and the three embedded
+skills carries the same replay limit flag/value as execution and states that a
+limitless preview has a null fingerprint. The docs test also executes that
+bounded plan → extract fingerprint → execute workflow against a real fixture.
 `docs/retrospectives/v1.2.7-upgrade-operations.md` is historical and MUST NOT be edited.
 
 ### 6.4 CHANGED — test infrastructure
@@ -1688,6 +2049,19 @@ either direction. Any plan in which an `internal` test calls a builder defined i
 
 ### 7.2 AC/T group → owning test file (every T has exactly one owner)
 
+The prose grouping below is descriptive only. The sole executable ownership
+ledger is `internal/cli/reparent_normative_matrix_test.go`, whose table maps
+every T directly to required AC/section and function. The test parses spec
+§17.2, expands AC ranges and canonicalizes annotated section cells, then
+compares each executable requirement list exactly. It parses each function
+and compares every owner-emitted `assertReparentMatrixBehavior` row marker and
+fact list against one canonical T-001…T-087 fact table. Every row participates;
+missing, extra, duplicated, reordered or relabeled requirements/markers/facts
+fail. T-031 is the real
+unavailable-plan CLI matrix rather than a key-order proxy; T-082 combines the
+`[]RefusalKind` type assertion with an actual persisted native-Git failure and
+successful resume.
+
 | T cells | Owner | Package |
 |---|---|---|
 | **T-001** customer topology, external, plan → execute | `internal/cli/reparent_e2e_test.go` **NEW** | `cli` |
@@ -1710,7 +2084,7 @@ either direction. Any plan in which an `internal` test calls a builder defined i
 | T-044…T-051 CAS shape/race/hook, pins, merge commits, validation, untracked | `internal/cli/reparent_transaction_test.go` **NEW**; the pure CAS **line-shape** builder test also lives in `internal/reparent_refs_test.go` **NEW** (no Git) | `cli` / `internal` |
 | T-052…T-056 conflicts, capability floor, post-lock race, launch exclusion | `internal/cli/reparent_transaction_test.go` **NEW** | `cli` |
 | T-057…T-060 metadata exactness, post-image ordering, drift, durable writer | `internal/reparent_metadata_test.go` **NEW** | `internal` |
-| T-061…T-066 17 crash windows, partial commit, abort ± commit point, flag rejection, cleanup | `internal/cli/reparent_recovery_test.go` **NEW** | `cli` |
+| T-061…T-066 17 crash windows, partial commit, abort ± commit point, flag rejection, cleanup | `internal/reparent_run_test.go`, `internal/cli/reparent_transaction_test.go` | `internal` / `cli` |
 | T-067…T-069, T-071 mutual exclusion (incl. `--plan`), compat artifacts, reclaim lock, compat write order | `internal/cli/reparent_exclusion_test.go` **NEW**; the `ReclaimCheckoutLock` unit half extends `internal/checkout_sync_plan_test.go` (**existing**) | `cli` / `internal` |
 | T-070 downgrade | `internal/cli/sync_downgrade_test.go` (**existing**, extended) | `cli` |
 | T-072, T-073 observability with/without state | `internal/cli/reparent_observability_test.go` **NEW**; byte-identity halves extend `internal/cli/stack_status_test.go`, `internal/cli/status_test.go`, `internal/cli/doctor_ancestry_test.go`, `internal/agent_status_test.go`, `internal/checkout_health_test.go` (**existing**) | `cli` / `internal` |
@@ -1719,7 +2093,8 @@ either direction. Any plan in which an `internal` test calls a builder defined i
 | T-085 help/golden snapshots, feature named `reparent` | `internal/cli/stack_reparent_cli_test.go` **NEW** | `cli` |
 | T-086 documentation and skills | `internal/cli/sync_plan_docs_test.go` (**existing**, retargeted) | `cli` |
 | T-087 sole-`Base`-rewriter source assertion | `internal/cli/reparent_source_audit_test.go` **NEW** | `cli` |
-| AC↔T bidirectional mapping + real-Git leaf counter | `internal/cli/reparent_matrix_test.go` **NEW** | `cli` |
+| authoritative T→AC/section→function table | `internal/cli/reparent_normative_matrix_test.go` | `cli` |
+| normative real-Git scenario counters + frozen hygiene | `internal/{,cli/}reparent_matrix_test.go` | both |
 
 **T-009 and T-041 are source-audit-owned only.** `internal/cli/reparent_source_audit_test.go` is
 their sole owner. The argv-shape assertions in `reparent_exec_integration_test.go` and
@@ -1749,22 +2124,40 @@ next to the existing constant. Both tags exist locally (§0.1), so the offline b
 each. The tag-interpolating comments and log lines at `:18`, `:66-67`, `:73`, `:86`, `:89` move with
 the parameterization.
 
-T-070 then exercises, **against a real prior binary**, plain / `--continue` / `--abort` in **both**
-modes against a real reparent fixture, and asserts the checkout arm specifically: the prior
+The v1.2.16 harness proves only the six same-feature sync cells after the
+compatibility envelope exists. A companion limitation table explicitly marks
+window 1, workspace-global locks, unrelated-feature checkout mutation and
+top-level push as invisible to released code; docs require current tws for all
+active/recoverable reparent operations. **Operators MUST NOT use an older tws
+while any reparent is active or recoverable.**
+
+T-070 always executes a frozen v1.2.16 route over the real compatibility files
+using frozen YAML structs/version gates, the old verb decision order, a Git
+PATH shim, and before/after artifact+lock snapshots. It then exercises, when
+available, **against a real prior binary**, plain / `--continue` / `--abort`
+in **both** modes against a real reparent fixture, and asserts the checkout arm specifically: the prior
 `AbortCheckoutSync` fails at `LoadCheckoutTransaction` on the non-integer `state_version`, leaving
-the lock untaken, no `git rebase --abort` run, `restoreOriginal` uncalled, and every artifact still
-on disk. The external arm asserts the **complete wrapper sentence** (or its stable
+the global/feature lock presence and bytes unchanged, no `git rebase --abort`
+in the shimmed argv, `restoreOriginal` uncalled, the exact shipped plain
+checkout refusal sentence intact, and every artifact still on disk. Candidate
+binaries are accepted only when parsed `tws --version` equals `v1.2.16`
+exactly; the offline build injects that exact tag. The external arm asserts the **complete wrapper sentence** (or its stable
 `unsupported scoped sync state version 4` substring), not the bare nested loader error. Asserting
 the shipped loader functions directly is a necessary supplement and an insufficient substitute: the
 defect guarded against is a prior binary's control flow reaching a mutation before its version
-check, which only an executed prior binary demonstrates. Keep the existing fidelity comparison.
+check, which only executable route control flow demonstrates. The real binary
+is the fidelity oracle when available; hard-coded outcome strings are not a
+fallback.
 
 ### 7.4 Budget, hygiene and frozen assertions
 
-- **120 real-Git leaves.** A real-Git cell is one `t.Run` leaf that spawns at least one `git`
-  process; table sub-cases each count as one leaf. The count is **measured by a helper the suite
-  itself asserts**, not estimated. The counter lives in `internal/cli/reparent_matrix_test.go`
-  beside the AC↔T mapping assertion, so one file owns both self-checks.
+- **114 normative real-Git scenarios (≤120).** Every fixture-constructor
+  invocation inside a matrix-owning function counts, including anonymous
+  closures and table iterations; truly shared fixtures count once. Runtime
+  counters measure **70 internal + 44 CLI**. Unfiltered full package runs must
+  equal those counts; partial `-run`/`-skip` selections enforce only the
+  ceiling. Supporting regressions own no T row and are deliberately outside
+  the normative scenario budget.
 - **Pure-first.** Ladder selection, refusal ranking, key order, closure order, the 33-field tuple,
   `ReparentRevalidationDigest`, the four limit-algebra adapters, both admission predicates, the argv
   template and its materialization, `ReparentEntryRefID`, `stackReparentValidate`,
@@ -1775,6 +2168,10 @@ check, which only an executed prior binary demonstrates. Keep the existing fidel
   `internal/cli/sync_plan_integration_test.go:48`, `:110`, `:601`, `:1798`, `:1954`, `:1975`,
   `:2104`, `:3297`, `:4696`; `internal/cli/push_layout_test.go:82`;
   `internal/stack_status_test.go:27`. Subprocess forms append
+  the same values. Package `cli` and package `internal` TestMain now set
+  `GIT_CONFIG_COUNT=0` and `GIT_CONFIG_NOSYSTEM=1` before `m.Run`, so even
+  direct legacy test helpers cannot inherit an injected
+  `safe.bareRepository=explicit`; per-test overrides remain possible.
   `"GIT_CONFIG_COUNT=0", "GIT_CONFIG_NOSYSTEM=1"` to `cmd.Env`
   (`internal/stack_status_test.go:2251`, `internal/cli/sync_modes_test.go:269`/`:274`,
   `internal/cli/sync_plan_integration_test.go:1266`). The git shim at
@@ -1787,8 +2184,11 @@ check, which only an executed prior binary demonstrates. Keep the existing fidel
   `git init --ref-format=reftable` fails. The **files-backend twin of every such cell is mandatory
   and never skipped** — CI pins no Git version, so a reftable-only assertion would silently vanish
   on the older matrix leg. T-045 (files CAS race) is mandatory; T-046 (reftable) is skippable.
-- **`argv.log`.** Every real-Git test records and asserts against an argv log, so forbidden-verb
-  audits are cheap. Precedents: `internal/cli/sync_golden_test.go` and
+- **`argv.log`.** Package-central counters assign every normative scenario an
+  id; fixture and direct Git helpers attach actual argv to pending ids; each
+  package TestMain fails any counted id with an empty log. Route-level PATH
+  shims remain the production-process audit. Precedents:
+  `internal/cli/sync_golden_test.go` and
   `internal/checkout_sync_plan_test.go` already carry argv-log harnesses.
 - **Status-surface fixtures must cover BOTH checkout layouts (T-072/T-073).** Checkout mode has two
   distinct state directories, so an observability fixture that builds only one proves nothing:
@@ -2195,8 +2595,8 @@ Run `tpatch feature deps --validate-all` before implementation; nothing here req
 ### 13.1 Before writing any production code
 
 - [ ] Confirm `shasum -a 256 .tpatch/features/safe-reparent-restack/spec.md` is
-      **`dbf248f3a094304da3b27769a1bde47762a139ed6e3c71dddb338b04aa81d24f`** (3 892 lines,
-      203 507 B). A tree hashing to `f75680ee…` is pre-correction: §11.2's sentinel rationale, the
+      **`d4913c08d773c1d39ad37d71a79af4dc9eaa910f328eef917d62a6c28eee66e9`** (4 434 lines,
+      244 335 B). A tree hashing to `f75680ee…` is pre-correction: §11.2's sentinel rationale, the
       `--plan` precheck scope, §11.6b, AC-079 and T-067 will not match, and P-7 / P-9 do not apply.
 - [ ] Record this exploration's own SHA-256 (reported in the delivery summary) in the landing
       record, so a later reader can tell which revision was implemented.
@@ -2237,7 +2637,8 @@ Run `tpatch feature deps --validate-all` before implementation; nothing here req
       `null`, without state;
 - [ ] no reparent-emitted argv contains `-C`, `reset`, `replay`, `--update-refs`, `--autostash`,
       `--apply` or `push`;
-- [ ] the measured real-Git leaf count is ≤ **120** and the counter test is green.
+- [ ] the measured real-Git leaf count is **76 internal + 44 CLI = 120**, remains
+      ≤ **120**, and the counter test is green.
 
 ### 13.3 Definition of done for the implementation phase
 

@@ -30,7 +30,7 @@ func listCmd() *cobra.Command {
 
 			// Checkout mode dispatch
 			if ws.Mode == internal.ModeCheckout {
-				return runCheckoutList(ws)
+				return runCheckoutList(cmd, ws)
 			}
 
 			features, listErr := ws.ListFeaturesResolved()
@@ -42,6 +42,10 @@ func listCmd() *cobra.Command {
 				fmt.Println("No features found. Use 'tws add <feature>' to create one.")
 				return nil
 			}
+
+			// §11.10 rule 1: one anchored line per affected feature, on
+			// stderr, before any of the listing below reaches stdout.
+			writeReparentNoticesForAll(cmd.ErrOrStderr(), ws, features)
 
 			fmt.Printf("Workspace: %s (mode: %s)\n\n", ws.MetadataRoot, ws.Mode)
 
@@ -114,11 +118,12 @@ func listCmd() *cobra.Command {
 	}
 }
 
-func runCheckoutList(ws internal.Workspace) error {
+func runCheckoutList(cmd *cobra.Command, ws internal.Workspace) error {
 	entries, err := internal.BuildCheckoutList(ws)
 	if err != nil {
 		return err
 	}
+	writeReparentNoticesForWorkspace(cmd.ErrOrStderr(), ws)
 	fmt.Print(internal.FormatCheckoutList(ws, entries))
 	return nil
 }

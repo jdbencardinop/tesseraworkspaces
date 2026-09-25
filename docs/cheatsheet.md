@@ -209,6 +209,83 @@ tws sync auth --no-fetch --approve-plan <fingerprint> --max-replay-per-entry 10
 - A guarded refusal exits `1` and writes exactly one `plan-guard: <kind>: <detail>` line on stderr; a detail beginning `state-preserved: ` means something on disk outlives the refusal. A refusal tws already performs — a dirty tree, a held lock, an unresolvable base, an incomplete previous run — keeps its own wording, exits `1`, and is never marked.
 - A guarded run's limits are recorded in recovery state, so an older tws release refuses to resume it rather than silently dropping the guard.
 
+## Reparent a branch onto a new base
+
+```sh
+tws stack reparent auth auth-middleware --onto main --plan --max-replay-total 20            # preview, exits 0
+tws stack reparent auth auth-middleware --onto main --plan --json --max-replay-total 20     # same document, machine readable
+tws stack reparent auth auth-middleware --onto main \
+  --approve-plan <fingerprint> --max-replay-total 20                  # execute
+tws stack reparent auth --continue                                    # resume after a conflict
+tws stack reparent auth --abort                                       # roll back
+```
+
+- A **fresh execution is always guarded**: it requires `--approve-plan` plus at
+  least one of `--max-replay-per-entry` / `--max-replay-total`. There is no
+  unguarded reparent route.
+- The preview and execution carry the same replay limit flag(s) and values.
+  A limitless preview publishes a null fingerprint and cannot be executed.
+- A reparent preview moves no branch and writes no tws state; may fetch according
+  to policy.
+- `--onto-kind auto|entry|ref` decides how `--onto` is read; `auto` prefers a
+  sibling stack entry and falls back to a ref. A stack-entry destination stores
+  the logical entry name; a named literal ref stores its full `refs/...` name;
+  a raw object-id destination stores the full lowercase OID.
+- `--cutoff <ref>` supplies the target boundary only when no authoritative
+  recorded `LastBaseSHA` exists. It may confirm that recorded SHA, but cannot
+  override a different or unresolvable record. Descendant cutoffs are always
+  snapshotted per row and never overridden.
+- A plan fetches exactly where the run it describes fetches: external by
+  default, checkout only under `--fetch`. `--continue` and `--abort` never
+  fetch and refuse every fetch flag.
+- The ref commit is **race-atomic**: every moved branch lands in one
+  compare-and-swap transaction. It is **crash-atomic only on the reftable
+  backend**.
+- Three effects — refs, `stack.yaml`, worktree/index state — and one commit point,
+  which requires both durable post-image metadata and refs already at their
+  planned values (or a no-op). Recovery past that point is **forward-only**.
+- `--continue` and `--abort` take the target, destination, cutoff, policy,
+  limits, validation command and closure from persisted state; supplying any of
+  them is refused before any lock or Git command.
+- A refusal is one anchored line: `reparent: <kind>: <detail>`. A detail
+  beginning `state-preserved: ` means something on disk outlives the refusal. A
+  conflict is a **pause**, not a refusal, and carries no marker.
+- While a reparent is recorded, `tws sync <feature>` (every verb, `--plan`
+  included) refuses. In checkout mode its single physical checkout means the
+  run blocks opening every feature in that workspace; in external mode only
+  direct/tmux/all sessions on the target and affected descendants block
+  admission, with launch intent published before the final mutation check.
+- Checkout sync and reparent share a workspace-global mutation lock across
+  features, and checkout refuses every non-empty stack-entry `repo`.
+- Checkout `tws open <feature> --feature-dir` publishes the same workspace
+  launch intent, repeats the final mutation/reparent/session check, and keeps
+  the intent through the agent and shell.
+- Dead checkout launch intents are removed only after that global lock is
+  held. Recovery never infers commit from an exact pre-image ref and never
+  redetaches a restored holder that the operator switched to another branch.
+- A real top-level external push holds the feature mutation lock across its
+  entire multi-entry invocation. Obsolete/archived follow-up rows clear before
+  lease preflight; `--dry-run` evaluates that clearing in memory only.
+- Every mutating external sync route holds that feature lock through rebase,
+  metadata, optional push, and remote follow-up clearing; it rechecks reparent
+  state after claiming and releases last.
+- If the checkout-global lock is absent, current tws scans every feature's
+  recoverable checkout sync/reparent state before a fresh mutation; recovery
+  reconstructs only its own reservation.
+- Different stored `repo` spellings on one logical edge are refused even when
+  they resolve to one common directory; preexisting validation untracked paths
+  are allowed, but new untracked paths or tracked changes refuse. Abort journals
+  remote-record restoration before changing the record.
+- v1.2.16 only fails closed for same-feature sync after the compatibility
+  envelope exists; it cannot see window 1, global locks, unrelated-feature
+  checkout reparent, or top-level push. **Do not use an older tws while any
+  reparent is active or recoverable.**
+- tws changes **no remote ref and no pull request**. The next push warns and
+  pushes with `--force-with-lease --force-if-includes`; a real push is refused
+  until the reparent commit point is proven. If a newer run temporarily cannot
+  resolve the tracking ref, it carries forward older same-branch publication
+  evidence until a positive local clear.
+
 ## Archive and restore
 
 ```sh

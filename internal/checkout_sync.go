@@ -1,6 +1,8 @@
 package internal
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -185,6 +187,20 @@ func HasCheckoutTransaction(featurePath string) bool {
 	return err == nil
 }
 
+func validateCheckoutStackRepos(featurePath string) error {
+	stack, err := LoadStack(featurePath)
+	if err != nil {
+		return nil // preserve the route's existing load/error ordering
+	}
+	for _, entry := range stack.Branches {
+		if strings.TrimSpace(entry.Repo) != "" {
+			return fmt.Errorf("stack entry %q belongs to repository %q; checkout sync is single-repository (cross-repo-unsupported)",
+				entry.Name, entry.Repo)
+		}
+	}
+	return nil
+}
+
 // ---------- Route/guard derivation (§13.6) ----------
 
 // txNewMode answers "is this persisted transaction a new-mode run?" nil-safe.
@@ -284,6 +300,292 @@ type LockInfo struct {
 	Created string `yaml:"created"`
 }
 
+// CheckoutMutationLock serializes every checkout-mode mutation across the
+// whole workspace. Feature-specific sync locks and compatibility artifacts
+// remain in place for downgrade/recovery; this lock protects the one physical
+// checkout they all share.
+type CheckoutMutationLock struct {
+	PID       int    `yaml:"pid"`
+	Created   string `yaml:"created"`
+	Token     string `yaml:"token"`
+	Feature   string `yaml:"feature"`
+	Operation string `yaml:"operation"` // sync | reparent
+	StatePath string `yaml:"state_path"`
+}
+
+func CheckoutMutationLockPath(stateDir string) string {
+	return filepath.Join(stateDir, "checkout-mutation.lock")
+}
+
+func checkoutSyncMutationToken(feature, startedAt, originalHEAD string) string {
+	sum := sha256.Sum256([]byte("tws-checkout-sync-mutation\x00" + feature + "\x00" + startedAt + "\x00" + originalHEAD))
+	return hex.EncodeToString(sum[:16])
+}
+
+func writeCheckoutMutationLockExclusive(path, token, feature, operation, statePath string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	info := CheckoutMutationLock{
+		PID: os.Getpid(), Created: time.Now().UTC().Format(time.RFC3339),
+		Token: token, Feature: feature, Operation: operation, StatePath: statePath,
+	}
+	data, marshalErr := yaml.Marshal(&info)
+	if marshalErr == nil {
+		_, marshalErr = file.Write(data)
+	}
+	if marshalErr == nil {
+		marshalErr = file.Sync()
+	}
+	closeErr := file.Close()
+	if marshalErr != nil {
+		_ = os.Remove(path)
+		return marshalErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(path)
+		return closeErr
+	}
+	return syncDir(filepath.Dir(path))
+}
+
+func ReadCheckoutMutationLock(stateDir string) (*CheckoutMutationLock, []byte, error) {
+	path := CheckoutMutationLockPath(stateDir)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	var info CheckoutMutationLock
+	if err := yaml.Unmarshal(data, &info); err != nil {
+		return nil, data, err
+	}
+	if info.PID <= 0 || info.Token == "" || info.Feature == "" || info.StatePath == "" ||
+		(info.Operation != "sync" && info.Operation != "reparent") {
+		return nil, data, fmt.Errorf("invalid checkout mutation lock")
+	}
+	return &info, data, nil
+}
+
+var checkoutMutationLstat = os.Lstat
+
+func checkoutMutationOwnerStateExists(stateDir string, info *CheckoutMutationLock) (bool, error) {
+	if info == nil {
+		return false, nil
+	}
+	var path string
+	if info.StatePath != "" {
+		path = info.StatePath
+	} else {
+		switch info.Operation {
+		case "sync":
+			path = filepath.Join(stateDir, info.Feature+"-checkout-sync.yaml")
+		case "reparent":
+			path = filepath.Join(stateDir, info.Feature+"-reparent.v1.yaml")
+		}
+	}
+	fileInfo, err := checkoutMutationLstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if fileInfo.Mode()&os.ModeSymlink != 0 {
+		return false, fmt.Errorf("owner state path %s is a symbolic link", path)
+	}
+	return true, nil
+}
+
+func checkoutWorkspaceRecoverableStates(stateDirs []string) ([]string, error) {
+	var paths []string
+	seen := make(map[string]bool, len(stateDirs))
+	for _, stateDir := range stateDirs {
+		stateDir = filepath.Clean(stateDir)
+		if stateDir == "" || seen[stateDir] {
+			continue
+		}
+		seen[stateDir] = true
+		entries, err := os.ReadDir(stateDir)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if !strings.HasSuffix(name, "-checkout-sync.yaml") &&
+				!strings.HasSuffix(name, "-reparent.v1.yaml") {
+				continue
+			}
+			path := filepath.Join(stateDir, name)
+			info, err := checkoutMutationLstat(path)
+			if err != nil {
+				return nil, err
+			}
+			if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+				return nil, fmt.Errorf("recoverable checkout mutation state %s is not a regular file", path)
+			}
+			paths = append(paths, path)
+		}
+	}
+	return paths, nil
+}
+
+func checkoutMutationStateDirs(stateDir, ownerStatePath string, additional []string) []string {
+	stateDir = filepath.Clean(stateDir)
+	dirs := []string{stateDir}
+	parent := filepath.Dir(stateDir)
+	if filepath.Base(parent) == ".tws" {
+		dirs = append(dirs, filepath.Join(filepath.Dir(parent), "state"))
+	} else {
+		dirs = append(dirs, filepath.Join(parent, ".tws", "state"))
+	}
+	if ownerStatePath != "" {
+		dirs = append(dirs, filepath.Dir(ownerStatePath))
+	}
+	return append(dirs, additional...)
+}
+
+func verifyCheckoutMutationReservation(stateDir, ownerStatePath string, additionalStateDirs, allowedStatePaths []string) error {
+	paths, err := checkoutWorkspaceRecoverableStates(
+		checkoutMutationStateDirs(stateDir, ownerStatePath, additionalStateDirs),
+	)
+	if err != nil {
+		return fmt.Errorf("inspect workspace checkout mutation state: %w", err)
+	}
+	allowed := make(map[string]bool, len(allowedStatePaths))
+	for _, path := range allowedStatePaths {
+		if path != "" {
+			allowed[filepath.Clean(path)] = true
+		}
+	}
+	for _, path := range paths {
+		if allowed[filepath.Clean(path)] {
+			continue
+		}
+		return fmt.Errorf("workspace has recoverable checkout mutation state at %s; recover it before starting another checkout mutation", path)
+	}
+	return nil
+}
+
+func checkoutMutationRecoveryStatePaths(stateDir, feature, operation, ownerStatePath string, additionalStateDirs []string) []string {
+	paths := []string{ownerStatePath}
+	if operation == "reparent" {
+		for _, dir := range checkoutMutationStateDirs(stateDir, ownerStatePath, additionalStateDirs) {
+			paths = append(paths, filepath.Join(dir, feature+"-checkout-sync.yaml"))
+		}
+	}
+	return paths
+}
+
+func releaseCheckoutMutationReservation(stateDir, token string, cause error) error {
+	if releaseErr := ReleaseCheckoutMutationLock(stateDir, token); releaseErr != nil {
+		return errors.Join(cause, releaseErr)
+	}
+	return cause
+}
+
+// AcquireCheckoutMutationLock claims a fresh workspace-global mutation lock.
+// A dead orphan with no corresponding state is reclaimed; live, unreadable,
+// or state-backed locks are foreign and fail closed.
+func AcquireCheckoutMutationLock(stateDir, token, feature, operation, ownerStatePath string, additionalStateDirs ...string) ([]byte, error) {
+	path := CheckoutMutationLockPath(stateDir)
+	if err := writeCheckoutMutationLockExclusive(path, token, feature, operation, ownerStatePath); err == nil {
+		if err := verifyCheckoutMutationReservation(stateDir, ownerStatePath, additionalStateDirs, nil); err != nil {
+			return nil, releaseCheckoutMutationReservation(stateDir, token, err)
+		}
+		return os.ReadFile(path)
+	} else if !os.IsExist(err) {
+		return nil, err
+	}
+	info, data, err := ReadCheckoutMutationLock(stateDir)
+	if err != nil {
+		return nil, fmt.Errorf("invalid checkout mutation lock at %s: %w", path, err)
+	}
+	if isProcessAlive(info.PID) {
+		return nil, fmt.Errorf("checkout mutation lock held by live %s for feature %q (pid %d, created %s)",
+			info.Operation, info.Feature, info.PID, info.Created)
+	}
+	stateExists, stateErr := checkoutMutationOwnerStateExists(stateDir, info)
+	if stateErr != nil {
+		return nil, fmt.Errorf("inspect checkout mutation owner state %s: %w", info.StatePath, stateErr)
+	}
+	if stateExists {
+		return nil, fmt.Errorf("stale checkout mutation lock belongs to recoverable %s for feature %q", info.Operation, info.Feature)
+	}
+	if err := removeLockIfUnchanged(path, data); err != nil {
+		return nil, fmt.Errorf("reclaim stale checkout mutation lock: %w", err)
+	}
+	if err := writeCheckoutMutationLockExclusive(path, token, feature, operation, ownerStatePath); err != nil {
+		return nil, err
+	}
+	if err := verifyCheckoutMutationReservation(stateDir, ownerStatePath, additionalStateDirs, nil); err != nil {
+		return nil, releaseCheckoutMutationReservation(stateDir, token, err)
+	}
+	return os.ReadFile(path)
+}
+
+// ReclaimCheckoutMutationLock is recovery's token-bound form. It never steals
+// a mismatched token, even from a dead process.
+func ReclaimCheckoutMutationLock(stateDir, token, feature, operation, ownerStatePath string, additionalStateDirs ...string) ([]byte, error) {
+	path := CheckoutMutationLockPath(stateDir)
+	info, data, err := ReadCheckoutMutationLock(stateDir)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := writeCheckoutMutationLockExclusive(path, token, feature, operation, ownerStatePath); err != nil {
+			return nil, err
+		}
+		if err := verifyCheckoutMutationReservation(
+			stateDir, ownerStatePath, additionalStateDirs,
+			checkoutMutationRecoveryStatePaths(stateDir, feature, operation, ownerStatePath, additionalStateDirs),
+		); err != nil {
+			return nil, releaseCheckoutMutationReservation(stateDir, token, err)
+		}
+		return os.ReadFile(path)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("invalid checkout mutation lock at %s: %w", path, err)
+	}
+	if info.Token != token || info.Feature != feature || info.Operation != operation || info.StatePath != ownerStatePath {
+		return nil, fmt.Errorf("checkout mutation lock belongs to foreign %s for feature %q", info.Operation, info.Feature)
+	}
+	if info.PID != os.Getpid() && isProcessAlive(info.PID) {
+		return nil, fmt.Errorf("checkout mutation lock held by live %s for feature %q (pid %d)", info.Operation, info.Feature, info.PID)
+	}
+	if err := removeLockIfUnchanged(path, data); err != nil {
+		return nil, fmt.Errorf("reclaim checkout mutation lock: %w", err)
+	}
+	if err := writeCheckoutMutationLockExclusive(path, token, feature, operation, ownerStatePath); err != nil {
+		return nil, err
+	}
+	if err := verifyCheckoutMutationReservation(
+		stateDir, ownerStatePath, additionalStateDirs,
+		checkoutMutationRecoveryStatePaths(stateDir, feature, operation, ownerStatePath, additionalStateDirs),
+	); err != nil {
+		return nil, releaseCheckoutMutationReservation(stateDir, token, err)
+	}
+	return os.ReadFile(path)
+}
+
+func ReleaseCheckoutMutationLock(stateDir, token string) error {
+	path := CheckoutMutationLockPath(stateDir)
+	info, data, err := ReadCheckoutMutationLock(stateDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Token != token {
+		return fmt.Errorf("checkout mutation lock ownership changed")
+	}
+	return removeLockIfUnchanged(path, data)
+}
+
 func AcquireCheckoutLock(featurePath string) error {
 	lockPath := CheckoutLockPath(featurePath)
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0700); err != nil {
@@ -359,6 +661,21 @@ func HasCheckoutLock(featurePath string) bool {
 	return err == nil
 }
 
+// CheckoutLockLiveError is the typed form of forceAcquireCheckoutLock's
+// live-foreign-holder refusal. Its message is byte-identical to the sentence
+// that arm has always produced, so every existing caller and every existing
+// assertion sees exactly the same bytes; the type exists only so a caller
+// that must classify THAT one failure — and not "invalid lock", "unreadable
+// lock" or "mkdir failed" — can do so with errors.As instead of string
+// matching.
+type CheckoutLockLiveError struct {
+	PID int
+}
+
+func (e *CheckoutLockLiveError) Error() string {
+	return fmt.Sprintf("lock held by live process %d; cannot reclaim", e.PID)
+}
+
 // forceAcquireCheckoutLock reclaims the lock for --continue/--abort.
 // A live lock owned by another process is never stolen.
 func forceAcquireCheckoutLock(featurePath string) error {
@@ -381,12 +698,26 @@ func forceAcquireCheckoutLock(featurePath string) error {
 		return fmt.Errorf("checkout-sync lock is being initialized or is invalid; retry or inspect %s", lockPath)
 	}
 	if info.PID != os.Getpid() && isProcessAlive(info.PID) {
-		return fmt.Errorf("lock held by live process %d; cannot reclaim", info.PID)
+		return &CheckoutLockLiveError{PID: info.PID}
 	}
 	if err := removeLockIfUnchanged(lockPath, data); err != nil {
 		return fmt.Errorf("reclaim checkout-sync lock: %w", err)
 	}
 	return writeLockExclusive(lockPath)
+}
+
+// ReclaimCheckoutLock takes the checkout lock only when it is absent, already
+// ours, or held by a dead PID. It never steals a live foreign lock.
+//
+// It is the exported form of forceAcquireCheckoutLock and reuses that single
+// ladder outright — the same LockInfo, the same PID/liveness test, the same
+// compare-bytes-before-remove, the same O_EXCL write. It deliberately does NOT
+// pre-read the lock itself: a second read before the shared ladder's own read
+// would be a race, and a second ladder would be a second safety model.
+// A live foreign holder returns *CheckoutLockLiveError, which the reparent
+// recovery routes surface as sync-state-present.
+func ReclaimCheckoutLock(featurePath string) error {
+	return forceAcquireCheckoutLock(featurePath)
 }
 
 func ReadCheckoutLock(featurePath string) (*LockInfo, error) {
@@ -408,7 +739,7 @@ func isProcessAlive(pid int) bool {
 	}
 	// Signal 0 checks existence without actually sending a signal
 	err = proc.Signal(syscall.Signal(0))
-	return err == nil
+	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
 // ---------- StepHook for testing ----------
@@ -537,8 +868,20 @@ func checkoutGitOutput(repoDir string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-func gitPush(repoDir, branch string) error {
-	cmd := exec.Command("git", "push", "--force-with-lease", "origin", branch)
+// gitPush pushes one branch. The reparentPushDecision parameter carries this
+// entry's already-made rule R-PUSH decision (§12.4); its ZERO VALUE reproduces
+// today's argv, output and exit status byte-for-byte, which is what keeps
+// every push golden frozen on a feature with no pending remote record.
+func gitPush(repoDir, branch string, d ReparentPushDecision, prose io.Writer) error {
+	args := []string{"push", "--force-with-lease"}
+	if d.ForceIfIncludes {
+		args = append(args, "--force-if-includes")
+	}
+	args = append(args, "origin", branch)
+	if d.Applies && d.WarnLine != "" && prose != nil {
+		fmt.Fprintln(prose, d.WarnLine) //nolint:errcheck
+	}
+	cmd := exec.Command("git", args...)
 	cmd.Dir = repoDir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -587,12 +930,9 @@ func buildCheckoutPlanFrom(repoDir string, stack Stack, order []StackEntry, sel 
 			continue
 		}
 		branch := entry.GitBranch()
-		base := entry.Base
-		if base == "" {
+		base, ok := checkoutBaseTokenFor(stack, entry)
+		if !ok {
 			continue // root base uses current default; skip
-		}
-		if parent := GetBranch(stack, entry.Base); parent.Name != "" {
-			base = parent.GitBranch()
 		}
 
 		newBaseSHA, err := gitResolveRef(repoDir, base)
@@ -615,6 +955,28 @@ func buildCheckoutPlanFrom(repoDir string, stack Stack, order []StackEntry, sel 
 		})
 	}
 	return plan, nil
+}
+
+// checkoutBaseTokenFor is the checkout executor's base-token selection,
+// extracted verbatim from buildCheckoutPlanFrom so the shipped executor and
+// safe-reparent's resolver-agreement adapter read the identical rule from one
+// place rather than two that can drift apart silently.
+//
+// The rule, unchanged: an empty configured base is not a base at all (ok is
+// false, reproducing the caller's `continue`); any in-stack parent — matched
+// on logical Name alone, with StackEntry.Repo deliberately not consulted, as
+// the shipped arm did — resolves through parent.GitBranch(); anything else
+// stays the literal token. The caller keeps its own `branch := entry.GitBranch()`
+// assignment and its own gitResolveRef call: neither moved.
+func checkoutBaseTokenFor(stack Stack, entry StackEntry) (base string, ok bool) {
+	base = entry.Base
+	if base == "" {
+		return "", false
+	}
+	if parent := GetBranch(stack, entry.Base); parent.Name != "" {
+		base = parent.GitBranch()
+	}
+	return base, true
 }
 
 // BuildCheckoutPlan creates the rebase plan from the stack, resolving SHAs.
@@ -687,12 +1049,57 @@ type CheckoutSyncOpts struct {
 	// never merged into Changed.
 	PlanGuard CheckoutPlanGuard
 
+	// Reparent is the feature's reparent artifact location, resolved by the
+	// command route (which owns the workspace) and carried here so the push
+	// loops can consult the §12.3 remote follow-up record without this package
+	// re-deriving workspace identity. Its ZERO VALUE (Feature == "") is "no
+	// record is reachable", which keeps every shipped push byte-identical.
+	Reparent ReparentLocation
+
+	// ReparentProse is where rule R-PUSH's `reparent-remote:` warning lines
+	// go. A nil writer sends them to os.Stderr, which is where every other
+	// checkout-sync diagnostic already goes.
+	ReparentProse io.Writer
+
 	// guard is the guarded execution route's own JIT revalidation carrier,
 	// set by RunCheckoutSync/ContinueCheckoutSync immediately before they
 	// hand off to executeTransaction/resumeTransaction. It is nil on every
 	// unguarded run: every JIT seam is itself gated on guard != nil, so a
 	// nil guard leaves every shipped byte and process untouched.
 	guard *checkoutPlanGuardRun
+
+	mutationLockToken string
+}
+
+func checkoutMutationStateDir(opts CheckoutSyncOpts) string {
+	if opts.Reparent.CheckoutStateDir != "" {
+		return opts.Reparent.CheckoutStateDir
+	}
+	return checkoutStateDir(opts.FeaturePath)
+}
+
+func releaseCheckoutSyncLocks(opts CheckoutSyncOpts) error {
+	ReleaseCheckoutLock(opts.FeaturePath)
+	if opts.mutationLockToken == "" {
+		return nil
+	}
+	return ReleaseCheckoutMutationLock(checkoutMutationStateDir(opts), opts.mutationLockToken)
+}
+
+func checkoutSyncRecoveryMutationToken(opts CheckoutSyncOpts, tx *CheckoutTransaction) (string, error) {
+	expected := checkoutSyncMutationToken(tx.Feature, tx.StartedAt, tx.OriginalHEAD)
+	info, _, err := ReadCheckoutMutationLock(checkoutMutationStateDir(opts))
+	if err == nil {
+		wantState := CheckoutTransactionPath(opts.FeaturePath)
+		if info.Token != expected || info.Feature != tx.Feature || info.Operation != "sync" || info.StatePath != wantState {
+			return "", fmt.Errorf("checkout mutation lock belongs to foreign %s for feature %q", info.Operation, info.Feature)
+		}
+		return expected, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	return expected, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -815,6 +1222,11 @@ func RunCheckoutSync(opts CheckoutSyncOpts) error {
 	if HasCheckoutTransaction(opts.FeaturePath) {
 		return fmt.Errorf("checkout sync transaction already exists; use --continue or --abort")
 	}
+	if opts.NewMode {
+		if err := validateCheckoutStackRepos(opts.FeaturePath); err != nil {
+			return err
+		}
+	}
 	if gitOperationInProgress(opts.RepoDir) {
 		return fmt.Errorf("another Git operation is in progress; complete or abort it before checkout sync")
 	}
@@ -891,8 +1303,18 @@ func RunCheckoutSync(opts CheckoutSyncOpts) error {
 		sel = insp.Selection
 	}
 
-	// Lock
+	// Workspace-global lock first, then the feature compatibility lock. Every
+	// checkout mutator takes this order, so two features can never mutate the
+	// one physical checkout concurrently and recovery cannot deadlock.
+	startedAt := time.Now().UTC().Format(time.RFC3339)
+	token := checkoutSyncMutationToken(opts.Feature, startedAt, originalHEAD)
+	if _, err := AcquireCheckoutMutationLock(checkoutMutationStateDir(opts), token, opts.Feature, "sync",
+		CheckoutTransactionPath(opts.FeaturePath)); err != nil {
+		return err
+	}
+	opts.mutationLockToken = token
 	if err := AcquireCheckoutLock(opts.FeaturePath); err != nil {
+		_ = ReleaseCheckoutMutationLock(checkoutMutationStateDir(opts), token)
 		return err
 	}
 
@@ -933,7 +1355,7 @@ func RunCheckoutSync(opts CheckoutSyncOpts) error {
 	default:
 		stack, err = LoadStack(opts.FeaturePath)
 		if err != nil {
-			ReleaseCheckoutLock(opts.FeaturePath)
+			_ = releaseCheckoutSyncLocks(opts)
 			return fmt.Errorf("load stack: %w", err)
 		}
 	}
@@ -949,7 +1371,7 @@ func RunCheckoutSync(opts CheckoutSyncOpts) error {
 		plan, err = BuildCheckoutPlan(opts.RepoDir, stack, sel)
 	}
 	if err != nil {
-		ReleaseCheckoutLock(opts.FeaturePath)
+		_ = releaseCheckoutSyncLocks(opts)
 		return fmt.Errorf("build plan: %w", err)
 	}
 
@@ -958,7 +1380,7 @@ func RunCheckoutSync(opts CheckoutSyncOpts) error {
 	}
 
 	if len(plan) == 0 {
-		ReleaseCheckoutLock(opts.FeaturePath)
+		_ = releaseCheckoutSyncLocks(opts)
 		return nil
 	}
 
@@ -971,11 +1393,11 @@ func RunCheckoutSync(opts CheckoutSyncOpts) error {
 		req := checkoutPlanRequest(opts, insp, fetchOutcome)
 		guardPlan, berr := BuildRebasePlan(req)
 		if berr != nil {
-			ReleaseCheckoutLock(opts.FeaturePath)
+			_ = releaseCheckoutSyncLocks(opts)
 			return berr
 		}
 		if gerr := EvaluatePlanGuard(guardPlan, opts.PlanGuard); gerr != nil {
-			ReleaseCheckoutLock(opts.FeaturePath)
+			_ = releaseCheckoutSyncLocks(opts)
 			return gerr
 		}
 		guardRun = newCheckoutPlanGuardRun(req, guardPlan, false)
@@ -984,7 +1406,7 @@ func RunCheckoutSync(opts CheckoutSyncOpts) error {
 	// Create transaction
 	tx := &CheckoutTransaction{
 		Feature:        opts.Feature,
-		StartedAt:      time.Now().UTC().Format(time.RFC3339),
+		StartedAt:      startedAt,
 		LockPID:        os.Getpid(),
 		LockCreated:    time.Now().UTC().Format(time.RFC3339),
 		Push:           opts.Push,
@@ -1016,7 +1438,7 @@ func RunCheckoutSync(opts CheckoutSyncOpts) error {
 
 	// Persist BEFORE switching
 	if err := SaveCheckoutTransaction(opts.FeaturePath, tx); err != nil {
-		ReleaseCheckoutLock(opts.FeaturePath)
+		_ = releaseCheckoutSyncLocks(opts)
 		return fmt.Errorf("persist transaction: %w", err)
 	}
 
@@ -1071,7 +1493,6 @@ func ContinueCheckoutSync(opts CheckoutSyncOpts) error {
 		return fmt.Errorf("checkout sync transaction state version %d is newer than %d; upgrade tws or remove %s",
 			tx.StateVersion, CheckoutTransactionGuardedVersion, CheckoutTransactionPath(opts.FeaturePath))
 	}
-
 	if TransactionNewMode(tx) {
 		if err := checkoutContinueMismatches(opts, tx); err != nil {
 			return err
@@ -1094,8 +1515,22 @@ func ContinueCheckoutSync(opts CheckoutSyncOpts) error {
 		insp = InspectCheckoutPlan(CheckoutPlanInspectionRequest{Opts: opts})
 	}
 
-	// For continue, we forcibly reclaim the lock (we own the transaction)
+	// Reclaim the workspace-global lock before the feature lock, matching the
+	// fresh-route order. Legacy transactions recover the token from the
+	// matching global lock without changing their frozen on-disk schema.
+	mutationToken, err := checkoutSyncRecoveryMutationToken(opts, tx)
+	if err != nil {
+		return err
+	}
+	if _, err := ReclaimCheckoutMutationLock(checkoutMutationStateDir(opts), mutationToken, tx.Feature, "sync",
+		CheckoutTransactionPath(opts.FeaturePath)); err != nil {
+		return err
+	}
+	opts.mutationLockToken = mutationToken
+	// For continue, we forcibly reclaim the feature lock (we own the
+	// transaction).
 	if err := forceAcquireCheckoutLock(opts.FeaturePath); err != nil {
+		_ = ReleaseCheckoutMutationLock(checkoutMutationStateDir(opts), mutationToken)
 		return err
 	}
 	tx.LockPID = os.Getpid()
@@ -1208,8 +1643,17 @@ func AbortCheckoutSync(opts CheckoutSyncOpts) error {
 	if opts.Continue && checkoutRecoveryIsNewMode(tx) {
 		return fmt.Errorf("--continue and --abort are mutually exclusive")
 	}
-
+	mutationToken, err := checkoutSyncRecoveryMutationToken(opts, tx)
+	if err != nil {
+		return err
+	}
+	if _, err := ReclaimCheckoutMutationLock(checkoutMutationStateDir(opts), mutationToken, tx.Feature, "sync",
+		CheckoutTransactionPath(opts.FeaturePath)); err != nil {
+		return err
+	}
+	opts.mutationLockToken = mutationToken
 	if err := forceAcquireCheckoutLock(opts.FeaturePath); err != nil {
+		_ = ReleaseCheckoutMutationLock(checkoutMutationStateDir(opts), mutationToken)
 		return err
 	}
 
@@ -1226,8 +1670,7 @@ func AbortCheckoutSync(opts CheckoutSyncOpts) error {
 	}
 
 	DeleteCheckoutTransaction(opts.FeaturePath)
-	ReleaseCheckoutLock(opts.FeaturePath)
-	return nil
+	return releaseCheckoutSyncLocks(opts)
 }
 
 // ---------- Transaction execution ----------
@@ -1624,14 +2067,34 @@ func finalizeTransaction(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 
 	// Push if requested
 	if opts.Push {
+		// Rule R-PUSH's invocation-wide preflight runs ABOVE this loop, never
+		// per entry: pushing half a stack and only then discovering the lease
+		// cannot be strengthened is exactly the outcome it exists to prevent.
+		env, preErr := reparentCheckoutPushEnvelope(opts, tx)
+		if preErr != nil {
+			tx.FailureKind = FailPersistence
+			tx.FailureMsg = "push refused: " + preErr.Error()
+			tx.Stage = StageCompleted
+			_ = SaveCheckoutTransaction(opts.FeaturePath, tx)
+			return preErr
+		}
 		for _, pe := range tx.Plan {
-			if err := gitPush(opts.RepoDir, pe.Branch); err != nil {
+			if err := gitPush(opts.RepoDir, pe.Branch, env.Decision(pe.Name), opts.reparentProse()); err != nil {
 				tx.FailureKind = FailPersistence
 				tx.FailureMsg = "push failed: " + err.Error()
 				tx.Stage = StageCompleted // branches are done, just push failed
 				_ = SaveCheckoutTransaction(opts.FeaturePath, tx)
 				return fmt.Errorf("push %s: %w; re-run --continue to retry push", pe.Branch, err)
 			}
+		}
+		if err := env.PersistClears(nil); err != nil {
+			tx.FailureKind = FailPersistence
+			tx.FailureMsg = "persist reparent remote follow-up clear after push: " + err.Error()
+			tx.Stage = StageCompleted
+			if saveErr := SaveCheckoutTransaction(opts.FeaturePath, tx); saveErr != nil {
+				return errors.Join(err, fmt.Errorf("persist checkout recovery state: %w", saveErr))
+			}
+			return fmt.Errorf("persist reparent remote follow-up clear after push: %w", err)
 		}
 	}
 
@@ -1641,19 +2104,33 @@ func finalizeTransaction(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 func finalizeCleanup(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 	// If push still pending on completed stage
 	if tx.Stage == StageCompleted && opts.Push {
+		// The retry loop is a second push INVOCATION point and carries its own
+		// invocation-wide preflight, for the same reason the normal loop does.
+		env, preErr := reparentCheckoutPushEnvelope(opts, tx)
+		if preErr != nil {
+			tx.FailureMsg = "push retry refused: " + preErr.Error()
+			_ = SaveCheckoutTransaction(opts.FeaturePath, tx)
+			return preErr
+		}
 		for _, pe := range tx.Plan {
-			if err := gitPush(opts.RepoDir, pe.Branch); err != nil {
+			if err := gitPush(opts.RepoDir, pe.Branch, env.Decision(pe.Name), opts.reparentProse()); err != nil {
 				tx.FailureMsg = "push retry failed: " + err.Error()
 				_ = SaveCheckoutTransaction(opts.FeaturePath, tx)
 				return fmt.Errorf("push %s: %w", pe.Branch, err)
 			}
 		}
+		if err := env.PersistClears(nil); err != nil {
+			tx.FailureMsg = "persist reparent remote follow-up clear after push retry: " + err.Error()
+			if saveErr := SaveCheckoutTransaction(opts.FeaturePath, tx); saveErr != nil {
+				return errors.Join(err, fmt.Errorf("persist checkout recovery state: %w", saveErr))
+			}
+			return fmt.Errorf("persist reparent remote follow-up clear after push retry: %w", err)
+		}
 	}
 
 	tx.Stage = StageCompleted
 	DeleteCheckoutTransaction(opts.FeaturePath)
-	ReleaseCheckoutLock(opts.FeaturePath)
-	return nil
+	return releaseCheckoutSyncLocks(opts)
 }
 
 // ---------- Restoration ----------
@@ -1726,4 +2203,55 @@ func TestIsAncestor(repoDir, ancestor, descendant string) (bool, error) {
 // MarshalLockInfo marshals lock info for testing.
 func MarshalLockInfo(info *LockInfo) ([]byte, error) {
 	return yaml.Marshal(info)
+}
+
+// ---------------------------------------------------------------------------
+// Rule R-PUSH (§12.4) — the checkout arm
+// ---------------------------------------------------------------------------
+
+// reparentProse is where rule R-PUSH's anchored warning lines go.
+func (o CheckoutSyncOpts) reparentProse() io.Writer {
+	if o.ReparentProse != nil {
+		return o.ReparentProse
+	}
+	return os.Stderr
+}
+
+// reparentCheckoutPushEnvelope evaluates and persists local clearing
+// observations under the checkout mutation lock, reloads the record, then runs
+// invocation-wide lease preflight before the first push.
+func reparentCheckoutPushEnvelope(opts CheckoutSyncOpts, tx *CheckoutTransaction) (ReparentPushEnvelope, error) {
+	if refusal := ReparentPushMutationRefusal(opts.Reparent); refusal != nil {
+		return ReparentPushEnvelope{Loc: opts.Reparent}, AnchorReparentRefusal(refusal)
+	}
+	env := LoadReparentPushEnvelope(opts.Reparent, opts.RepoDir)
+	if refusal := env.LoadRefusal(); refusal != nil {
+		// A record that exists and cannot be trusted refuses the whole
+		// invocation before its first push, exactly like a lease that cannot
+		// be strengthened. Both travel anchored, because this error is
+		// rendered by the shipped checkout sync path, not by the reparent
+		// command's own writer.
+		return env, AnchorReparentRefusal(refusal)
+	}
+	if env.Record != nil {
+		stack, err := LoadStack(opts.FeaturePath)
+		if err != nil {
+			return env, err
+		}
+		env, err = PrepareReparentPushEnvelope(opts.Reparent, opts.RepoDir, &stack, true)
+		if err != nil {
+			return env, err
+		}
+	}
+	if !env.Active() {
+		return env, nil
+	}
+	names := make([]string, 0, len(tx.Plan))
+	for _, pe := range tx.Plan {
+		names = append(names, pe.Name)
+	}
+	if pre := env.Preflight(names); pre.Refuse {
+		return env, AnchorReparentRefusal(pre.Refusal())
+	}
+	return env, nil
 }

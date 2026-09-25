@@ -172,11 +172,24 @@ func safeArchiveTarget(root, name string) (string, error) {
 
 // isRuntimeState returns true for explicit runtime-state paths.
 //
-// The list is exact-name only: no prefix matching, so no user file is filtered
-// accidentally. Any future runtime-state file MUST be added here explicitly.
+// The list is exact-name only, with two deliberate prefix families: every
+// `.reparent*` artifact of the safe-reparent transaction — the state file, the
+// remote follow-up record and the `.reparent/` scratch tree — is runtime state
+// that must never travel in an export or be recreated by an import. They are
+// grouped by prefix rather than enumerated because the scratch tree's children
+// are run-id-named and cannot be listed. `.session-intents/` is likewise
+// token-named, ephemeral and tool-owned. No user file can collide: both
+// families are dot-prefixed and reserved.
+//
+// Any other future runtime-state file MUST be added here explicitly.
 func isRuntimeState(path string) bool {
 	normalized := filepath.ToSlash(path)
-	return strings.HasPrefix(normalized, ".tws/state/") ||
+	if reparentPathHasScratchComponent(normalized) {
+		return true
+	}
+	return normalized == ".session-intents" ||
+		strings.HasPrefix(normalized, ".session-intents/") ||
+		strings.HasPrefix(normalized, ".tws/state/") ||
 		normalized == ".tws/state" ||
 		normalized == ".sync-state.yaml" ||
 		normalized == ".sync-state.v2.yaml" ||

@@ -97,8 +97,9 @@ unchanged. Notes:
   retries only the entries that were never pushed. A `scope=all` run, `tws push`,
   and the no-flag `tws sync --push` push the whole feature and keep today's
   lenient per-entry failure line.
-- Running two syncs against one feature concurrently is still unsafe: a scoped
-  run is guarded, but a no-flag run takes no lock. This is not fixed.
+- Every mutating external sync route, including the no-flag route, holds the
+  shared feature mutation guard through rebase, metadata, optional push, and
+  remote-follow-up clearing. Concurrent mutation of one feature is refused.
 - Downgrading in the middle of a scoped run: an older tws fails closed on plain
   sync and on `--continue`. Downgrading *after* an explicit old `--abort` is
   unsupported.
@@ -134,6 +135,12 @@ lock, a base that does not resolve, an incomplete previous run — keeps its own
 wording, exits `1`, and is never marked. `--plan` itself exits `0` even when
 it describes a refusal, so decide whether to execute from the plan's own
 fields, never from that exit status.
+
+Reparent downgrade protection is narrower: v1.2.16 same-feature sync
+plain/continue/abort fails closed only after the compatibility envelope exists.
+It cannot see artifact-before-compat crash window 1, workspace-global locks,
+unrelated-feature checkout reparent, or top-level push. **Do not use an older
+tws while any reparent is active or recoverable.**
 
 - **Amend-aware** — uses `--onto` to avoid ghost conflicts from amended commits
 - **Archived branch support** — syncs archived branches via `--update-refs` or optimistic rebase
@@ -198,6 +205,9 @@ tws init --register --register-alias myapp   # also enroll in the global registr
 | `tws push <feature> [--dry-run]` | Push all branches |
 | `tws stack <feature>` | Show dependency tree |
 | `tws stack status <feature> [--json]` | Stack ancestry, materialization, and upstream status |
+| `tws stack reparent <feature> <entry> --onto <dest>` | Move one entry onto a new parent and replay its descendants |
+| `tws stack reparent <feature> <entry> --onto <dest> --plan --max-replay-total N [--json]` | Preview the bounded reparent; moves no branch and writes no tws state; may fetch according to policy |
+| `tws stack reparent <feature> --continue` / `--abort` | Resume or roll back the persisted reparent |
 | `tws list` / `tws ls` | List features and branches |
 | `tws delete <feature>` | Remove feature and worktrees |
 | `tws archive <feature> <branch>` | Remove worktree, keep branch |
@@ -225,6 +235,83 @@ tws init --register --register-alias myapp   # also enroll in the global registr
 | `tws space show <name> [--feature f \| --workspace] [--json]` | Show one linked space |
 | `tws space remove <name> [--feature f \| --workspace]` | Drop the link (never deletes the target) |
 | `tws init [--agent] [--force] [--register] [--register-alias name]` | Install agent skills |
+
+### Reparent a branch onto a new base
+
+```sh
+# 1. preview — moves no branch, writes no tws state, makes no provider call
+tws stack reparent auth auth-middleware --onto main --plan --max-replay-total 20
+
+# 2. approve the exact previewed plan; a fresh run is ALWAYS guarded
+tws stack reparent auth auth-middleware --onto main \
+  --approve-plan <fingerprint> --max-replay-total 20
+
+# 3. recover, if a replay conflicts
+tws stack reparent auth --continue     # resume forward
+tws stack reparent auth --abort        # roll back
+```
+
+The stored base is canonical: a stack-entry destination stores its logical
+entry name, a named literal ref stores its full `refs/...` name, and a raw
+object-id destination stores the full lowercase OID. The ref commit is
+race-atomic in the compare-and-swap sense: a concurrent write to any
+expected-old ref aborts the ref transaction during prepare; this is not reader
+snapshot isolation. It is crash-atomic only on the reftable backend. A
+reparent has exactly one commit point. Refs, `stack.yaml`, and worktree/index
+state are separate effects; the commit point requires both a
+durably written post-image metadata file and refs that are either already at
+their planned values or a no-op. After that point recovery is forward-only:
+`--abort` completes and cleans up rather than undoing the
+topology change.
+
+`--continue` and `--abort` never take an approval token, a destination, a
+cutoff, a limit or a fetch flag: they take the whole frozen decision from
+persisted state.
+
+The preview and execution MUST carry the same replay limit flag(s) and values;
+a limitless preview has a null fingerprint and cannot be approved.
+
+Because checkout mode has one physical checkout, any checkout reparent blocks
+opening a session for every feature in that workspace until recovery finishes.
+Checkout `tws open <feature> --feature-dir` holds the same workspace launch
+intent through its agent and shell and repeats the mutation/reparent/session
+check after publishing that intent.
+External direct, tmux, feature-directory, and `--all` launches publish intent
+before their final mutation check; exclusion is limited to the target and
+affected descendants. Checkout sync and reparent also share one
+workspace-global mutation lock, so different features cannot move the physical
+checkout at the same time; any checkout stack entry with a non-empty `repo` is
+refused. If the checkout-global lock is absent, current tws scans every
+feature's recoverable checkout sync/reparent state before admitting a fresh
+mutation, while recovery reconstructs only its own reservation. A real
+top-level external push holds the feature mutation lock across
+its whole multi-entry invocation, so reparent cannot enter between preflight
+and a later push. Every mutating external sync route holds the same feature
+mutation lock through rebase, metadata, optional push, and remote follow-up
+clearing; it rechecks reparent state after claiming and releases last. Under
+that lock, obsolete/archived follow-up rows clear
+before lease capability preflight; dry-run evaluates the same clears in memory.
+Crash recovery removes a dead checkout launch intent only while holding the
+workspace-global lock, never treats an exact pre-reparent ref as proof that the
+commit happened, and refuses to redetach a restored holder if the operator
+switched it to another branch.
+
+Repository aliases are not silently normalized into topology: if two sides of
+a logical edge use different stored `repo` spellings even though both resolve
+to one Git common directory, reparent refuses until all shipped stack readers
+are common-dir-aware. Validation snapshots the untracked set before each
+command, so preexisting untracked paths are allowed while new untracked paths
+and all tracked modifications remain residue. Pre-commit abort journals remote
+record restoration before writing/removing it and resumes that restore
+idempotently after a crash.
+
+tws changes no remote ref and no pull request. A reparented branch whose pull
+request still points at the old base is recorded locally, so the next `tws push`
+warns and strengthens its lease with `--force-if-includes`. Real pushes are
+refused while the reparent commit point is still unproven, so a later abort
+cannot lose its remote-protection record. A newer run also preserves an older
+same-branch publication observation when the local tracking ref is temporarily
+missing; only a positive local clear removes that protection.
 
 ### Global Workspace Registry
 

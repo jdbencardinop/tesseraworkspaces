@@ -55,12 +55,8 @@ func loadConfigFile(path string) Config {
 	return cfg
 }
 
-// LoadConfig loads the global config, then merges per-repo config on top.
-// Per-repo values override global values when set.
-func LoadConfig() Config {
-	cfg := loadConfigFile(ConfigPath())
-	repo := loadConfigFile(repoConfigPath())
-
+func mergeConfig(base, repo Config) Config {
+	cfg := base
 	if repo.AgentCommand != "" {
 		cfg.AgentCommand = repo.AgentCommand
 	}
@@ -88,8 +84,24 @@ func LoadConfig() Config {
 		}
 		maps.Copy(cfg.Workspaces, repo.Workspaces)
 	}
-
 	return cfg
+}
+
+// LoadConfig loads the global config, then merges per-repo config on top.
+// Per-repo values override global values when set.
+func LoadConfig() Config {
+	return mergeConfig(loadConfigFile(ConfigPath()), loadConfigFile(repoConfigPath()))
+}
+
+func LoadConfigForRepo(repoRoot string) Config {
+	return mergeConfig(loadConfigFile(ConfigPath()), loadConfigFile(RepoConfigPathFor(repoRoot)))
+}
+
+func RepoConfigPathFor(repoRoot string) string {
+	if repoRoot == "" {
+		return ""
+	}
+	return filepath.Join(repoRoot, ".tws", "config.yaml")
 }
 
 // SaveConfigFile writes a config to the given path.

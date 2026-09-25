@@ -323,6 +323,12 @@ type AgentStatusFeature struct {
 	RuntimePresence RuntimePresence         `json:"runtime_presence"`
 	AgentState      AgentState              `json:"agent_state"`
 	Attention       AttentionRollup         `json:"attention"`
+
+	// Reparent is the §11.10 projection of an in-progress safe reparent. It is
+	// an omitempty POINTER, so the key is ABSENT — never null — whenever no
+	// artifact exists, which leaves the no-reparent document byte-identical to
+	// today and requires no schema_version bump.
+	Reparent *ReparentProjection `json:"reparent,omitempty"`
 }
 
 // TmuxStatus is the workspace-level tmux inventory summary.
@@ -777,7 +783,21 @@ type statusBuilder struct {
 	sessionAttributable bool
 	sessionPending      *pendingEntryIssue
 	tmuxRecordSeen      bool
+
+	// reparentActive is "this feature holds a reparent artifact right now",
+	// measured ONCE per feature, before buildFeatureSync. While it is true the
+	// §11.2 compatibility files are correct guards, not corrupt sync state,
+	// and §11.10 rule 2 forbids every surface from telling the operator to
+	// remove them.
+	reparentActive bool
 }
+
+// suppressCompatibilityHint is §11.10 rule 2 / AC-084. It answers "may this
+// surface publish an invalid/corrupt/manually-remove hint about the §11.2
+// compatibility artifacts?" — never about anything else. Ancestry status and
+// reason are still reported; only the guidance is replaced by the anchored
+// reparent line.
+func (b *statusBuilder) suppressCompatibilityHint() bool { return b.reparentActive }
 
 func (b *statusBuilder) issue(code string, sev CheckoutSeverity, scope IssueScope, feature, name, message, guidance string) {
 	iss := AgentStatusIssue{
@@ -845,7 +865,23 @@ func BuildAgentStatus(ws Workspace, degradedReason string, opts *AgentStatusOpts
 
 	// 3/4. One tmux snapshot and one worktree inventory per invocation.
 	b.tmux = resolved.Tmux.Snapshot()
-	b.wt = BuildWorktreeInventory(ws.RepoRoot)
+	// §14.2a: a reparent run's own computation worktree is tool-owned scratch,
+	// not a materialization of any logical branch. Filtering it here — never
+	// inside BuildWorktreeInventory, which stays a faithful porcelain parser —
+	// keeps every status surface from reporting it as a stray holder.
+	var activeScratch []string
+	if ws.Mode == ModeExternal {
+		for _, feature := range features {
+			featurePath, resolveErr := ws.ResolveFeaturePath(feature)
+			if resolveErr != nil {
+				continue
+			}
+			if path := ActiveReparentScratchPath(ReparentLocationFor(ws, feature, featurePath)); path != "" {
+				activeScratch = append(activeScratch, path)
+			}
+		}
+	}
+	b.wt = ExcludeReparentScratchWorktrees(BuildWorktreeInventory(ws.RepoRoot), activeScratch...)
 
 	// 5. Workspace header and the issues those fields alone determine.
 	b.buildWorkspaceHeader(degradedReason)
@@ -1001,7 +1037,7 @@ func (b *statusBuilder) projectCheckoutSession() {
 
 	_, stateErr := os.Stat(statePath)
 	stateExists := stateErr == nil || !errors.Is(stateErr, fs.ErrNotExist)
-	_, lockErr := os.Stat(lockDir)
+	_, lockErr := os.Lstat(lockDir)
 	lockExists := lockErr == nil || !errors.Is(lockErr, fs.ErrNotExist)
 
 	if !stateExists {
@@ -1152,14 +1188,19 @@ func (b *statusBuilder) evaluateLock(lockExists bool) {
 			"checkout session state exists but the session lock is missing", "run: tws close")
 		return
 	}
-	data, err := os.ReadFile(sessionLockOwnerPath(b.ws))
+	snapshot, present, err := loadCheckoutSessionIntentSnapshot(b.ws)
+	if !present {
+		b.issue(IssueSessionLockMissing, SeverityWarning, ScopeWorkspace, "", "",
+			"checkout session state exists but the session lock is missing", "run: tws close")
+		return
+	}
 	if err != nil {
 		b.issue(IssueSessionLockInvalid, SeverityWarning, ScopeWorkspace, "", "",
 			"checkout session lock owner is unreadable", "run: tws close")
 		return
 	}
-	var owner sessionLockOwner
-	if err := json.Unmarshal(data, &owner); err != nil {
+	owner, err := snapshot.decodeOwner()
+	if err != nil {
 		b.issue(IssueSessionLockInvalid, SeverityWarning, ScopeWorkspace, "", "",
 			"checkout session lock owner is unparseable", "run: tws close")
 		return
@@ -1265,8 +1306,16 @@ func (b *statusBuilder) buildFeature(feature string) (AgentStatusFeature, error)
 			"inspect "+StackPath(featurePath))
 	}
 
+	// §11.10: the reparent projection is computed BEFORE buildFeatureSync, so
+	// the compatibility-hint suppression is already in force when the sync
+	// projection runs. It is strictly read-only and never evaluates the §12.3
+	// remote follow-up record.
+	view.Reparent = BuildReparentProjection(ReparentLocationFor(b.ws, feature, featurePath))
+	b.reparentActive = view.Reparent != nil
+
 	syncView, external := b.buildFeatureSync(feature, featurePath)
 	view.Sync = syncView
+	b.reparentActive = false
 
 	records := map[string][]LoadedDirectSession{}
 	if b.ws.Mode == ModeExternal {
@@ -1360,7 +1409,7 @@ func (b *statusBuilder) buildFeatureSync(feature, featurePath string) (*AgentSta
 		if _, err := os.Stat(txPath); err != nil {
 			return nil, nil
 		}
-		rep := buildOneSyncReport(feature, txPath, stateDir, proberAsChecker{b.opts.Proc})
+		rep := buildOneSyncReport(feature, txPath, stateDir, proberAsChecker{b.opts.Proc}, b.suppressCompatibilityHint())
 		view := &AgentStatusFeatureSync{
 			Kind:      "checkout",
 			Liveness:  strPtr(rep.Liveness),
@@ -1430,9 +1479,11 @@ func (b *statusBuilder) buildFeatureSync(feature, featurePath string) (*AgentSta
 	}
 	state, loadErr := LoadSyncState(featurePath)
 	if loadErr != nil || state == nil {
-		b.issue(IssueSyncStateInvalid, SeverityWarning, ScopeFeature, feature, "",
-			fmt.Sprintf("sync state is unreadable or unparseable: %v", loadErr),
-			"inspect "+statePath)
+		if !b.suppressCompatibilityHint() {
+			b.issue(IssueSyncStateInvalid, SeverityWarning, ScopeFeature, feature, "",
+				fmt.Sprintf("sync state is unreadable or unparseable: %v", loadErr),
+				"inspect "+statePath)
+		}
 		return &AgentStatusFeatureSync{
 			Kind:      "external",
 			Liveness:  strPtr("invalid"),
@@ -1520,9 +1571,11 @@ func (b *statusBuilder) buildExternalSyncCell(feature string, st SyncExternalSta
 	// reported even under a live guard.
 	if st.PayloadErr != nil || st.PayloadSymlink {
 		view.Liveness = strPtr("invalid")
-		b.issue(IssueSyncStateInvalid, SeverityWarning, ScopeFeature, feature, "",
-			fmt.Sprintf("scoped sync state at %s is unreadable or uses an unsupported version", st.PayloadPath),
-			"inspect "+st.PayloadPath+" and remove it manually")
+		if !b.suppressCompatibilityHint() {
+			b.issue(IssueSyncStateInvalid, SeverityWarning, ScopeFeature, feature, "",
+				fmt.Sprintf("scoped sync state at %s is unreadable or uses an unsupported version", st.PayloadPath),
+				"inspect "+st.PayloadPath+" and remove it manually")
+		}
 		return view, projected
 	}
 
@@ -1556,9 +1609,11 @@ func (b *statusBuilder) buildExternalSyncCell(feature string, st SyncExternalSta
 			fmt.Sprintf("two unfinished syncs are recorded: a legacy sync failed on %s and a scoped sync failed on %s", legacyFailed, failed),
 			"inspect "+st.LegacyPath+" and "+st.PayloadPath)
 	case 11:
-		b.issue(IssueSyncStateInvalid, SeverityWarning, ScopeFeature, feature, "",
-			fmt.Sprintf("sync state at %s is unreadable, and a scoped sync record beside it failed on %s", st.LegacyPath, failed),
-			"inspect "+st.LegacyPath+" and "+st.PayloadPath)
+		if !b.suppressCompatibilityHint() {
+			b.issue(IssueSyncStateInvalid, SeverityWarning, ScopeFeature, feature, "",
+				fmt.Sprintf("sync state at %s is unreadable, and a scoped sync record beside it failed on %s", st.LegacyPath, failed),
+				"inspect "+st.LegacyPath+" and "+st.PayloadPath)
+		}
 	}
 	return view, projected
 }

@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -86,9 +87,11 @@ func setupSessionRepo(t *testing.T) (string, Workspace, StackEntry) {
 }
 func gitS(t *testing.T, dir string, args ...string) string {
 	t.Helper()
+	reparentRecordGitArgv(t, args...)
+	t.Logf("session test git argv: git %s", strings.Join(args, " "))
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_EDITOR=true")
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_COUNT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_EDITOR=true")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
@@ -231,6 +234,301 @@ func TestSessionRejectsAnySyncState(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
+
+func TestReparentSessionLaunchHandshake(t *testing.T) {
+	reparentCountGitLeafFor(t)
+	t.Setenv("GIT_CONFIG_COUNT", "0")
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	_, ws, e := setupSessionRepo(t)
+
+	statePath := filepath.Join(ws.CheckoutStateDir(), "feature-reparent.v1.yaml")
+	token := strings.Repeat("a", 32)
+	if _, err := AcquireCheckoutMutationLock(ws.CheckoutStateDir(), token, "feature", "reparent", statePath); err != nil {
+		t.Fatal(err)
+	}
+	agent := &testAgent{}
+	shell := &testShell{}
+	if err := OpenCheckoutDirect(ws, "feature", e, []string{"agent"}, agent, shell, ""); err == nil ||
+		!strings.Contains(err.Error(), "sync") {
+		t.Fatalf("session launch must lose to an existing mutation lock: %v", err)
+	}
+	if agent.calls != 0 {
+		t.Fatal("the agent started despite a live checkout mutation")
+	}
+	if present, _, err := CheckoutSessionIntent(ws); err != nil || present {
+		t.Fatalf("a refused launch must release its session intent: present=%v err=%v", present, err)
+	}
+	if err := ReleaseCheckoutMutationLock(ws.CheckoutStateDir(), token); err != nil {
+		t.Fatal(err)
+	}
+
+	var mutationToken string
+	CheckoutSessionLaunchIntentHook = func() error {
+		present, _, err := CheckoutSessionIntent(ws)
+		if err != nil || !present {
+			t.Fatalf("the final-check hook must observe a durable session intent: present=%v err=%v", present, err)
+		}
+		mutationToken = strings.Repeat("b", 32)
+		_, err = AcquireCheckoutMutationLock(ws.CheckoutStateDir(), mutationToken, "feature", "reparent", statePath)
+		return err
+	}
+	agent = &testAgent{}
+	err := OpenCheckoutDirect(ws, "feature", e, []string{"agent"}, agent, shell, "")
+	CheckoutSessionLaunchIntentHook = nil
+	if err == nil || !strings.Contains(err.Error(), "sync") {
+		t.Fatalf("the final mutation check must refuse after publishing intent: %v", err)
+	}
+	if agent.calls != 0 {
+		t.Fatal("the agent started after losing the session/reparent handshake")
+	}
+	if err := ReleaseCheckoutMutationLock(ws.CheckoutStateDir(), mutationToken); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := acquireAgentSessionLock(ws, newTestTmux()); err != nil {
+		t.Fatal(err)
+	}
+	ownerPath := sessionLockOwnerPath(ws)
+	data, err := os.ReadFile(ownerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var owner sessionLockOwner
+	if err := json.Unmarshal(data, &owner); err != nil {
+		t.Fatal(err)
+	}
+	owner.PID = reparentSpawnDeadPID(t)
+	data, _ = json.Marshal(owner)
+	if err := os.WriteFile(ownerPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []*CheckoutAgentSession{
+		{
+			SchemaVersion: checkoutSessionSchema, WorkspaceID: ws.StableID,
+			Feature: "feature", Name: "feature-branch", GitBranch: "feature-branch",
+			Mode: AgentSessionDirect, PID: reparentSpawnDeadPID(t), RepoDir: ws.RepoRoot,
+		},
+		{
+			SchemaVersion: checkoutSessionSchema, WorkspaceID: ws.StableID,
+			Feature: "feature", Name: "feature-branch", GitBranch: "feature-branch",
+			Mode: AgentSessionTmux, TmuxSession: "missing-tmux", RepoDir: ws.RepoRoot,
+		},
+	} {
+		if err := SaveCheckoutAgentSession(ws, state); err != nil {
+			t.Fatal(err)
+		}
+		stateBefore, err := os.ReadFile(sessionStatePath(ws))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := CleanupStaleCheckoutSessionIntent(ws); err == nil ||
+			!strings.Contains(err.Error(), "close or recover") {
+			t.Fatalf("%s state did not protect the dead launch intent: %v", state.Mode, err)
+		}
+		if _, err := acquireAgentSessionLock(ws, newTestTmux()); err == nil ||
+			!strings.Contains(err.Error(), "close or recover") {
+			t.Fatalf("%s state allowed a later launch to overwrite it: %v", state.Mode, err)
+		}
+		if after, err := os.ReadFile(sessionStatePath(ws)); err != nil ||
+			string(after) != string(stateBefore) {
+			t.Fatalf("%s state changed during refused cleanup/launch: %q (%v)", state.Mode, after, err)
+		}
+		if _, err := os.Stat(CheckoutSessionIntentDir(ws)); err != nil {
+			t.Fatalf("%s state allowed intent removal: %v", state.Mode, err)
+		}
+		if err := os.Remove(sessionStatePath(ws)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if present, _, err := CheckoutSessionIntent(ws); err != nil || present {
+		t.Fatalf("dead launcher intent must not remain a blocker: present=%v err=%v", present, err)
+	}
+	cleanupToken := strings.Repeat("c", 32)
+	if _, err := AcquireCheckoutMutationLock(ws.CheckoutStateDir(), cleanupToken, "feature", "reparent", statePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := CleanupStaleCheckoutSessionIntent(ws); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(CheckoutSessionIntentDir(ws)); !os.IsNotExist(err) {
+		t.Fatalf("post-lock stale intent cleanup left residue: %v", err)
+	}
+	if err := ReleaseCheckoutMutationLock(ws.CheckoutStateDir(), cleanupToken); err != nil {
+		t.Fatal(err)
+	}
+	var admissionToken string
+	CheckoutSessionLaunchIntentHook = func() error {
+		admissionToken = strings.Repeat("d", 32)
+		if _, err := AcquireCheckoutMutationLock(
+			ws.CheckoutStateDir(), admissionToken, "feature", "reparent", statePath,
+		); err != nil {
+			return err
+		}
+		present, _, err := CheckoutSessionIntent(ws)
+		if err != nil || !present {
+			t.Fatalf("mutation admission did not observe the published feature-directory intent: present=%v err=%v", present, err)
+		}
+		return ReleaseCheckoutMutationLock(ws.CheckoutStateDir(), admissionToken)
+	}
+	checkIntent := func(phase string) {
+		t.Helper()
+		present, _, err := CheckoutSessionIntent(ws)
+		if err != nil || !present {
+			t.Fatalf("%s did not retain the checkout launch intent: present=%v err=%v", phase, present, err)
+		}
+	}
+	err = WithCheckoutSessionLaunchIntent(ws, func() error {
+		checkIntent("final check")
+		return CheckoutFeatureDirSessionPreconditions(ws)
+	}, func() error {
+		checkIntent("agent")
+		checkIntent("shell")
+		return nil
+	})
+	CheckoutSessionLaunchIntentHook = nil
+	if err != nil {
+		t.Fatalf("winning feature-directory launch: %v", err)
+	}
+	if present, _, err := CheckoutSessionIntent(ws); err != nil || present {
+		t.Fatalf("completed feature-directory launch left intent: present=%v err=%v", present, err)
+	}
+}
+
+func TestCheckoutSessionIntentCleanupRejectsSymlinksAndChanges(t *testing.T) {
+	t.Cleanup(func() { CheckoutSessionIntentCleanupHook = nil })
+	ownerBytes := func(t *testing.T, token string) []byte {
+		t.Helper()
+		data, err := json.Marshal(sessionLockOwner{
+			Token: token, PID: reparentSpawnDeadPID(t), CreatedAt: "2026-09-23T00:00:00Z",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	writeIntent := func(t *testing.T, ws Workspace, data []byte) {
+		t.Helper()
+		if err := os.MkdirAll(sessionLockDir(ws), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(sessionLockOwnerPath(ws), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("symlink outside workspace is never followed", func(t *testing.T) {
+		ws := Workspace{MetadataRoot: t.TempDir()}
+		if err := os.MkdirAll(filepath.Dir(sessionLockDir(ws)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		outside := t.TempDir()
+		secret := ownerBytes(t, "outside-secret-token")
+		outsideOwner := filepath.Join(outside, sessionLockOwnerName)
+		if err := os.WriteFile(outsideOwner, secret, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, sessionLockDir(ws)); err != nil {
+			t.Fatal(err)
+		}
+
+		present, _, err := CheckoutSessionIntent(ws)
+		if !present || err == nil {
+			t.Fatalf("symlink intent = present %v err %v, want unverifiable/live", present, err)
+		}
+		if strings.Contains(err.Error(), "outside-secret-token") {
+			t.Fatalf("symlink target owner bytes leaked through the intent probe: %v", err)
+		}
+		if _, err := acquireAgentSessionLock(ws, newTestTmux()); err == nil {
+			t.Fatal("session launch must refuse a symlinked intent directory")
+		}
+		if err := releaseAgentSessionLock(ws, "outside-secret-token"); err == nil {
+			t.Fatal("session release must refuse a symlinked intent directory")
+		}
+		if err := CleanupStaleCheckoutSessionIntent(ws); err == nil {
+			t.Fatal("stale cleanup must refuse a symlinked intent directory")
+		}
+		after, err := os.ReadFile(outsideOwner)
+		if err != nil || string(after) != string(secret) {
+			t.Fatalf("symlink target changed: %q (%v)", after, err)
+		}
+		if info, err := os.Lstat(sessionLockDir(ws)); err != nil || info.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("intent symlink was removed or replaced: %v (%v)", info, err)
+		}
+	})
+
+	t.Run("non-directory intent is unverifiable", func(t *testing.T) {
+		ws := Workspace{MetadataRoot: t.TempDir()}
+		if err := os.MkdirAll(filepath.Dir(sessionLockDir(ws)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		body := []byte("not a directory\n")
+		if err := os.WriteFile(sessionLockDir(ws), body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		present, _, err := CheckoutSessionIntent(ws)
+		if !present || err == nil {
+			t.Fatalf("non-directory intent = present %v err %v, want unverifiable/live", present, err)
+		}
+		if err := CleanupStaleCheckoutSessionIntent(ws); err == nil {
+			t.Fatal("stale cleanup must refuse a non-directory intent")
+		}
+		after, err := os.ReadFile(sessionLockDir(ws))
+		if err != nil || string(after) != string(body) {
+			t.Fatalf("non-directory intent changed: %q (%v)", after, err)
+		}
+	})
+
+	t.Run("owner bytes change before removal", func(t *testing.T) {
+		ws := Workspace{MetadataRoot: t.TempDir()}
+		original := ownerBytes(t, "original-owner")
+		writeIntent(t, ws, original)
+		replacement := ownerBytes(t, "replacement-owner")
+		CheckoutSessionIntentCleanupHook = func() error {
+			return os.WriteFile(sessionLockOwnerPath(ws), replacement, 0o600)
+		}
+		err := CleanupStaleCheckoutSessionIntent(ws)
+		CheckoutSessionIntentCleanupHook = nil
+		if err == nil || !strings.Contains(err.Error(), "changed during stale cleanup") {
+			t.Fatalf("changed owner cleanup = %v", err)
+		}
+		after, readErr := os.ReadFile(sessionLockOwnerPath(ws))
+		if readErr != nil || string(after) != string(replacement) {
+			t.Fatalf("replacement owner was removed or changed: %q (%v)", after, readErr)
+		}
+		if err := CleanupStaleCheckoutSessionIntent(ws); err != nil {
+			t.Fatalf("cleanup of unchanged replacement: %v", err)
+		}
+	})
+
+	t.Run("directory identity change before removal", func(t *testing.T) {
+		ws := Workspace{MetadataRoot: t.TempDir()}
+		owner := ownerBytes(t, "directory-owner")
+		writeIntent(t, ws, owner)
+		dir := sessionLockDir(ws)
+		moved := dir + ".moved"
+		CheckoutSessionIntentCleanupHook = func() error {
+			if err := os.Rename(dir, moved); err != nil {
+				return err
+			}
+			if err := os.Mkdir(dir, 0o700); err != nil {
+				return err
+			}
+			return os.WriteFile(sessionLockOwnerPath(ws), owner, 0o600)
+		}
+		err := CleanupStaleCheckoutSessionIntent(ws)
+		CheckoutSessionIntentCleanupHook = nil
+		if err == nil || !strings.Contains(err.Error(), "changed during stale cleanup") {
+			t.Fatalf("changed directory cleanup = %v", err)
+		}
+		for _, path := range []string{filepath.Join(dir, sessionLockOwnerName), filepath.Join(moved, sessionLockOwnerName)} {
+			after, readErr := os.ReadFile(path)
+			if readErr != nil || string(after) != string(owner) {
+				t.Fatalf("identity-race owner %s changed: %q (%v)", path, after, readErr)
+			}
+		}
+	})
+}
+
 func TestClaudeSessionDetection(t *testing.T) {
 	repo, _, _ := setupSessionRepo(t)
 	home := t.TempDir()

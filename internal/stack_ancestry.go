@@ -859,3 +859,35 @@ func FeatureStackEdges(ws Workspace, cfg Config, feature, featurePath string, st
 	}
 	return edges, res
 }
+
+// ---------------------------------------------------------------------------
+// §11.10 rule 2 — the ancestry guidance suppression seam
+//
+// This is a SEAM ONLY: no ancestry decision changes. EvaluateStackAncestry,
+// FeatureStackEdges, stackBaseRef and ancestryMergeBase are untouched, every
+// edge keeps its Status, Reason, Severity and Notes, and only the repair
+// GUIDANCE — the `tws sync <feature>` / manual `git rebase --onto` advice — is
+// withheld while a reparent artifact exists. Following that advice mid-reparent
+// would bypass the transaction, and the sync verbs it names are refused by
+// §11.2 anyway.
+// ---------------------------------------------------------------------------
+
+// SuppressReparentAncestryGuidance returns a copy of edges with every
+// Guidance string cleared. Notes keep their own details: a note is an
+// observation, never an instruction to run a refused verb.
+func SuppressReparentAncestryGuidance(edges []StackEdge) []StackEdge {
+	out := make([]StackEdge, len(edges))
+	copy(out, edges)
+	for i := range out {
+		out[i].Guidance = ""
+	}
+	return out
+}
+
+// ReparentGuidanceSuppressed answers whether a surface must apply the seam for
+// one feature of one workspace. It is a bare os.Stat through
+// HasReparentState: strictly read-only, no decode, no Git child, and it never
+// evaluates the §12.3 remote follow-up record.
+func ReparentGuidanceSuppressed(ws Workspace, feature, featurePath string) bool {
+	return HasReparentState(ReparentLocationFor(ws, feature, featurePath))
+}

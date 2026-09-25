@@ -51,10 +51,41 @@ Shipped foundations:
   guarded run records its bound in recovery state so an older tws release
   refuses to resume it instead of silently dropping the guard; and a guard
   refusal is a single anchored line on stderr, distinct from every refusal
-  tws already performed.
+  tws already performed;
+- safe reparent/restack: `tws stack reparent <feature> <entry> --onto <dest>`
+  moves one stack entry onto a new parent and replays its descendant closure,
+  coordinating three separate effects for a single-parent stack: Git refs,
+  `stack.yaml` metadata, and worktree/index state. Runtime artifacts are durable
+  recovery evidence, not a fourth transactional effect. A preview route describes the whole run — destination, per-row replay
+  boundary, candidate counts, collateral refs, holders and remote follow-up —
+  and moves no branch and writes no tws state; may fetch according to policy. A
+  fresh execution is always guarded: it requires the fingerprint that preview
+  printed plus a replay bound, re-enforced against freshly measured counts
+  immediately before each row is computed. Every moved branch lands in one
+  compare-and-swap ref transaction, so the ref commit is race-atomic and
+  crash-atomic only on the reftable backend; the run has exactly one commit point,
+  requiring both a durably written post-image `stack.yaml` and refs already at
+  their planned values, and recovery past it is forward-only. The resume and
+  rollback verbs take the whole frozen decision from persisted state and never
+  accept an approval token. External direct/tmux/all launches publish intent
+  before their final mutation check, and top-level external push holds the
+  feature mutation lock across every entry. Every mutating external sync route
+  holds the same lock through rebase, metadata, optional push and remote
+  follow-up clearing, rechecks reparent state after claiming, and releases
+  last. Checkout feature-directory opens retain the workspace launch intent
+  through their agent/shell after a final mutation/reparent/session check.
+  Repository aliases with different stored spellings are refused even when
+  they share one common dir. A stack-entry destination stores its logical entry
+  name, a named literal ref stores its full `refs/...` name, and a raw object
+  id stores the full lowercase OID. tws changes no remote ref and no pull request; a
+  rewritten branch is recorded locally so the next push warns and strengthens
+  its lease. When the checkout-global lock is absent, current tws scans every
+  feature's recoverable checkout sync/reparent state before fresh mutation and
+  reconstructs only the matching recovery reservation. v1.2.16 only fails closed for same-feature sync after envelope
+  birth; do not use an older tws while any reparent is active or recoverable.
 
-Current target: **safe reparent/restack** — update Git and metadata
-atomically for a single-parent stack.
+Current target: **scoped status projection** — let the status surfaces project
+only the feature the operator asked about instead of scanning every feature.
 
 Follow-ups explicitly owned by later features rather than by `tws status`:
 
@@ -90,7 +121,8 @@ For decoupled names, `StackEntry.Name` identifies the tws worktree while `StackE
 ## P1 stack safety and observability backlog
 
 - **Sync modes (shipped)**: local-only propagation, no-fetch operation, surgical branch/descendant sync, and explicit root targets, with the frozen decision persisted and carried through `--continue`/`--abort`.
-- **Safe reparent/restack**: update Git and metadata atomically for a single-parent stack.
+- **Safe reparent/restack (shipped)**: `tws stack reparent` coordinates three separate effects — Git refs, `stack.yaml` metadata, and worktree/index state — behind a preview-and-approve gate. Runtime artifacts remain durable recovery evidence rather than a separate effect. Its single compare-and-swap ref transaction is race-atomic, crash-atomic only on the reftable backend, and the run has one commit point with an explicit forward-only recovery contract.
+- **Scoped status projection**: project only the requested feature on the status surfaces rather than scanning every feature of the workspace (issue #3).
 
 ## Agent integration — P2
 

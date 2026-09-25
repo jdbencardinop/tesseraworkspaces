@@ -14,14 +14,15 @@ func stackCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			if len(args) == 0 {
-				// Cobra already contributes the `status` subcommand at this
-				// position; two candidates spelled identically with different
-				// meanings is worse than one. `tws stack -- status` always
-				// reaches a feature literally named `status`.
+				// Cobra already contributes the `status` and `reparent`
+				// subcommands at this position; two candidates spelled
+				// identically with different meanings is worse than one.
+				// `tws stack -- status` / `tws stack -- reparent` always reach
+				// a feature literally named `status` / `reparent`.
 				features := internal.ListFeatures()
 				deduped := make([]string, 0, len(features))
 				for _, name := range features {
-					if name == "status" {
+					if name == "status" || name == "reparent" {
 						continue
 					}
 					deduped = append(deduped, name)
@@ -52,5 +53,6 @@ func stackCmd() *cobra.Command {
 	}
 
 	cmd.AddCommand(stackStatusCmd())
+	cmd.AddCommand(stackReparentCmd())
 	return cmd
 }

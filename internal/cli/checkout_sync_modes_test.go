@@ -52,6 +52,79 @@ func newModeOpts(dir, featurePath string, policy internal.SyncRunPolicy, changed
 	}
 }
 
+func TestReparentCheckoutSyncMutationLockCoversFreshContinueAbort(t *testing.T) {
+	reparentCountCLIGitLeaf(t)
+	dir, fp := checkoutModeFixture(t)
+	opts := newModeOpts(dir, fp, internal.SyncRunPolicy{
+		Fetch: internal.SyncFetchDisabled, Propagation: internal.SyncPropagationFull, ScopeKind: internal.SyncScopeAll,
+	})
+	stateDir := filepath.Join(dir, ".tws", "state")
+	seenFresh := false
+	internal.StepHook = func(stage internal.CheckoutStage, index int) error {
+		if stage == internal.StageRebasing {
+			info, _, err := internal.ReadCheckoutMutationLock(stateDir)
+			if err != nil || info.Operation != "sync" || info.Feature != opts.Feature {
+				t.Fatalf("fresh global lock = %+v (%v)", info, err)
+			}
+			seenFresh = true
+			return fmt.Errorf("pause fresh sync")
+		}
+		return nil
+	}
+	if err := internal.RunCheckoutSync(opts); err == nil {
+		t.Fatal("fresh sync must pause")
+	}
+	internal.StepHook = nil
+	if !seenFresh {
+		t.Fatal("fresh sync never held the workspace-global mutation lock")
+	}
+	tx, err := internal.LoadCheckoutTransaction(fp)
+	if err != nil {
+		t.Fatalf("transaction = %+v (%v)", tx, err)
+	}
+	lock, _, err := internal.ReadCheckoutMutationLock(stateDir)
+	if err != nil || lock.Token == "" {
+		t.Fatalf("global mutation ownership = %+v (%v)", lock, err)
+	}
+	mutationToken := lock.Token
+
+	seenContinue := false
+	internal.StepHook = func(stage internal.CheckoutStage, index int) error {
+		info, _, err := internal.ReadCheckoutMutationLock(stateDir)
+		if err == nil && info.Token == mutationToken {
+			seenContinue = true
+		}
+		return nil
+	}
+	if err := internal.ContinueCheckoutSync(opts); err != nil {
+		t.Fatalf("continue: %v", err)
+	}
+	internal.StepHook = nil
+	if !seenContinue {
+		t.Fatal("continue did not reclaim the workspace-global mutation lock")
+	}
+	if _, _, err := internal.ReadCheckoutMutationLock(stateDir); !os.IsNotExist(err) {
+		t.Fatalf("successful continue left the global lock: %v", err)
+	}
+
+	internal.StepHook = func(stage internal.CheckoutStage, index int) error {
+		if stage == internal.StageRebasing {
+			return fmt.Errorf("pause for abort")
+		}
+		return nil
+	}
+	if err := internal.RunCheckoutSync(opts); err == nil {
+		t.Fatal("second sync must pause")
+	}
+	internal.StepHook = nil
+	if err := internal.AbortCheckoutSync(opts); err != nil {
+		t.Fatalf("abort: %v", err)
+	}
+	if _, _, err := internal.ReadCheckoutMutationLock(stateDir); !os.IsNotExist(err) {
+		t.Fatalf("abort left the global lock: %v", err)
+	}
+}
+
 func captureRun(t *testing.T, fn func() error) (string, error) {
 	t.Helper()
 	var err error
@@ -126,6 +199,14 @@ func TestCheckoutSyncModes_TransactionRecordsFrozenDecision(t *testing.T) {
 
 func TestCheckoutSyncModes_NoFlagTransactionStaysLegacyShape(t *testing.T) {
 	dir, fp := checkoutModeFixture(t)
+	stack, err := internal.LoadStack(fp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stack.Branches[1].Repo = "/legacy/ignored-repository"
+	if err := internal.SaveStack(fp, stack); err != nil {
+		t.Fatal(err)
+	}
 	clearStepHook(t)
 	internal.StepHook = func(stage internal.CheckoutStage, i int) error {
 		if stage == internal.StageRebased {
@@ -133,9 +214,12 @@ func TestCheckoutSyncModes_NoFlagTransactionStaysLegacyShape(t *testing.T) {
 		}
 		return nil
 	}
-	_, _ = captureRun(t, func() error {
+	_, runErr := captureRun(t, func() error {
 		return internal.RunCheckoutSync(internal.CheckoutSyncOpts{Feature: "test-feature", FeaturePath: fp, RepoDir: dir})
 	})
+	if runErr != errStop {
+		t.Fatalf("legacy no-flag sync with Repo = %v, want frozen pause %v", runErr, errStop)
+	}
 	data, err := os.ReadFile(internal.CheckoutTransactionPath(fp))
 	if err != nil {
 		t.Fatal(err)
@@ -152,6 +236,53 @@ func TestCheckoutSyncModes_NoFlagTransactionStaysLegacyShape(t *testing.T) {
 	// C5: the additive per-plan-entry name key IS written on the frozen path.
 	if !strings.Contains(body, "name: feat-root") {
 		t.Fatalf("the plan must carry names even on the no-flag path:\n%s", body)
+	}
+	if strings.Contains(body, "legacy/ignored-repository") {
+		t.Fatalf("the frozen legacy transaction must continue to ignore StackEntry.Repo:\n%s", body)
+	}
+}
+
+func TestCheckoutSyncModes_LegacyRecoveryIgnoresRepoFields(t *testing.T) {
+	for _, verb := range []string{"continue", "abort"} {
+		t.Run(verb, func(t *testing.T) {
+			dir, fp := checkoutModeFixture(t)
+			stack, err := internal.LoadStack(fp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stack.Branches[1].Repo = "/legacy/ignored-repository"
+			if err := internal.SaveStack(fp, stack); err != nil {
+				t.Fatal(err)
+			}
+			internal.StepHook = func(stage internal.CheckoutStage, i int) error {
+				if stage == internal.StageRebased {
+					return errStop
+				}
+				return nil
+			}
+			if err := internal.RunCheckoutSync(internal.CheckoutSyncOpts{
+				Feature: "test-feature", FeaturePath: fp, RepoDir: dir,
+			}); err != errStop {
+				t.Fatalf("legacy birth = %v, want %v", err, errStop)
+			}
+			internal.StepHook = nil
+			var recoveryErr error
+			if verb == "continue" {
+				recoveryErr = internal.ContinueCheckoutSync(internal.CheckoutSyncOpts{
+					Feature: "test-feature", FeaturePath: fp, RepoDir: dir,
+				})
+			} else {
+				recoveryErr = internal.AbortCheckoutSync(internal.CheckoutSyncOpts{
+					Feature: "test-feature", FeaturePath: fp, RepoDir: dir,
+				})
+			}
+			if recoveryErr != nil {
+				t.Fatalf("legacy %s with Repo field: %v", verb, recoveryErr)
+			}
+			if internal.HasCheckoutTransaction(fp) || internal.HasCheckoutLock(fp) {
+				t.Fatalf("legacy %s left recovery state", verb)
+			}
+		})
 	}
 }
 
@@ -1362,8 +1493,11 @@ func TestCheckoutSyncModes_Criterion22_25b_SwitchedIsAPinnedDestinationArm(t *te
 // returning its trimmed stdout ("" on failure).
 func gitRunCSAllowFail(t *testing.T, dir string, args ...string) string {
 	t.Helper()
+	reparentRecordGitArgv(t, args...)
+	t.Logf("checkout sync test git argv: git %s", strings.Join(args, " "))
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_COUNT=0", "GIT_CONFIG_NOSYSTEM=1")
 	out, err := cmd.Output()
 	if err != nil {
 		return ""

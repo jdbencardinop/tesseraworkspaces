@@ -393,13 +393,21 @@ func buildSyncReports(ws Workspace, proc ProcessChecker) []CheckoutSyncReport {
 		}
 		feature := strings.TrimSuffix(name, "-checkout-sync.yaml")
 		txPath := filepath.Join(stateDir, name)
-		report := buildOneSyncReport(feature, txPath, stateDir, proc)
+		report := buildOneSyncReport(feature, txPath, stateDir, proc, ReparentActiveInStateDir(stateDir, feature))
 		reports = append(reports, report)
 	}
 	return reports
 }
 
-func buildOneSyncReport(feature, txPath, stateDir string, proc ProcessChecker) CheckoutSyncReport {
+// buildOneSyncReport projects one checkout sync transaction.
+//
+// reparentActive is §11.10 rule 2 / AC-084: while the authoritative reparent
+// artifact exists, this feature's checkout transaction and lock are that run's
+// own deliberately undecodable compatibility envelope, not corrupt sync state.
+// Telling an operator to remove them would bypass the transaction, so the
+// three manual-removal hints below are suppressed. Liveness and severity are
+// still reported; only the guidance is withheld.
+func buildOneSyncReport(feature, txPath, stateDir string, proc ProcessChecker, reparentActive bool) CheckoutSyncReport {
 	r := CheckoutSyncReport{
 		Feature:  feature,
 		Severity: SeverityOK,
@@ -409,7 +417,9 @@ func buildOneSyncReport(feature, txPath, stateDir string, proc ProcessChecker) C
 	if err != nil {
 		r.Liveness = "invalid"
 		r.Severity = SeverityError
-		r.Guidance = "state file unreadable; manually remove " + txPath
+		if !reparentActive {
+			r.Guidance = "state file unreadable; manually remove " + txPath
+		}
 		return r
 	}
 
@@ -417,7 +427,9 @@ func buildOneSyncReport(feature, txPath, stateDir string, proc ProcessChecker) C
 	if err := yaml.Unmarshal(data, &tx); err != nil {
 		r.Liveness = "invalid"
 		r.Severity = SeverityError
-		r.Guidance = "corrupt transaction state; manually remove " + txPath
+		if !reparentActive {
+			r.Guidance = "corrupt transaction state; manually remove " + txPath
+		}
 		return r
 	}
 
@@ -450,7 +462,9 @@ func buildOneSyncReport(feature, txPath, stateDir string, proc ProcessChecker) C
 	if yaml.Unmarshal(lockData, &lock) != nil || lock.PID <= 0 {
 		r.Liveness = "invalid"
 		r.Severity = SeverityError
-		r.Guidance = "corrupt lock file; manually remove " + lockPath
+		if !reparentActive {
+			r.Guidance = "corrupt lock file; manually remove " + lockPath
+		}
 		return r
 	}
 
@@ -481,7 +495,7 @@ func buildSessionReport(ws Workspace, proc ProcessChecker, tmux TmuxChecker) *Ch
 	if err != nil {
 		// No active session state
 		// Check for orphan lock
-		if _, lockErr := os.Stat(sessionLockDir(ws)); lockErr == nil {
+		if _, lockErr := os.Lstat(sessionLockDir(ws)); lockErr == nil {
 			r.LockHeld = true
 			r.Liveness = "mismatch"
 			r.Severity = SeverityWarning
@@ -499,7 +513,7 @@ func buildSessionReport(ws Workspace, proc ProcessChecker, tmux TmuxChecker) *Ch
 	r.TmuxSession = state.TmuxSession
 
 	// Check lock
-	_, lockErr := os.Stat(sessionLockDir(ws))
+	_, lockErr := os.Lstat(sessionLockDir(ws))
 	r.LockHeld = lockErr == nil
 
 	// Check liveness
@@ -575,6 +589,9 @@ func buildFeatureEntries(ws Workspace, cfg Config) ([]CheckoutFeatureEntry, erro
 		}
 		edges, _ := FeatureStackEdges(ws, cfg, feature, fp, stack)
 		edges = ancestryEdgesFor(feature, stack, edges)
+		if ReparentGuidanceSuppressed(ws, feature, fp) {
+			edges = SuppressReparentAncestryGuidance(edges)
+		}
 		for i, se := range stack.Branches {
 			entry := buildOneFeatureEntry(feature, se, edges[i], currentBranch, sessionFeature, sessionName)
 			entries = append(entries, entry)
@@ -947,6 +964,9 @@ func buildCheckoutListEntries(ws Workspace, cfg Config) ([]CheckoutListEntry, er
 		}
 		edges, _ := FeatureStackEdges(ws, cfg, feature, fp, stack)
 		edges = ancestryEdgesFor(feature, stack, edges)
+		if ReparentGuidanceSuppressed(ws, feature, fp) {
+			edges = SuppressReparentAncestryGuidance(edges)
+		}
 		for i, se := range stack.Branches {
 			gitBranch := se.GitBranch()
 			e := CheckoutListEntry{

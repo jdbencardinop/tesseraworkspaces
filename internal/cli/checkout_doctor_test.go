@@ -77,7 +77,7 @@ func TestCheckoutDoctor_ReturnsNilOnWarnings(t *testing.T) {
 	}
 
 	// Verify doctor does not return error for warnings
-	err := runCheckoutDoctor(ws, "")
+	err := runCheckoutDoctor(doctorCmd(), ws, "")
 	if err != nil {
 		t.Errorf("doctor should not return error for warnings, got: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestCheckoutList_CLI(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := runCheckoutList(ws)
+	err := runCheckoutList(listCmd(), ws)
 	if err != nil {
 		t.Fatalf("runCheckoutList failed: %v", err)
 	}

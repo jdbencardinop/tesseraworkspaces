@@ -112,6 +112,7 @@ func addStackEntries(t *testing.T, ws Workspace, feature string, entries []Stack
 
 func gitInTest(t *testing.T, dir string, args ...string) string {
 	t.Helper()
+	reparentRecordGitArgv(t, append([]string{"-C", dir}, args...)...)
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
 	cmd.Env = append(os.Environ(),
 		"GIT_CONFIG_NOSYSTEM=1",

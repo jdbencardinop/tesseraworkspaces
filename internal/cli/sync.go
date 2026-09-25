@@ -90,6 +90,43 @@ func syncCmd() *cobra.Command {
 				return err
 			}
 
+			// §11.2's ONE new pre-check. It sits after GuardFeatureName and a
+			// mode-appropriate safe path resolution and BEFORE mode dispatch
+			// (:93), plan dispatch and classifySyncState, so it covers
+			// `--plan`, plain, `--continue` and `--abort` in both modes. The
+			// detailed reparent artifact is therefore what the operator hears
+			// about, never the v4/undecodable compatibility files it guards.
+			//
+			// It spawns zero Git children and adds one os.Stat on a feature
+			// with no reparent artifact, which is what keeps every no-flag
+			// golden and its argv sidecar byte-identical.
+			feature := args[0]
+			var twsRoot string
+			var reparentFeaturePath string
+			if ws.Mode == internal.ModeCheckout {
+				if gerr := internal.GuardFeatureName(ws.MetadataRoot, feature); gerr != nil {
+					return gerr
+				}
+				reparentFeaturePath, err = ws.ResolveFeaturePath(feature)
+				if err != nil {
+					return err
+				}
+			} else {
+				twsRoot = internal.TwsRoot()
+				if gerr := internal.GuardFeatureName(twsRoot, feature); gerr != nil {
+					return gerr
+				}
+				lay, lerr := resolveExternalSyncLayout(ws, twsRoot, feature)
+				if lerr != nil {
+					return lerr
+				}
+				reparentFeaturePath = lay.FeaturePath
+			}
+			if rerr := internal.RefuseSyncIfReparentActive(
+				internal.ReparentLocationFor(ws, feature, reparentFeaturePath)); rerr != nil {
+				return rerr
+			}
+
 			if ws.Mode == internal.ModeCheckout {
 				return runCheckoutSync(cmd, ws, internal.CheckoutSyncOpts{
 					Feature:     args[0],
@@ -105,14 +142,16 @@ func syncCmd() *cobra.Command {
 				})
 			}
 
-			feature := args[0]
 			// One guard covers the plain, --abort, and --continue paths.
 			// syncFeature carries none: it has no error channel and would
 			// degrade the message to "sync incomplete".
-			twsRoot := internal.TwsRoot()
-			if err := internal.GuardFeatureName(twsRoot, feature); err != nil {
-				return err
-			}
+			//
+			// The identity, the guard and twsRoot were hoisted above the
+			// checkout dispatch by the pre-check; resolveExternalSyncLayout is
+			// called again here, unchanged, because its contract is that it
+			// issues no Git command and performs at most two ordinary
+			// stack.yaml reads. Keeping this call is what preserves the frozen
+			// external resolution sequence for every existing golden.
 			layout, layoutErr := resolveExternalSyncLayout(ws, twsRoot, feature)
 			if layoutErr != nil {
 				return layoutErr
@@ -277,18 +316,20 @@ func dispatchOrdinarySync(cmd *cobra.Command, feature string, layout externalSyn
 		return runGuardedLegacySync(cmd, feature, layout, ws, policy, push, verbose, changed, guardOpts, state)
 	}
 
-	result := syncFeature(feature, layout, verbose, nil)
-	if !result.Complete {
-		return fmt.Errorf("sync incomplete")
-	}
-	fmt.Println("Sync complete.")
-	if push {
-		fmt.Println("\nPushing...")
-		if err := pushFeature(feature, layout, false); err != nil {
-			return err
+	return withExternalSyncMutationGuard(feature, layout, "", false, func() error {
+		result := syncFeature(feature, layout, verbose, nil)
+		if !result.Complete {
+			return fmt.Errorf("sync incomplete")
 		}
-	}
-	return nil
+		fmt.Println("Sync complete.")
+		if push {
+			fmt.Println("\nPushing...")
+			if err := pushFeature(feature, layout, false); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // dispatchGuardedLegacySentinel is the cell-4 guarded-sentinel interception
@@ -378,6 +419,9 @@ func resumeGuardedLegacySentinel(cmd *cobra.Command, feature string, layout exte
 	if err := claimOrReclaimGuardedLegacyGuard(layout.FeaturePath, sentinel.OwnerToken, state.HasGuardFile()); err != nil {
 		return err
 	}
+	if err := externalSyncPostClaimRecheck(feature, layout, sentinel.OwnerToken); err != nil {
+		return err
+	}
 
 	done := make(map[string]bool, len(sentinel.Universe))
 	pending := make(map[string]bool, len(sentinel.PendingIntent))
@@ -416,9 +460,6 @@ func resumeGuardedLegacySentinel(cmd *cobra.Command, feature string, layout exte
 	if !result.Complete {
 		return fmt.Errorf("sync incomplete")
 	}
-	if err := clearSyncRunState(layout.FeaturePath, true); err != nil {
-		return err
-	}
 	fmt.Println("Sync complete.")
 	if sentinel.Push {
 		fmt.Println("\nPushing...")
@@ -426,28 +467,33 @@ func resumeGuardedLegacySentinel(cmd *cobra.Command, feature string, layout exte
 			return err
 		}
 	}
-	return nil
+	return clearSyncRunState(layout.FeaturePath, true)
 }
 
 // abortGuardedLegacySentinel discards a crash-recovered guarded legacy
-// sentinel (§12.8b, verdict: valid, verb --abort). It performs the SHIPPED
-// cell-4 removals, in the shipped order — the shipped payload-appeared
-// refusal, then DeleteSyncState, then ReleaseSyncRunGuard — with exactly ONE
-// changed byte-sequence: the line it prints.
+// sentinel (§12.8b, verdict: valid, verb --abort). It claims or reclaims the
+// shared feature guard, rechecks authoritative reparent state, then performs
+// the shipped payload-appeared refusal and DeleteSyncState before releasing
+// the guard last. Its only operator-visible change remains the line it prints.
 //
 // That line MUST NOT be the bare shipped `Sync state cleared.`: --abort here
 // is a clear verb, never a restore verb, and the bare sentence would hide
 // the destruction of a document `--continue` could still have resumed. It is
 // not a `plan-guard:` marker either (§6.4).
 func abortGuardedLegacySentinel(feature string, layout externalSyncLayout) error {
-	if internal.HasSyncRunState(layout.FeaturePath) {
-		return fmt.Errorf("scoped sync state appeared at %s while aborting; re-run: tws sync %s --abort",
-			internal.SyncRunStatePath(layout.FeaturePath), feature)
+	view := internal.InspectGuardedLegacySentinel(layout.FeaturePath, feature)
+	if view.Sentinel == nil {
+		return fmt.Errorf("guarded sync state at %s is unreadable or uses an unsupported version; inspect it and remove it manually — tws will not guess", view.Path)
 	}
-	internal.DeleteSyncState(layout.FeaturePath)
-	internal.ReleaseSyncRunGuard(layout.FeaturePath)
-	fmt.Println("Sync state cleared; the interrupted guarded setup's backup of the previous sync state was discarded.")
-	return nil
+	return withExternalSyncMutationGuard(feature, layout, view.Sentinel.OwnerToken, true, func() error {
+		if internal.HasSyncRunState(layout.FeaturePath) {
+			return fmt.Errorf("scoped sync state appeared at %s while aborting; re-run: tws sync %s --abort",
+				internal.SyncRunStatePath(layout.FeaturePath), feature)
+		}
+		internal.DeleteSyncState(layout.FeaturePath)
+		fmt.Println("Sync state cleared; the interrupted guarded setup's backup of the previous sync state was discarded.")
+		return nil
+	})
 }
 
 // scopedFreshPrelude performs the read-only prelude of the SHIPPED,
@@ -607,11 +653,9 @@ func runGuardedScopedSync(cmd *cobra.Command, feature string, layout externalSyn
 // any state is written — which already performs this run's own fetch, so
 // syncFeature's own fetch loop is skipped for a guarded run (guard != nil)
 // — then setupGuardedLegacyRunState's single-file birth, execution through
-// syncFeature, and an explicit guard release on success. A guarded legacy
-// run never writes a .sync-state.v2.yaml payload, so its own
-// syncWithStackScoped success path (run == nil) only clears the sentinel
-// (clearSyncRunState(featurePath, false) never releases a guard); this
-// function releases it explicitly, mirroring resumeGuardedLegacySentinel.
+// syncFeature, optional push, and teardown. A guarded legacy run keeps its
+// payload, sentinel, and guard through the optional push so remote follow-up
+// clearing and every push remain protected.
 func runGuardedLegacySync(cmd *cobra.Command, feature string, layout externalSyncLayout, ws internal.Workspace, policy internal.SyncRunPolicy, push, verbose bool, changed map[string]bool, opts planGuardOptions, state internal.SyncExternalState) error {
 	args := externalPlanArgs{
 		Feature: feature, Layout: layout, Ws: ws, Policy: policy, NewMode: false,
@@ -679,9 +723,6 @@ func runGuardedLegacySync(cmd *cobra.Command, feature string, layout externalSyn
 	if !result.Complete {
 		return fmt.Errorf("sync incomplete")
 	}
-	if err := clearSyncRunState(layout.FeaturePath, true); err != nil {
-		return err
-	}
 	fmt.Println("Sync complete.")
 	if push {
 		fmt.Println("\nPushing...")
@@ -689,7 +730,7 @@ func runGuardedLegacySync(cmd *cobra.Command, feature string, layout externalSyn
 			return err
 		}
 	}
-	return nil
+	return clearSyncRunState(layout.FeaturePath, true)
 }
 
 // runNewModePush is the §7.6 push half of a new-mode run. A `scope=all` run
@@ -763,28 +804,34 @@ func handleSyncAbortCell(feature string, layout externalSyncLayout, state intern
 	}
 	switch state.Cell {
 	case 2, 5:
-		if state.Payload != nil && state.Payload.FailedBranch != "" {
-			path := layout.WorktreePath(state.Payload.FailedBranch)
-			if isRebaseInProgress(path) {
-				_ = internal.RunSilentDir(path, "git", "rebase", "--abort")
+		token := ""
+		if state.Payload != nil {
+			token = state.Payload.OwnerToken
+		}
+		return withExternalSyncMutationGuard(feature, layout, token, true, func() error {
+			if state.Payload != nil && state.Payload.FailedBranch != "" {
+				path := layout.WorktreePath(state.Payload.FailedBranch)
+				if isRebaseInProgress(path) {
+					_ = internal.RunSilentDir(path, "git", "rebase", "--abort")
+				}
 			}
-		}
-		internal.DeleteSyncRunState(layout.FeaturePath)
-		if state.Cell == 5 {
-			internal.DeleteSyncState(layout.FeaturePath)
-		}
-		internal.ReleaseSyncRunGuard(layout.FeaturePath)
-		fmt.Println("Sync state cleared.")
-		return nil
+			internal.DeleteSyncRunState(layout.FeaturePath)
+			if state.Cell == 5 {
+				internal.DeleteSyncState(layout.FeaturePath)
+			}
+			fmt.Println("Sync state cleared.")
+			return nil
+		})
 	case 4:
-		if internal.HasSyncRunState(layout.FeaturePath) {
-			return fmt.Errorf("scoped sync state appeared at %s while aborting; re-run: tws sync %s --abort",
-				internal.SyncRunStatePath(layout.FeaturePath), feature)
-		}
-		internal.DeleteSyncState(layout.FeaturePath)
-		internal.ReleaseSyncRunGuard(layout.FeaturePath)
-		fmt.Println("Sync state cleared.")
-		return nil
+		return withExternalSyncMutationGuard(feature, layout, "", true, func() error {
+			if internal.HasSyncRunState(layout.FeaturePath) {
+				return fmt.Errorf("scoped sync state appeared at %s while aborting; re-run: tws sync %s --abort",
+					internal.SyncRunStatePath(layout.FeaturePath), feature)
+			}
+			internal.DeleteSyncState(layout.FeaturePath)
+			fmt.Println("Sync state cleared.")
+			return nil
+		})
 	case 1:
 		return handleStaleSyncGuardAbort(feature, layout)
 	case 7:
@@ -802,28 +849,27 @@ func handleSyncAbortCell(feature string, layout externalSyncLayout, state intern
 // composes every sentence of the eight-reason ladder, because two of them
 // name the feature.
 func handleStaleSyncGuardAbort(feature string, layout externalSyncLayout) error {
-	release := internal.ReleaseStaleSyncRunGuard(layout.FeaturePath)
-	switch release.Reason {
-	case internal.SyncGuardAbsent:
+	state := internal.ClassifyExternalSyncState(layout.FeaturePath, internal.SyncClassifyOpts{AlwaysReadGuard: true})
+	switch {
+	case state.GuardSymlink:
+		return syncSymlinkError(state.GuardPath)
+	case state.GuardErr != nil:
+		return fmt.Errorf("sync guard at %s is unreadable: %v; inspect and remove it manually", state.GuardPath, syncErrText(state.GuardErr))
+	case state.Guard == nil:
 		fmt.Println("Nothing to abort — no sync in progress.")
 		return nil
-	case internal.SyncGuardSymlink:
-		return syncSymlinkError(release.Path)
-	case internal.SyncGuardUnreadable:
-		return fmt.Errorf("sync guard at %s is unreadable: %v; inspect and remove it manually", release.Path, syncErrText(release.Err))
-	case internal.SyncGuardInvalidPID:
-		return fmt.Errorf("sync guard is being initialized or is invalid; retry or inspect %s", release.Path)
-	case internal.SyncGuardSelfPID:
-		return fmt.Errorf("sync guard at %s records this process (pid %d); it was not claimed by this invocation — inspect it and remove it manually", release.Path, release.PID)
-	case internal.SyncGuardLiveForeign:
-		return fmt.Errorf("a scoped sync is running for %q (pid %d); wait for it to exit before --abort", feature, release.PID)
-	case internal.SyncGuardReleased:
-		fmt.Printf("Stale sync guard from PID %d cleared; no sync state was present.\n", release.PID)
-		return nil
-	case internal.SyncGuardChanged:
-		return fmt.Errorf("sync guard at %s changed while aborting; re-run: tws sync %s --abort", release.Path, feature)
+	case state.Guard.PID <= 0:
+		return fmt.Errorf("sync guard is being initialized or is invalid; retry or inspect %s", state.GuardPath)
+	case state.Guard.PID == os.Getpid():
+		return fmt.Errorf("sync guard at %s records this process (pid %d); it was not claimed by this invocation — inspect it and remove it manually", state.GuardPath, state.Guard.PID)
+	case state.GuardLive:
+		return fmt.Errorf("a scoped sync is running for %q (pid %d); wait for it to exit before --abort", feature, state.Guard.PID)
 	}
-	return fmt.Errorf("unhandled sync guard release reason %q", release.Reason)
+	pid := state.Guard.PID
+	return withExternalSyncMutationGuard(feature, layout, "", true, func() error {
+		fmt.Printf("Stale sync guard from PID %d cleared; no sync state was present.\n", pid)
+		return nil
+	})
 }
 
 // handleLegacyGuardedAbort implements the classifier cell-7 recovery arm
@@ -836,33 +882,42 @@ func handleStaleSyncGuardAbort(feature string, layout externalSyncLayout) error 
 // cell-7 abort work itself through the print-free abortLegacySyncState,
 // composing the combined sentence.
 func handleLegacyGuardedAbort(feature string, layout externalSyncLayout) error {
-	release := internal.ReleaseStaleSyncRunGuardWith(layout.FeaturePath, internal.SyncGuardReleaseOpts{AllowSelfPID: true})
-	switch release.Reason {
-	case internal.SyncGuardAbsent:
-		return handleSyncAbort(feature, layout)
-	case internal.SyncGuardSymlink:
-		return syncSymlinkError(release.Path)
-	case internal.SyncGuardUnreadable:
-		return fmt.Errorf("sync guard at %s is unreadable: %v; inspect and remove it manually", release.Path, syncErrText(release.Err))
-	case internal.SyncGuardInvalidPID:
-		return fmt.Errorf("sync guard is being initialized or is invalid; retry or inspect %s", release.Path)
-	case internal.SyncGuardLiveForeign:
-		return fmt.Errorf("a scoped sync is running for %q (pid %d); wait for it to exit before --abort", feature, release.PID)
-	case internal.SyncGuardChanged:
-		return fmt.Errorf("sync guard at %s changed while aborting; re-run: tws sync %s --abort", release.Path, feature)
-	case internal.SyncGuardReleased:
+	state := internal.ClassifyExternalSyncState(layout.FeaturePath, internal.SyncClassifyOpts{AlwaysReadGuard: true})
+	switch {
+	case state.GuardSymlink:
+		return syncSymlinkError(state.GuardPath)
+	case state.GuardErr != nil:
+		return fmt.Errorf("sync guard at %s is unreadable: %v; inspect and remove it manually", state.GuardPath, syncErrText(state.GuardErr))
+	case state.Guard != nil && state.Guard.PID <= 0:
+		return fmt.Errorf("sync guard is being initialized or is invalid; retry or inspect %s", state.GuardPath)
+	case state.Guard != nil && state.Guard.PID != os.Getpid() && state.GuardLive:
+		return fmt.Errorf("a scoped sync is running for %q (pid %d); wait for it to exit before --abort", feature, state.Guard.PID)
+	}
+	hadGuard := state.Guard != nil
+	pid := 0
+	if hadGuard {
+		pid = state.Guard.PID
+	}
+	return withExternalSyncMutationGuard(feature, layout, "", true, func() error {
 		found, err := abortLegacySyncState(layout)
 		if err != nil {
 			return err
 		}
 		if !found {
-			fmt.Printf("Stale sync guard from PID %d cleared; no sync state was present.\n", release.PID)
+			if hadGuard {
+				fmt.Printf("Stale sync guard from PID %d cleared; no sync state was present.\n", pid)
+			} else {
+				fmt.Println("Nothing to abort — no sync in progress.")
+			}
 			return nil
 		}
-		fmt.Printf("Sync state cleared; stale sync guard from PID %d cleared.\n", release.PID)
+		if hadGuard {
+			fmt.Printf("Sync state cleared; stale sync guard from PID %d cleared.\n", pid)
+		} else {
+			fmt.Println("Sync state cleared.")
+		}
 		return nil
-	}
-	return fmt.Errorf("unhandled sync guard release reason %q", release.Reason)
+	})
 }
 
 // handleSyncAbort is a printing wrapper over abortLegacySyncState: it prints
@@ -926,30 +981,32 @@ func handleSyncContinue(feature string, layout externalSyncLayout, push bool) er
 		fmt.Println(formatSyncStatus(state.FailedBranch, "active", "resolved"))
 	}
 
-	done := make(map[string]bool)
-	for _, name := range state.Completed {
-		done[name] = true
-	}
-	if state.FailedBranch != "" {
-		done[state.FailedBranch] = true
-	}
-	sorted, err := internal.TopoSort(stack)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("Resuming sync with %d pending branch(es)\n", len(state.Pending))
-	result := syncWithStackFiltered(feature, layout, stack, sorted, done, nil)
-	if !result.Complete {
-		return fmt.Errorf("sync incomplete")
-	}
-	fmt.Println("Sync complete.")
-	if push {
-		fmt.Println("\nPushing...")
-		if err := pushFeature(feature, layout, false); err != nil {
+	return withExternalSyncMutationGuard(feature, layout, "", true, func() error {
+		done := make(map[string]bool)
+		for _, name := range state.Completed {
+			done[name] = true
+		}
+		if state.FailedBranch != "" {
+			done[state.FailedBranch] = true
+		}
+		sorted, err := internal.TopoSort(stack)
+		if err != nil {
 			return err
 		}
-	}
-	return nil
+		fmt.Printf("Resuming sync with %d pending branch(es)\n", len(state.Pending))
+		result := syncWithStackFiltered(feature, layout, stack, sorted, done, nil)
+		if !result.Complete {
+			return fmt.Errorf("sync incomplete")
+		}
+		fmt.Println("Sync complete.")
+		if push {
+			fmt.Println("\nPushing...")
+			if err := pushFeature(feature, layout, false); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // handleScopedSyncContinue resumes cell 5 — the only resumable new-mode cell.
@@ -991,6 +1048,9 @@ func handleScopedSyncContinue(feature string, layout externalSyncLayout, ws inte
 		return fmt.Errorf("sync guard %s does not belong to the recorded scoped run; inspect it and remove it manually", state.GuardPath)
 	}
 	if err := internal.ReclaimSyncRunGuard(layout.FeaturePath, payload.OwnerToken); err != nil {
+		return err
+	}
+	if err := externalSyncPostClaimRecheck(feature, layout, payload.OwnerToken); err != nil {
 		return err
 	}
 
@@ -1081,6 +1141,9 @@ func handleGuardedScopedSyncContinue(cmd *cobra.Command, feature string, layout 
 	guard := newPlanGuardRun(planReq, plan, externalPersistedGuarded(payload))
 
 	if err := internal.ReclaimSyncRunGuard(layout.FeaturePath, payload.OwnerToken); err != nil {
+		return err
+	}
+	if err := externalSyncPostClaimRecheck(feature, layout, payload.OwnerToken); err != nil {
 		return err
 	}
 
@@ -1232,9 +1295,6 @@ func handleGuardedLegacySyncContinue(cmd *cobra.Command, feature string, layout 
 	if !result.Complete {
 		return fmt.Errorf("sync incomplete")
 	}
-	if err := clearSyncRunState(layout.FeaturePath, true); err != nil {
-		return err
-	}
 	fmt.Println("Sync complete.")
 	if push {
 		fmt.Println("\nPushing...")
@@ -1242,7 +1302,7 @@ func handleGuardedLegacySyncContinue(cmd *cobra.Command, feature string, layout 
 			return err
 		}
 	}
-	return nil
+	return clearSyncRunState(layout.FeaturePath, true)
 }
 
 // syncContinueMismatches applies §10.5 rules 2, 3, and 5 to an external v2

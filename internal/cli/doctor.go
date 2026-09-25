@@ -52,13 +52,20 @@ Corrupt or unreadable persisted state returns a non-zero exit status.`,
 				if len(args) == 1 {
 					feature = args[0]
 				}
-				return runCheckoutDoctor(ws, feature)
+				return runCheckoutDoctor(cmd, ws, feature)
 			}
 
 			cfg := internal.LoadConfig()
 
 			if len(args) == 1 {
-				_, err := checkFeatureE(ws, cfg, args[0])
+				// §11.10 rule 1: the anchored line goes to stderr BEFORE any
+				// ancestry output reaches stdout.
+				reparentFeaturePath := ""
+				if featurePath, rerr := reparentFeaturePathFor(ws, args[0]); rerr == nil {
+					reparentFeaturePath = featurePath
+					writeReparentNoticeAtPath(cmd.ErrOrStderr(), ws, args[0], featurePath)
+				}
+				_, err := checkFeatureWithReparentPathE(ws, cfg, args[0], reparentFeaturePath)
 				return err
 			}
 
@@ -72,9 +79,12 @@ Corrupt or unreadable persisted state returns a non-zero exit status.`,
 				return nil
 			}
 
+			writeReparentNoticesForAll(cmd.ErrOrStderr(), ws, features)
+
 			totalIssues := 0
 			for _, feature := range features {
-				issues, err := checkFeatureE(ws, cfg, feature)
+				reparentFeaturePath, _ := reparentFeaturePathFor(ws, feature)
+				issues, err := checkFeatureWithReparentPathE(ws, cfg, feature, reparentFeaturePath)
 				if err != nil {
 					return err
 				}
@@ -92,6 +102,10 @@ Corrupt or unreadable persisted state returns a non-zero exit status.`,
 }
 
 func checkFeatureE(ws internal.Workspace, cfg internal.Config, feature string) (int, error) {
+	return checkFeatureWithReparentPathE(ws, cfg, feature, "")
+}
+
+func checkFeatureWithReparentPathE(ws internal.Workspace, cfg internal.Config, feature, reparentFeaturePath string) (int, error) {
 	// Resolve from the workspace the command already resolved rather than
 	// re-deriving one: doctor must still run from an external workspace root
 	// or feature directory when the source repository is unavailable, which is
@@ -110,6 +124,16 @@ func checkFeatureE(ws internal.Workspace, cfg internal.Config, feature string) (
 
 	if stack, sErr := internal.LoadStack(featurePath); sErr == nil && len(stack.Branches) > 0 {
 		edges, res := internal.FeatureStackEdges(ws, cfg, feature, featurePath, stack)
+		// §11.10 rule 2: while a reparent artifact exists, doctor still reports
+		// every ancestry status and reason and withholds only the repair
+		// guidance, which names verbs §11.2 refuses.
+		suppressionPath := reparentFeaturePath
+		if suppressionPath == "" {
+			suppressionPath = featurePath
+		}
+		if internal.ReparentGuidanceSuppressed(ws, feature, suppressionPath) {
+			edges = internal.SuppressReparentAncestryGuidance(edges)
+		}
 		issues = append(issues, internal.AncestryHealthIssues(res, edges)...)
 	}
 
@@ -136,7 +160,7 @@ func checkFeatureE(ws internal.Workspace, cfg internal.Config, feature string) (
 	return counted, nil
 }
 
-func runCheckoutDoctor(ws internal.Workspace, feature string) error {
+func runCheckoutDoctor(cmd *cobra.Command, ws internal.Workspace, feature string) error {
 	report, err := internal.BuildCheckoutHealthReport(ws, nil)
 	if err != nil {
 		return err
@@ -145,6 +169,14 @@ func runCheckoutDoctor(ws internal.Workspace, feature string) error {
 		if err := report.FilterFeature(feature); err != nil {
 			return err
 		}
+	}
+	// §11.10 rule 1, checkout arm: the line precedes the stdout report.
+	if feature != "" {
+		if featurePath, rerr := ws.ResolveFeaturePath(feature); rerr == nil {
+			writeReparentNoticeFor(cmd.ErrOrStderr(), ws, feature, featurePath)
+		}
+	} else {
+		writeReparentNoticesForWorkspace(cmd.ErrOrStderr(), ws)
 	}
 	fmt.Print(internal.FormatCheckoutHealth(report))
 	if report.HasErrors() {

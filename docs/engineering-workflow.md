@@ -31,13 +31,42 @@ Current shipped checkout slices:
     bound without an approval matching the previewed plan's fingerprint,
     records a guarded run's bound in recovery state so an older release
     refuses to resume it unguarded, and reports a guard refusal as one
-    distinguishable line separate from every refusal tws already performed.
+    distinguishable line separate from every refusal tws already performed;
+13. safe reparent/restack: `tws stack reparent <feature> <entry> --onto <dest>`
+    moves one entry onto a new parent and replays its descendant closure,
+    committing every moved branch in one compare-and-swap ref transaction and
+    writing the post-image `stack.yaml` durably. A preview route describes the
+    run, moves no branch and writes no tws state; may fetch according to policy. A fresh execution is
+    always guarded, requiring the fingerprint that preview printed plus a
+    replay bound; the resume and rollback verbs take the whole frozen decision
+    from persisted state and never accept an approval token. The ref commit is
+    race-atomic and crash-atomic only on the reftable backend, there is exactly
+    one commit point, and recovery past it is forward-only. Git refs,
+    `stack.yaml` metadata, and worktree/index state are three separate effects;
+    runtime state is durable recovery evidence, not a fourth effect. No remote
+    ref or pull request is ever changed. External direct/tmux/all launches publish
+    intent before their final mutation check, and top-level external push holds the
+    shared feature mutation lock, preventing session or multi-entry push races
+    with reparent. Every mutating external sync route holds that lock through
+    rebase, metadata, optional push and remote follow-up clearing, rechecks
+    reparent state after claiming, and releases last. Checkout feature-directory
+    opens retain the workspace launch intent through the agent/shell after a
+    final mutation/reparent/session check; differently spelled repository aliases
+    on one edge are refused. A stack-entry destination stores its logical
+    entry name, a named literal ref stores its full `refs/...` name, and a raw
+    object id stores the full lowercase OID. If the checkout-global lock is
+    absent, current tws scans every feature's recoverable checkout sync/reparent
+    state before fresh mutation; recovery reconstructs only its own reservation.
+    v1.2.16 only sees same-feature
+    compatibility after envelope birth; do not use an older tws while any
+    reparent is active or recoverable.
 
 The opt-in global workspace registry is also shipped for stable cross-repository
 discovery, health checks, and moved-target repair.
 
-Next roadmap feature: **safe reparent/restack** — update Git and metadata
-atomically for a single-parent stack.
+Next roadmap feature: **scoped status projection** — let the status surfaces
+project only the feature the operator asked about instead of scanning every
+feature.
 See [`roadmap.md`](roadmap.md).
 
 ## Tpatch workflow

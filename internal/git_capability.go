@@ -158,6 +158,49 @@ func GitCapabilitiesForVersion(v GitVersion) GitCapabilities {
 	}
 }
 
+// ============================================================================
+// ReparentGitCapabilities — safe-reparent's additive gate pair (§9.10)
+//
+// The six-gate GitCapabilities table above is frozen and MUST NOT be
+// extended. The two facts below sit BESIDE it because neither is part of
+// safe-reparent's required minimum: that minimum is the existing
+// GitCapabilities.CapRebaseUpdateRefs gate (Git >= 2.38), which is already a
+// sufficient floor for every core requirement — update-ref --stdin's
+// start/prepare/commit verbs (2.27), --end-of-options (2.24),
+// --no-rebase-merges (2.34), --disambiguate (long-standing), git switch
+// (2.23) and the merge backend default (2.26) are all older — so no new
+// version gate is invented for them.
+// ============================================================================
+
+// ReparentGitCapabilities is safe-reparent's own two-fact table. Each field
+// gates exactly one optional behaviour and never the run as a whole:
+// CapForceIfIncludes gates only the remote follow-up lease rule, and
+// CapRefBackendKnown gates only which probe the ref-backend question uses.
+// An unknown GitVersion yields the zero value — both false — which callers
+// MUST read as "unknown" and resolve by taking the conservative branch, never
+// by assuming absence and never by refusing.
+type ReparentGitCapabilities struct {
+	// CapForceIfIncludes is `git push --force-if-includes`, Git >= 2.30.
+	CapForceIfIncludes bool
+
+	// CapRefBackendKnown is `git rev-parse --show-ref-format`, Git >= 2.45.
+	// When it is false the ref backend is probed with
+	// `git config --get extensions.refStorage` instead, and an unresolved
+	// answer is reported as "unknown" and treated exactly as "files".
+	CapRefBackendKnown bool
+}
+
+// ReparentGitCapabilitiesForVersion derives the two additive gates from a
+// probed GitVersion, reusing the same deliberately patch-blind atLeast
+// comparison the frozen table uses. It never consults, changes or shadows
+// GitCapabilitiesForVersion.
+func ReparentGitCapabilitiesForVersion(v GitVersion) ReparentGitCapabilities {
+	return ReparentGitCapabilities{
+		CapForceIfIncludes: v.atLeast(2, 30),
+		CapRefBackendKnown: v.atLeast(2, 45),
+	}
+}
+
 // ProbeGitCapabilities composes ProbeGitVersion and GitCapabilitiesForVersion,
 // the one call a controlled route needs to obtain both the raw probe (for its
 // own rank 5.9 probe-failed detail, §16 rule 1) and the derived gate table in

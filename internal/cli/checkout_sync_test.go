@@ -28,6 +28,7 @@ func setupCheckoutSyncRepo(t *testing.T) string {
 
 func gitRunCS(t *testing.T, dir string, args ...string) string {
 	t.Helper()
+	reparentRecordGitArgv(t, args...)
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true")

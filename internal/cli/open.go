@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -60,14 +61,24 @@ Use --all to create a tmux session with windows for every worktree in the featur
 					if ferr != nil {
 						return ferr
 					}
+					// §14.2a: no session, no terminal, while a reparent is
+					// recorded for this feature.
+					if rerr := refuseOpenDuringReparent(ws, feature); rerr != nil {
+						return rerr
+					}
 					if noAgent {
 						fmt.Printf("cd %s\n", fp)
 						return nil
 					}
-					fmt.Printf("Opening feature dir: %s\n", fp)
-					// Untracked: a feature directory is not a logical branch,
-					// so no direct session record is created.
-					return openDirect(directOpenOpts{Path: fp})
+					return internal.WithCheckoutSessionLaunchIntent(ws, func() error {
+						return internal.CheckoutFeatureDirSessionPreconditions(ws)
+					}, func() error {
+						fmt.Printf("Opening feature dir: %s\n", fp)
+						// A feature directory is not a logical branch, so it
+						// has no per-branch record; the workspace intent itself
+						// remains live through the agent and shell.
+						return openDirect(directOpenOpts{Path: fp})
+					})
 				}
 
 				return runCheckoutOpen(ws, args, useTmux, noTmux, noAgent, cmd.Flags())
@@ -82,8 +93,11 @@ Use --all to create a tmux session with windows for every worktree in the featur
 				if gerr := internal.GuardFeatureName(internal.TwsRoot(), args[0]); gerr != nil {
 					return gerr
 				}
-				openAll(args[0])
-				return nil
+				feature := args[0]
+				featurePath := internal.FeaturePath(feature)
+				return openAll(feature, featurePath, func() error {
+					return refuseOpenDuringReparent(ws, feature)
+				})
 			}
 
 			// Handle --feature-dir: open the feature directory
@@ -100,13 +114,25 @@ Use --all to create a tmux session with windows for every worktree in the featur
 				if _, err := os.Stat(path); os.IsNotExist(err) {
 					return fmt.Errorf("feature not found: %s", feature)
 				}
+				// The resolved path is authoritative for this route. Refuse
+				// before the no-agent fast path and before any success prose;
+				// the intent wrapper below repeats the check after publishing
+				// its race-closing launch intent.
+				if err := refuseExternalOpenDuringMutation(feature, path); err != nil {
+					return err
+				}
 				if noAgent {
 					fmt.Printf("cd %s\n", path)
 					return nil
 				}
-				fmt.Printf("Opening feature dir: %s\n", path)
-				// Untracked: see the checkout branch above.
-				return openDirect(directOpenOpts{Path: path})
+				return withExternalSessionLaunchIntent(path, feature, nil, true, func() error {
+					return refuseExternalOpenDuringMutation(feature, path)
+				}, func() error {
+					fmt.Printf("Opening feature dir: %s\n", path)
+					// Untracked: a feature directory is not a logical branch,
+					// so no long-lived direct session record is created.
+					return openDirect(directOpenOpts{Path: path})
+				})
 			}
 
 			// Normal mode: open a specific worktree
@@ -120,6 +146,11 @@ Use --all to create a tmux session with windows for every worktree in the featur
 			feature, branch, err := resolveOpenArgs(args)
 			if err != nil {
 				return err
+			}
+			// §14.2a, after the picker has settled the identity: the exclusion
+			// covers the 0-arg and 1-arg picker routes too.
+			if rerr := refuseOpenDuringReparent(ws, feature); rerr != nil {
+				return rerr
 			}
 
 			path := internal.WorktreePath(feature, branch)
@@ -171,23 +202,26 @@ Use --all to create a tmux session with windows for every worktree in the featur
 			}
 
 			if tmux {
-				openWithTmux(feature, branch, path)
-			} else {
-				// Warn if there's a stale tmux session
-				session := sanitizeSessionName(feature + "/" + branch)
-				if sessionExists(session) {
-					fmt.Printf("Warning: tmux session %q exists for this worktree.\n", session)
-					fmt.Printf("  Run 'tws close %s %s' to kill it, or use --tmux to attach.\n", feature, branch)
-				}
-				return openDirect(directOpenOpts{
-					Path:        path,
-					Feature:     feature,
-					Name:        branch,
-					GitBranch:   resolveDirectGitBranch(featurePath, branch),
-					FeaturePath: featurePath,
+				return openWithTmux(feature, branch, path, featurePath, func() error {
+					return refuseOpenDuringReparent(ws, feature)
 				})
 			}
-			return nil
+			// Warn if there's a stale tmux session
+			session := sanitizeSessionName(feature + "/" + branch)
+			if sessionExists(session) {
+				fmt.Printf("Warning: tmux session %q exists for this worktree.\n", session)
+				fmt.Printf("  Run 'tws close %s %s' to kill it, or use --tmux to attach.\n", feature, branch)
+			}
+			return openDirect(directOpenOpts{
+				Path:        path,
+				Feature:     feature,
+				Name:        branch,
+				GitBranch:   resolveDirectGitBranch(featurePath, branch),
+				FeaturePath: featurePath,
+				FinalGuard: func() error {
+					return refuseOpenDuringReparent(ws, feature)
+				},
+			})
 		},
 	}
 
@@ -245,71 +279,94 @@ func resolveOpenArgs(args []string) (string, string, error) {
 
 // openAll creates a tmux session with the feature dir as the first window
 // and one window per active worktree.
-func openAll(feature string) {
-	internal.RequireTool("tmux")
+// ExternalSessionLaunchIntentHook is a test-only seam after a tmux/all/feature
+// launch intent is durable and before the final feature-mutation check.
+var ExternalSessionLaunchIntentHook func() error
 
-	featurePath := internal.FeaturePath(feature)
-	if _, err := os.Stat(featurePath); os.IsNotExist(err) {
-		fmt.Printf("Feature not found: %s\n", feature)
-		os.Exit(1)
+func withExternalSessionLaunchIntent(featurePath, feature string, names []string, featureWide bool, finalGuard, action func() error) (err error) {
+	token, err := internal.CreateExternalSessionIntent(featurePath, feature, names, featureWide)
+	if err != nil {
+		return err
 	}
-
-	session := sanitizeSessionName(feature)
-
-	// Kill existing session if any
-	if sessionExists(session) {
-		fmt.Printf("Attaching to existing session: %s\n", session)
-		internal.Must(internal.Run("tmux", "attach", "-t", session))
-		return
-	}
-
-	// Create session with feature dir as first window
-	fmt.Printf("Creating tmux session: %s\n", session)
-	internal.Must(internal.Run("tmux", "new-session", "-d", "-s", session, "-c", featurePath, "-n", "orchestrator"))
-
-	// Add a window for each active worktree
-	branches := internal.ListBranches(feature)
-	for _, branch := range branches {
-		wtPath := internal.WorktreePath(feature, branch)
-		if _, err := os.Stat(wtPath); os.IsNotExist(err) {
-			continue // archived
+	defer func() {
+		err = errors.Join(err, internal.RemoveOwnedExternalSessionIntent(featurePath, token))
+	}()
+	if ExternalSessionLaunchIntentHook != nil {
+		if err := ExternalSessionLaunchIntentHook(); err != nil {
+			return err
 		}
-		windowName := sanitizeSessionName(branch)
-		_ = internal.RunSilent("tmux", "new-window", "-t", session, "-n", windowName, "-c", wtPath)
 	}
-
-	// Select the orchestrator window
-	_ = internal.RunSilent("tmux", "select-window", "-t", session+":orchestrator")
-
-	// Attach
-	internal.Must(internal.Run("tmux", "attach", "-t", session))
+	if finalGuard != nil {
+		if err := finalGuard(); err != nil {
+			return err
+		}
+	}
+	if action == nil {
+		return nil
+	}
+	return action()
 }
 
-func openWithTmux(feature, branch, path string) {
-	internal.RequireTool("tmux")
-
-	session := sanitizeSessionName(feature + "/" + branch)
-
-	if sessionExists(session) {
-		fmt.Printf("Attaching to existing session: %s\n", session)
-		internal.Must(internal.Run("tmux", "attach", "-t", session))
-		return
+func openAll(feature, featurePath string, finalGuard func() error) error {
+	if _, err := os.Stat(featurePath); os.IsNotExist(err) {
+		return fmt.Errorf("feature not found: %s", feature)
 	}
+	return withExternalSessionLaunchIntent(featurePath, feature, nil, true, finalGuard, func() error {
+		if _, err := exec.LookPath("tmux"); err != nil {
+			return fmt.Errorf("required tool %q not found in PATH", "tmux")
+		}
+		session := sanitizeSessionName(feature)
+		if sessionExists(session) {
+			fmt.Printf("Attaching to existing session: %s\n", session)
+			return internal.Run("tmux", "attach", "-t", session)
+		}
 
-	cfg := internal.LoadConfig()
-	agentCmd := cfg.GetAgentCommand()
+		fmt.Printf("Creating tmux session: %s\n", session)
+		if err := internal.Run("tmux", "new-session", "-d", "-s", session, "-c", featurePath, "-n", "orchestrator"); err != nil {
+			return err
+		}
 
-	if isClaudeAgent(agentCmd) && hasClaudeSession(path) {
-		agentCmd = agentCmd + " -c"
-	}
+		branches := internal.ListBranches(feature)
+		for _, branch := range branches {
+			wtPath := internal.WorktreePath(feature, branch)
+			if _, err := os.Stat(wtPath); os.IsNotExist(err) {
+				continue
+			}
+			windowName := sanitizeSessionName(branch)
+			_ = internal.RunSilent("tmux", "new-window", "-t", session, "-n", windowName, "-c", wtPath)
+		}
+		_ = internal.RunSilent("tmux", "select-window", "-t", session+":orchestrator")
+		return internal.Run("tmux", "attach", "-t", session)
+	})
+}
 
-	fmt.Printf("Creating tmux session: %s\n", session)
-	internal.Must(internal.Run("tmux", "new-session", "-d", "-s", session, "-c", path))
+func openWithTmux(feature, branch, path, featurePath string, finalGuard func() error) error {
+	return withExternalSessionLaunchIntent(featurePath, feature, []string{branch}, false, finalGuard, func() error {
+		if _, err := exec.LookPath("tmux"); err != nil {
+			return fmt.Errorf("required tool %q not found in PATH", "tmux")
+		}
+		session := sanitizeSessionName(feature + "/" + branch)
+		if sessionExists(session) {
+			fmt.Printf("Attaching to existing session: %s\n", session)
+			return internal.Run("tmux", "attach", "-t", session)
+		}
 
-	fmt.Printf("Running: %s\n", agentCmd)
-	internal.Must(internal.Run("tmux", "send-keys", "-t", session, agentCmd, "Enter"))
+		cfg := internal.LoadConfig()
+		agentCmd := cfg.GetAgentCommand()
+		if isClaudeAgent(agentCmd) && hasClaudeSession(path) {
+			agentCmd += " -c"
+		}
 
-	internal.Must(internal.Run("tmux", "attach", "-t", session))
+		fmt.Printf("Creating tmux session: %s\n", session)
+		if err := internal.Run("tmux", "new-session", "-d", "-s", session, "-c", path); err != nil {
+			return err
+		}
+		fmt.Printf("Running: %s\n", agentCmd)
+		if err := internal.Run("tmux", "send-keys", "-t", session, agentCmd, "Enter"); err != nil {
+			return err
+		}
+		return internal.Run("tmux", "attach", "-t", session)
+	})
 }
 
 func sessionExists(name string) bool {

@@ -23,6 +23,9 @@ You are working in a project that uses `tws` for feature-scoped workspaces with 
 - `tws import <file> [--from-repo <feature>]` — Import workspace
 - `tws stack <feature>` — Show branch dependency tree
 - `tws stack status <feature> [--json]` — Stack ancestry, materialization, and upstream status
+- `tws stack reparent <feature> <entry> --onto <dest> [--onto-kind auto|entry|ref] [--cutoff <ref>]` — Move one entry onto a new parent and replay its descendants
+- `tws stack reparent <feature> <entry> --onto <dest> --plan --max-replay-total N [--json]` — Preview the bounded reparent; moves no branch and writes no tws state; may fetch according to policy
+- `tws stack reparent <feature> --continue` / `--abort` — Resume or roll back the persisted reparent; neither takes an approval token
 - `tws list` — List features and branches
 - `tws delete <feature>` — Remove feature and all worktrees
 - `tws archive <feature> <branch>` — Remove worktree, keep branch ref
@@ -50,6 +53,19 @@ tws new auth wiki-docs --repo ../wiki --base master     # base resolved in wiki 
 ```
 
 Explicit base refs are literal (`master` is local, `origin/master` is remote); tags and commit SHAs are accepted. Sync rebases in topological order. After resolving a conflict, `tws sync <feature> --continue` resumes deferred descendants and only reports completion after parent-child ancestry is current.
+
+When the recorded parent itself is wrong — squash-merged, abandoned, or never the intended base — reparent instead of syncing:
+
+```sh
+tws stack reparent auth auth-middleware --onto main --plan --max-replay-total 20
+tws stack reparent auth auth-middleware --onto main --approve-plan <fingerprint> --max-replay-total 20
+```
+
+A fresh reparent is always guarded: preview and execution use the same replay
+limit flag(s) and values, and execution adds `--approve-plan`. A limitless
+preview has a null fingerprint. Destination storage is canonical: a stack-entry destination stores the logical entry name, a named literal ref stores its full `refs/...` name, and a raw object-id destination stores the full lowercase OID. It commits every moved branch in one race-atomic compare-and-swap transaction (crash-atomic only on the reftable backend), has exactly one commit point requiring both durable post-image `stack.yaml` and planned-or-no-op refs, and recovers **forward** past that point. Git refs, `stack.yaml` metadata, and worktree/index state are three separate effects; runtime state is durable recovery evidence, not a transactional effect. `--continue` and `--abort` take the whole frozen decision from persisted state and never accept an approval token, destination, cutoff, limit or fetch flag. While a reparent is recorded, `tws sync <feature>` refuses on every verb. Checkout mode blocks opening every feature in that workspace, serializes checkout sync/reparent mutations across features, and rejects non-empty entry `repo` values; external direct/tmux/all launches publish scoped intent before their final mutation check. tws changes no remote ref and no pull request; real top-level external push holds the feature mutation lock across all entries, clears obsolete follow-up rows before lease preflight, waits for a proven commit point, then warns and uses `--force-with-lease --force-if-includes`. Every mutating external sync route holds that same lock through rebase, metadata, optional push and remote follow-up clearing, rechecks reparent state after claiming, and releases last. If the checkout-global lock is absent, current tws scans every feature's recoverable checkout sync/reparent state before fresh mutation and recovery reconstructs only its own reservation. Checkout feature-directory opens hold the workspace launch intent through the agent/shell after a final guard check. Different stored `repo` spellings on one logical edge are refused even when they resolve to one common directory.
+
+v1.2.16 only fails closed for same-feature sync after the compatibility envelope exists; it cannot see artifact-before-compat window 1, workspace-global locks, unrelated-feature checkout reparent, or top-level push. **Do not use an older tws while any reparent is active or recoverable.**
 
 ## Context Injection
 

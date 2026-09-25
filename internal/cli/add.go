@@ -100,7 +100,9 @@ func addExternal(feature string, templates []string, newBranch, base string, for
 		if open {
 			path := internal.WorktreePath(feature, newBranch)
 			if useTmux {
-				openWithTmux(feature, newBranch, path)
+				return openWithTmux(feature, newBranch, path, root, func() error {
+					return refuseExternalOpenDuringMutation(feature, root)
+				})
 			} else {
 				if err := openDirect(directOpenOpts{
 					Path:        path,
@@ -108,6 +110,9 @@ func addExternal(feature string, templates []string, newBranch, base string, for
 					Name:        newBranch,
 					GitBranch:   resolveDirectGitBranch(root, newBranch),
 					FeaturePath: root,
+					FinalGuard: func() error {
+						return refuseExternalOpenDuringMutation(feature, root)
+					},
 				}); err != nil {
 					return err
 				}

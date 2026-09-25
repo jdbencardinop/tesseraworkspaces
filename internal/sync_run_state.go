@@ -372,6 +372,29 @@ func ReleaseSyncRunGuard(featurePath string) {
 	_ = RemoveSyncRunGuard(featurePath)
 }
 
+// ReleaseOwnedSyncRunGuard removes a feature mutation guard only when its
+// token and owner PID still match this process. It is for short-lived callers
+// such as top-level push that do not own a sync payload and therefore cannot
+// safely use the unconditional compatibility remover.
+func ReleaseOwnedSyncRunGuard(featurePath, token string) error {
+	path := SyncRunGuardPath(featurePath)
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var guard SyncRunGuard
+	if err := yaml.Unmarshal(data, &guard); err != nil {
+		return fmt.Errorf("decode owned sync guard: %w", err)
+	}
+	if guard.Token != token || guard.PID != os.Getpid() {
+		return fmt.Errorf("refusing to release a feature mutation guard owned by another process")
+	}
+	return removeLockIfUnchanged(path, data)
+}
+
 func writeSyncGuardExclusive(path, token string) error {
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {

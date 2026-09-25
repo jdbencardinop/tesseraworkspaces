@@ -79,11 +79,23 @@ null and lists are never null.`,
 				return err
 			}
 
-			report, err := internal.BuildStackStatus(ws, cfg, feature, featurePath, stack)
+			reparentFeaturePath := featurePath
+			if resolved, rerr := reparentFeaturePathFor(ws, feature); rerr == nil {
+				reparentFeaturePath = resolved
+			}
+			report, err := internal.BuildStackStatusWithReparentPath(
+				ws, cfg, feature, featurePath, reparentFeaturePath, stack,
+			)
 			if err != nil {
 				return err
 			}
 			internal.NormalizeStackStatus(report)
+
+			// §11.10 rule 1: one anchored line on stderr, before the report is
+			// written to stdout.
+			if report.Reparent != nil {
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), report.Reparent.ObservabilityLine())
+			}
 
 			if jsonOutput {
 				enc := json.NewEncoder(cmd.OutOrStdout())

@@ -117,8 +117,195 @@ func sessionStatePath(ws Workspace) string { return filepath.Join(sessionStateDi
 func sessionLockDir(ws Workspace) string {
 	return filepath.Join(ws.MetadataRoot, "state", "checkout-session.lock")
 }
+func CheckoutSessionIntentDir(ws Workspace) string { return sessionLockDir(ws) }
+
+const sessionLockOwnerName = "owner.json"
+
 func sessionLockOwnerPath(ws Workspace) string {
-	return filepath.Join(sessionLockDir(ws), "owner.json")
+	return filepath.Join(sessionLockDir(ws), sessionLockOwnerName)
+}
+
+type checkoutSessionIntentSnapshot struct {
+	dirInfo    os.FileInfo
+	ownerInfo  os.FileInfo
+	ownerBytes []byte
+}
+
+func loadCheckoutSessionIntentSnapshot(ws Workspace) (checkoutSessionIntentSnapshot, bool, error) {
+	dir := sessionLockDir(ws)
+	parent, err := os.OpenRoot(filepath.Dir(dir))
+	if errors.Is(err, os.ErrNotExist) {
+		return checkoutSessionIntentSnapshot{}, false, nil
+	}
+	if err != nil {
+		return checkoutSessionIntentSnapshot{}, true, err
+	}
+	defer parent.Close() //nolint:errcheck
+
+	name := filepath.Base(dir)
+	dirInfo, err := parent.Lstat(name)
+	if errors.Is(err, os.ErrNotExist) {
+		return checkoutSessionIntentSnapshot{}, false, nil
+	}
+	if err != nil {
+		return checkoutSessionIntentSnapshot{}, true, err
+	}
+	if dirInfo.Mode()&os.ModeSymlink != 0 || !dirInfo.IsDir() {
+		return checkoutSessionIntentSnapshot{}, true,
+			fmt.Errorf("checkout session intent path is not a real directory")
+	}
+	root, err := parent.OpenRoot(name)
+	if err != nil {
+		return checkoutSessionIntentSnapshot{}, true, err
+	}
+	defer root.Close() //nolint:errcheck
+	openedInfo, err := root.Stat(".")
+	if err != nil {
+		return checkoutSessionIntentSnapshot{}, true, err
+	}
+	if !os.SameFile(dirInfo, openedInfo) {
+		return checkoutSessionIntentSnapshot{}, true,
+			fmt.Errorf("checkout session intent directory changed while opening")
+	}
+
+	ownerInfo, err := root.Lstat(sessionLockOwnerName)
+	if err != nil {
+		return checkoutSessionIntentSnapshot{}, true, err
+	}
+	if ownerInfo.Mode()&os.ModeSymlink != 0 || !ownerInfo.Mode().IsRegular() {
+		return checkoutSessionIntentSnapshot{}, true,
+			fmt.Errorf("checkout session intent owner is not a regular file")
+	}
+	data, err := root.ReadFile(sessionLockOwnerName)
+	if err != nil {
+		return checkoutSessionIntentSnapshot{}, true, err
+	}
+	return checkoutSessionIntentSnapshot{
+		dirInfo: dirInfo, ownerInfo: ownerInfo,
+		ownerBytes: data,
+	}, true, nil
+}
+
+func (s checkoutSessionIntentSnapshot) decodeOwner() (sessionLockOwner, error) {
+	var owner sessionLockOwner
+	return owner, json.Unmarshal(s.ownerBytes, &owner)
+}
+
+func removeCheckoutSessionIntentSnapshot(ws Workspace, snapshot checkoutSessionIntentSnapshot) error {
+	dir := sessionLockDir(ws)
+	parent, err := os.OpenRoot(filepath.Dir(dir))
+	if err != nil {
+		return err
+	}
+	defer parent.Close() //nolint:errcheck
+	name := filepath.Base(dir)
+	dirInfo, err := parent.Lstat(name)
+	if err != nil || dirInfo.Mode()&os.ModeSymlink != 0 || !dirInfo.IsDir() ||
+		!os.SameFile(snapshot.dirInfo, dirInfo) {
+		return fmt.Errorf("checkout session launch intent changed during stale cleanup")
+	}
+	root, err := parent.OpenRoot(name)
+	if err != nil {
+		return err
+	}
+	defer root.Close() //nolint:errcheck
+	openedInfo, err := root.Stat(".")
+	if err != nil || !os.SameFile(snapshot.dirInfo, openedInfo) {
+		return fmt.Errorf("checkout session launch intent changed during stale cleanup")
+	}
+	ownerInfo, err := root.Lstat(sessionLockOwnerName)
+	if err != nil || ownerInfo.Mode()&os.ModeSymlink != 0 ||
+		!ownerInfo.Mode().IsRegular() || !os.SameFile(snapshot.ownerInfo, ownerInfo) {
+		return fmt.Errorf("checkout session launch intent changed during stale cleanup")
+	}
+	current, err := root.ReadFile(sessionLockOwnerName)
+	if err != nil {
+		return err
+	}
+	if string(current) != string(snapshot.ownerBytes) {
+		return fmt.Errorf("checkout session launch intent changed during stale cleanup")
+	}
+	if err := root.Remove(sessionLockOwnerName); err != nil {
+		return err
+	}
+	dirInfo, err = parent.Lstat(name)
+	if err != nil || dirInfo.Mode()&os.ModeSymlink != 0 || !dirInfo.IsDir() ||
+		!os.SameFile(snapshot.dirInfo, dirInfo) {
+		return fmt.Errorf("checkout session launch intent changed during stale cleanup")
+	}
+	return parent.Remove(name)
+}
+
+func removeEmptyCheckoutSessionIntentDir(ws Workspace, expected os.FileInfo) error {
+	dir := sessionLockDir(ws)
+	parent, err := os.OpenRoot(filepath.Dir(dir))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer parent.Close() //nolint:errcheck
+	name := filepath.Base(dir)
+	info, err := parent.Lstat(name)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() ||
+		!os.SameFile(expected, info) {
+		return fmt.Errorf("checkout session launch intent changed during cleanup")
+	}
+	return parent.Remove(name)
+}
+
+func openCheckoutSessionIntentRoot(ws Workspace, expected os.FileInfo) (*os.Root, error) {
+	dir := sessionLockDir(ws)
+	parent, err := os.OpenRoot(filepath.Dir(dir))
+	if err != nil {
+		return nil, err
+	}
+	defer parent.Close() //nolint:errcheck
+	name := filepath.Base(dir)
+	info, err := parent.Lstat(name)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() ||
+		!os.SameFile(expected, info) {
+		return nil, fmt.Errorf("checkout session launch intent changed while opening")
+	}
+	root, err := parent.OpenRoot(name)
+	if err != nil {
+		return nil, err
+	}
+	openedInfo, err := root.Stat(".")
+	if err != nil || !os.SameFile(expected, openedInfo) {
+		_ = root.Close()
+		return nil, fmt.Errorf("checkout session launch intent changed while opening")
+	}
+	return root, nil
+}
+
+func atomicSessionRootWrite(root *os.Root, name string, data []byte, mode os.FileMode) error {
+	const tempName = ".tmp-session-owner"
+	f, err := root.OpenFile(tempName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return err
+	}
+	defer root.Remove(tempName) //nolint:errcheck
+	if err := f.Chmod(mode); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return root.Rename(tempName, name)
 }
 
 // hashedSessionID builds a filesystem- and tmux-safe identifier from a full
@@ -174,6 +361,104 @@ func HasCheckoutAgentSession(ws Workspace) bool {
 	_, err := os.Stat(sessionStatePath(ws))
 	return err == nil
 }
+
+func CheckoutAgentSessionPresence(ws Workspace) (bool, error) {
+	_, err := os.Stat(sessionStatePath(ws))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func recordedCheckoutSessionRefusal(ws Workspace) error {
+	present, err := CheckoutAgentSessionPresence(ws)
+	if err != nil {
+		return fmt.Errorf("checkout session state could not be verified: %w", err)
+	}
+	if !present {
+		return nil
+	}
+	state, err := LoadCheckoutAgentSession(ws)
+	if err != nil {
+		return fmt.Errorf("checkout session state must be recovered before launch-intent cleanup: %w", err)
+	}
+	identity := strings.Trim(strings.Join([]string{state.Feature, state.Name}, "/"), "/")
+	if identity == "" {
+		identity = "<workspace>"
+	}
+	return fmt.Errorf("checkout session %s is recorded; close or recover it before replacing the launch intent", identity)
+}
+
+// CheckoutSessionIntent reports the workspace-global launch lock. Any present
+// lock blocks a checkout mutation until the launcher either publishes its
+// session state or releases the intent.
+func CheckoutSessionIntent(ws Workspace) (bool, int, error) {
+	snapshot, present, err := loadCheckoutSessionIntentSnapshot(ws)
+	if !present {
+		return false, 0, nil
+	}
+	if err != nil {
+		return true, 0, err
+	}
+	owner, err := snapshot.decodeOwner()
+	if err != nil {
+		return true, 0, err
+	}
+	if owner.Token == "" || owner.PID <= 0 {
+		return true, owner.PID, fmt.Errorf("invalid checkout session launch intent")
+	}
+	switch NewProcessProber().Probe(owner.PID) {
+	case ProcessDead:
+		return false, owner.PID, nil
+	default:
+		return true, owner.PID, nil
+	}
+}
+
+// CheckoutSessionIntentCleanupHook is a test-only seam after a dead owner was
+// classified and before directory/owner identity is rechecked for removal.
+var CheckoutSessionIntentCleanupHook func() error
+
+// CleanupStaleCheckoutSessionIntent removes a provably dead launch intent by
+// exact owner bytes. Callers must already hold the workspace-global checkout
+// mutation lock; live or unverifiable owners are left in place for the final
+// SessionProbe to block.
+func CleanupStaleCheckoutSessionIntent(ws Workspace) error {
+	snapshot, present, err := loadCheckoutSessionIntentSnapshot(ws)
+	if !present {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	owner, err := snapshot.decodeOwner()
+	if err != nil {
+		return err
+	}
+	if owner.Token == "" || owner.PID <= 0 {
+		return fmt.Errorf("invalid checkout session launch intent")
+	}
+	if NewProcessProber().Probe(owner.PID) != ProcessDead {
+		return nil
+	}
+	if err := recordedCheckoutSessionRefusal(ws); err != nil {
+		return err
+	}
+	if CheckoutSessionIntentCleanupHook != nil {
+		if err := CheckoutSessionIntentCleanupHook(); err != nil {
+			return err
+		}
+	}
+	return removeCheckoutSessionIntentSnapshot(ws, snapshot)
+}
+
+// CheckoutSessionLaunchIntentHook is a test-only race seam after the launch
+// intent is durable and before the final mutation/reparent check.
+var CheckoutSessionLaunchIntentHook func() error
+
 func atomicSessionWrite(path string, data []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
@@ -203,77 +488,95 @@ func atomicSessionWrite(path string, data []byte, mode os.FileMode) error {
 }
 
 func acquireAgentSessionLock(ws Workspace, tmux SessionTmuxRunner) (string, error) {
-	if err := os.MkdirAll(filepath.Dir(sessionLockDir(ws)), 0700); err != nil {
+	if err := recordedCheckoutSessionRefusal(ws); err != nil {
 		return "", err
 	}
-	if err := os.Mkdir(sessionLockDir(ws), 0700); err != nil {
+	dir := sessionLockDir(ws)
+	if err := os.MkdirAll(filepath.Dir(dir), 0700); err != nil {
+		return "", err
+	}
+	if err := os.Mkdir(dir, 0700); err != nil {
 		if !os.IsExist(err) {
 			return "", err
 		}
-		data, readErr := os.ReadFile(sessionLockOwnerPath(ws))
+		snapshot, present, readErr := loadCheckoutSessionIntentSnapshot(ws)
 		if readErr != nil {
 			return "", fmt.Errorf("checkout session lock is initializing or invalid")
 		}
-		var owner sessionLockOwner
-		if json.Unmarshal(data, &owner) != nil || owner.PID <= 0 || owner.Token == "" {
-			return "", fmt.Errorf("invalid checkout session lock; use tws close to recover")
-		}
-		if s, e := LoadCheckoutAgentSession(ws); e == nil {
-			if s.Mode == AgentSessionTmux && s.TmuxSession != "" && tmux.HasSession(s.TmuxSession) {
-				return "", fmt.Errorf("checkout session %s/%s is active", s.Feature, s.Name)
+		if !present {
+			if err := os.Mkdir(dir, 0700); err != nil {
+				return "", err
 			}
-			if s.Mode == AgentSessionDirect && processAlive(s.PID) {
-				return "", fmt.Errorf("checkout session %s/%s is active", s.Feature, s.Name)
+		} else {
+			owner, decodeErr := snapshot.decodeOwner()
+			if decodeErr != nil || owner.PID <= 0 || owner.Token == "" {
+				return "", fmt.Errorf("invalid checkout session lock; use tws close to recover")
+			}
+			if processAlive(owner.PID) {
+				return "", fmt.Errorf("checkout session lock is held by live process %d", owner.PID)
+			}
+			if err := removeCheckoutSessionIntentSnapshot(ws, snapshot); err != nil {
+				return "", err
+			}
+			if err := os.Mkdir(dir, 0700); err != nil {
+				return "", err
 			}
 		}
-		if processAlive(owner.PID) {
-			return "", fmt.Errorf("checkout session lock is held by live process %d", owner.PID)
+	}
+	createdInfo, err := os.Lstat(dir)
+	if err != nil || createdInfo.Mode()&os.ModeSymlink != 0 || !createdInfo.IsDir() {
+		if err == nil {
+			err = fmt.Errorf("checkout session lock path is not a real directory")
 		}
-		current, _ := os.ReadFile(sessionLockOwnerPath(ws))
-		if string(current) != string(data) {
-			return "", fmt.Errorf("checkout session lock changed during recovery")
-		}
-		if err := os.RemoveAll(sessionLockDir(ws)); err != nil {
-			return "", err
-		}
-		if err := os.Mkdir(sessionLockDir(ws), 0700); err != nil {
-			return "", err
-		}
+		return "", err
 	}
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {
-		_ = os.RemoveAll(sessionLockDir(ws))
+		_ = removeEmptyCheckoutSessionIntentDir(ws, createdInfo)
 		return "", err
 	}
 	token := hex.EncodeToString(buf)
 	owner := sessionLockOwner{Token: token, PID: os.Getpid(), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
 	data, _ := json.Marshal(owner)
-	if err := atomicSessionWrite(sessionLockOwnerPath(ws), data, 0600); err != nil {
-		_ = os.RemoveAll(sessionLockDir(ws))
+	root, err := openCheckoutSessionIntentRoot(ws, createdInfo)
+	if err != nil {
+		_ = removeEmptyCheckoutSessionIntentDir(ws, createdInfo)
+		return "", err
+	}
+	defer root.Close() //nolint:errcheck
+	if err := atomicSessionRootWrite(root, sessionLockOwnerName, data, 0600); err != nil {
+		_ = removeEmptyCheckoutSessionIntentDir(ws, createdInfo)
 		return "", err
 	}
 	return token, nil
 }
 func releaseAgentSessionLock(ws Workspace, token string) error {
-	data, err := os.ReadFile(sessionLockOwnerPath(ws))
+	snapshot, present, err := loadCheckoutSessionIntentSnapshot(ws)
 	if err != nil {
 		return err
 	}
-	var owner sessionLockOwner
-	if err := json.Unmarshal(data, &owner); err != nil {
+	if !present {
+		return os.ErrNotExist
+	}
+	owner, err := snapshot.decodeOwner()
+	if err != nil {
 		return err
 	}
 	if owner.Token != token {
 		return fmt.Errorf("checkout session lock ownership changed")
 	}
-	return os.RemoveAll(sessionLockDir(ws))
+	return removeCheckoutSessionIntentSnapshot(ws, snapshot)
 }
 func processAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
 	p, err := os.FindProcess(pid)
-	return err == nil && p.Signal(syscall.Signal(0)) == nil
+	if err != nil {
+		return false
+	}
+	err = p.Signal(syscall.Signal(0))
+	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
 func CheckoutSessionPreconditions(ws Workspace, feature string, entry StackEntry) error {
@@ -299,6 +602,14 @@ func CheckoutSessionPreconditions(ws Workspace, feature string, entry StackEntry
 	if active {
 		return fmt.Errorf("checkout sync is active in this repository")
 	}
+	// Checkout mode has one workspace-global physical checkout. Any checkout
+	// reparent therefore blocks every feature launch, not only the feature
+	// whose artifact names the run.
+	if owner, active, err := anyCheckoutReparentActive(ws); err != nil {
+		return fmt.Errorf("checkout reparent state could not be verified: %w", err)
+	} else if active {
+		return reparentLaunchRefusal(owner)
+	}
 	dirty, err := sessionDirty(ws.RepoRoot)
 	if err != nil {
 		return err
@@ -308,6 +619,52 @@ func CheckoutSessionPreconditions(ws Workspace, feature string, entry StackEntry
 	}
 	return nil
 }
+
+func CheckoutFeatureDirSessionPreconditions(ws Workspace) error {
+	active, err := anyCheckoutSyncActive(ws.MetadataRoot)
+	if err != nil {
+		return err
+	}
+	if active {
+		return fmt.Errorf("checkout sync is active in this repository")
+	}
+	if owner, active, err := anyCheckoutReparentActive(ws); err != nil {
+		return fmt.Errorf("checkout reparent state could not be verified: %w", err)
+	} else if active {
+		return reparentLaunchRefusal(owner)
+	}
+	if present, err := CheckoutAgentSessionPresence(ws); err != nil {
+		return fmt.Errorf("checkout session state could not be verified: %w", err)
+	} else if present {
+		return fmt.Errorf("a checkout session is already recorded; close or recover it before opening the feature directory")
+	}
+	return nil
+}
+
+func WithCheckoutSessionLaunchIntent(ws Workspace, finalCheck, launch func() error) (err error) {
+	token, err := acquireAgentSessionLock(ws, RealSessionTmuxRunner{})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err = errors.Join(err, releaseAgentSessionLock(ws, token))
+	}()
+	if CheckoutSessionLaunchIntentHook != nil {
+		if err := CheckoutSessionLaunchIntentHook(); err != nil {
+			return err
+		}
+	}
+	if finalCheck != nil {
+		if err := finalCheck(); err != nil {
+			return err
+		}
+	}
+	if launch == nil {
+		return nil
+	}
+	return launch()
+}
+
 func anyCheckoutSyncActive(root string) (bool, error) {
 	entries, err := os.ReadDir(filepath.Join(root, "state"))
 	if os.IsNotExist(err) {
@@ -318,7 +675,8 @@ func anyCheckoutSyncActive(root string) (bool, error) {
 	}
 	for _, e := range entries {
 		n := e.Name()
-		if strings.HasSuffix(n, "-checkout-sync.yaml") || strings.HasSuffix(n, "-checkout-sync.lock") {
+		if strings.HasSuffix(n, "-checkout-sync.yaml") || strings.HasSuffix(n, "-checkout-sync.lock") ||
+			n == "checkout-mutation.lock" {
 			return true, nil
 		}
 	}
@@ -555,12 +913,19 @@ func sessionGitOperation(repo string) bool {
 }
 
 func OpenCheckoutDirect(ws Workspace, feature string, entry StackEntry, command []string, agent SessionAgentRunner, shell SessionShellRunner, into string) error {
-	if err := CheckoutSessionPreconditions(ws, feature, entry); err != nil {
-		return err
-	}
 	tmux := RealSessionTmuxRunner{}
 	token, err := acquireAgentSessionLock(ws, tmux)
 	if err != nil {
+		return err
+	}
+	if CheckoutSessionLaunchIntentHook != nil {
+		if err := CheckoutSessionLaunchIntentHook(); err != nil {
+			_ = releaseAgentSessionLock(ws, token)
+			return err
+		}
+	}
+	if err := CheckoutSessionPreconditions(ws, feature, entry); err != nil {
+		_ = releaseAgentSessionLock(ws, token)
 		return err
 	}
 	orig, err := sessionCurrentBranch(ws.RepoRoot)
@@ -614,14 +979,21 @@ func OpenCheckoutDirect(ws Workspace, feature string, entry StackEntry, command 
 }
 
 func OpenCheckoutTmux(ws Workspace, feature string, entry StackEntry, command []string, tmux SessionTmuxRunner, into string) error {
-	if err := CheckoutSessionPreconditions(ws, feature, entry); err != nil {
-		return err
-	}
 	if tmux == nil {
 		tmux = RealSessionTmuxRunner{}
 	}
 	token, err := acquireAgentSessionLock(ws, tmux)
 	if err != nil {
+		return err
+	}
+	if CheckoutSessionLaunchIntentHook != nil {
+		if err := CheckoutSessionLaunchIntentHook(); err != nil {
+			_ = releaseAgentSessionLock(ws, token)
+			return err
+		}
+	}
+	if err := CheckoutSessionPreconditions(ws, feature, entry); err != nil {
+		_ = releaseAgentSessionLock(ws, token)
 		return err
 	}
 	orig, err := sessionCurrentBranch(ws.RepoRoot)
@@ -747,3 +1119,45 @@ func wrapSessionErr(label string, err error) error {
 	}
 	return fmt.Errorf("%s: %w", label, err)
 }
+
+func anyCheckoutReparentActive(ws Workspace) (feature string, active bool, err error) {
+	stateDir := ws.CheckoutStateDir()
+	entries, err := os.ReadDir(stateDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+
+	if err != nil {
+		return "", false, err
+	}
+	const suffix = "-reparent.v1.yaml"
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), suffix) {
+			continue
+		}
+		name := strings.TrimSuffix(entry.Name(), suffix)
+		if name == "" {
+			name = "<unknown>"
+		}
+		return name, true, nil
+	}
+	return "", false, nil
+}
+
+// AnyCheckoutReparentActive exposes the workspace-global checkout exclusion
+// to package cli's pre-launch `tws open` gate.
+func AnyCheckoutReparentActive(ws Workspace) (feature string, active bool, err error) {
+	return anyCheckoutReparentActive(ws)
+}
+
+// reparentLaunchRefusal is §14.2a's refusal, which reuses §11.2's sentence so
+// an operator sees the same instruction from every surface that refuses.
+func reparentLaunchRefusal(feature string) error {
+	return fmt.Errorf(
+		"a stack reparent is in progress for %q; finish it with: tws stack reparent %s --continue (or --abort)",
+		feature, feature)
+}
+
+// ReparentLaunchRefusal is the exported form package cli's external `tws open`
+// arm uses, so both halves of §14.2a speak one sentence.
+func ReparentLaunchRefusal(feature string) error { return reparentLaunchRefusal(feature) }

@@ -133,6 +133,125 @@ func SaveStack(featurePath string, s Stack) error {
 	return os.WriteFile(StackPath(featurePath), data, 0644)
 }
 
+// ============================================================================
+// Byte-exact durable stack writers (safe-reparent §10.3, §10.3a)
+//
+// SaveStack above is deliberately untouched: it is not atomic, not durable,
+// and every one of its callers keeps it. The three functions below are the
+// reparent boundary's only metadata writers.
+// ============================================================================
+
+// WriteStackBytesAtomic writes exactly these bytes to the feature's
+// stack.yaml, atomically and durably. It is the primitive both the forward
+// metadata write and the abort restore use, because a pre-image restored by
+// re-marshalling a decoded struct is not a restore: YAML round-tripping can
+// reorder keys, drop comments and change quoting, so only the captured bytes
+// are ever written back.
+func WriteStackBytesAtomic(featurePath string, data []byte) error {
+	return durableWriteFileFault(SyncIOWriteStack, StackPath(featurePath), data, 0644)
+}
+
+// SaveStackAtomic marshals s exactly as SaveStack does and delegates to
+// WriteStackBytesAtomic, so a caller that holds a struct rather than bytes
+// still gets the atomic, durable writer.
+func SaveStackAtomic(featurePath string, s Stack) error {
+	data, err := yaml.Marshal(&s)
+	if err != nil {
+		return err
+	}
+	return WriteStackBytesAtomic(featurePath, data)
+}
+
+// durableWriteFile writes data to path through a same-directory temp file
+// that is fsynced, closed and renamed over the destination, after which the
+// PARENT DIRECTORY is opened and fsynced too. The shipped atomicWriteFile
+// (internal/checkout_sync.go) fsyncs the temp file but never the directory,
+// so the renamed directory entry it produces is outside a machine-crash
+// durability claim; this helper is added beside it, never inside it, and
+// atomicWriteFile keeps every one of its callers.
+//
+// Every artifact whose loss would strip a reparent run of its only record of
+// what it did is written through this helper: stack.yaml (via
+// WriteStackBytesAtomic), the reparent state artifact, the compatibility
+// artifacts, and the remote follow-up record.
+func durableWriteFile(path string, data []byte, mode os.FileMode) error {
+	return durableWriteFileFault("", path, data, mode)
+}
+
+// durableWriteFileFault is durableWriteFile with the §10.3b fault token
+// bound. It consults syncIOFault(op, path) at exactly two points — before
+// the rename, and after the rename but before the parent-directory fsync —
+// so a test can assert that the previous file survives the first window and
+// that a run stays recoverable after the second. op == "" disables the seam
+// entirely, which is what the tokenless durableWriteFile passes.
+func durableWriteFileFault(op, path string, data []byte, mode os.FileMode) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("create state directory: %w", err)
+	}
+	tmp, err := os.CreateTemp(dir, ".tws-durable-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) //nolint:errcheck
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if op != "" {
+		// Window 1: the destination still holds its previous bytes.
+		if err := syncIOFault(op, path); err != nil {
+			return err
+		}
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	if op != "" {
+		// Window 2: the rename landed but the directory entry is not yet
+		// durable. The caller MUST treat this as "may or may not have been
+		// written", never as "not written".
+		if err := syncIOFault(op, path); err != nil {
+			return err
+		}
+	}
+	return syncDir(dir)
+}
+
+// syncDir opens dir read-only and fsyncs it, which is what makes a completed
+// rename durable across a machine crash. A directory that cannot be opened
+// or synced is reported, never ignored.
+func syncDir(dir string) error {
+	handle, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	syncErr := handle.Sync()
+	closeErr := handle.Close()
+	if syncErr != nil {
+		return syncErr
+	}
+	return closeErr
+}
+
+var reparentRecoverySyncDir = syncDir
+
+func confirmReparentRenameDurable(path string) error {
+	return reparentRecoverySyncDir(filepath.Dir(path))
+}
+
 // TopoSort returns branches in dependency order (parents before children).
 // Returns an error if the graph contains a cycle.
 func TopoSort(s Stack) ([]StackEntry, error) {
@@ -179,6 +298,190 @@ func TopoSort(s Stack) ([]StackEntry, error) {
 		return nil, fmt.Errorf("cycle detected in stack.yaml")
 	}
 	return sorted, nil
+}
+
+// ReparentClosureOrder returns the target and its transitive logical
+// descendants in the stable order safe-reparent replays them (§6.1a).
+//
+// It is deliberately NOT TopoSort, is never called by it, and never modifies
+// it. Two differences are load-bearing:
+//
+//  1. TopoSort seeds its ready queue by ranging over a Go map, so its initial
+//     root order is randomized per run. A fingerprint and a replay sequence
+//     both need an order that never changes between a --plan and its
+//     execution, so the ready set here is a min-heap keyed by the entry's
+//     index in Stack.Branches: stack.yaml declaration order is the sole
+//     sibling tie-break, and it is a stable, operator-visible, byte-durable
+//     property of the very file the run rewrites.
+//  2. An edge exists only where child.Base == parent.Name AND the two entries
+//     share a repository (SameStackRepo). TopoSort ignores Repo entirely, so
+//     an unrelated stack in another repository whose Base merely spells the
+//     same name would be pulled in; here it is not a child at all.
+//
+// The function is pure: it reads only stack, issues no Git command and
+// touches no filesystem. An unknown target returns an error, as does a cycle
+// among the reachable vertices — callers surface the latter as
+// stack-unsortable (current stack) or destination-cycle (post-image graph).
+// The target is always element 0.
+func ReparentClosureOrder(stack Stack, target string) ([]StackEntry, error) {
+	return reparentClosureOrder(stack, target, func(child, parent StackEntry) bool {
+		return SameStackRepo(child.Repo, parent.Repo)
+	})
+}
+
+// ReparentClosureOrderByRepoIdentity is the production reparent graph. The
+// identity map is keyed by entry name and contains canonical Git common-dir
+// identities measured before graph construction. Missing identities fall back
+// to the raw comparison so an unreadable same-token row remains in scope and
+// can surface its repo-unavailable blocker instead of disappearing.
+func ReparentClosureOrderByRepoIdentity(stack Stack, target string, identities map[string]string) ([]StackEntry, error) {
+	return reparentClosureOrder(stack, target, func(child, parent StackEntry) bool {
+		if SameStackRepo(child.Repo, parent.Repo) {
+			return true
+		}
+		childID, childOK := identities[child.Name]
+		parentID, parentOK := identities[parent.Name]
+		if childOK && parentOK && childID != "" && parentID != "" {
+			return childID == parentID
+		}
+		return false
+	})
+}
+
+func reparentClosureOrder(stack Stack, target string, sameRepo func(StackEntry, StackEntry) bool) ([]StackEntry, error) {
+	index := make(map[string]int, len(stack.Branches))
+	for i, e := range stack.Branches {
+		if _, dup := index[e.Name]; dup {
+			return nil, fmt.Errorf("duplicate stack entry %q", e.Name)
+		}
+		index[e.Name] = i
+	}
+	if _, ok := index[target]; !ok {
+		return nil, fmt.Errorf("entry %q is not in stack.yaml", target)
+	}
+
+	children := make(map[string][]string, len(stack.Branches))
+	for _, child := range stack.Branches {
+		parentIdx, ok := index[child.Base]
+		if !ok {
+			continue
+		}
+		parent := stack.Branches[parentIdx]
+		if !sameRepo(child, parent) {
+			continue
+		}
+		children[parent.Name] = append(children[parent.Name], child.Name)
+	}
+
+	// Vertex set: the target plus everything reachable from it through those
+	// edges. The closure is computed first so in-degrees count only edges
+	// inside it — an ancestor of the target is not part of the replay.
+	member := map[string]bool{target: true}
+	stackQueue := []string{target}
+	for len(stackQueue) > 0 {
+		name := stackQueue[len(stackQueue)-1]
+		stackQueue = stackQueue[:len(stackQueue)-1]
+		for _, child := range children[name] {
+			if member[child] {
+				continue
+			}
+			member[child] = true
+			stackQueue = append(stackQueue, child)
+		}
+	}
+
+	inDegree := make(map[string]int, len(member))
+	for name := range member {
+		inDegree[name] = 0
+	}
+	for name := range member {
+		for _, child := range children[name] {
+			if member[child] {
+				inDegree[child]++
+			}
+		}
+	}
+
+	ready := &stackIndexHeap{}
+	for name := range member {
+		if inDegree[name] == 0 {
+			ready.push(index[name])
+		}
+	}
+
+	ordered := make([]StackEntry, 0, len(member))
+	for ready.len() > 0 {
+		idx := ready.pop()
+		entry := stack.Branches[idx]
+		ordered = append(ordered, entry)
+		for _, child := range children[entry.Name] {
+			if !member[child] {
+				continue
+			}
+			inDegree[child]--
+			if inDegree[child] == 0 {
+				ready.push(index[child])
+			}
+		}
+	}
+
+	if len(ordered) != len(member) {
+		return nil, fmt.Errorf("cycle detected in stack.yaml")
+	}
+	if ordered[0].Name != target {
+		// Unreachable while the closure is rooted at the target, which has
+		// in-degree zero inside it; guarded so a future edge rule change can
+		// never silently demote the target from row 0.
+		return nil, fmt.Errorf("closure order did not start at %q", target)
+	}
+	return ordered, nil
+}
+
+// stackIndexHeap is ReparentClosureOrder's ready set: a min-heap of
+// Stack.Branches indices, so the smallest declaration index is always emitted
+// first. It is a local, dependency-free binary heap rather than container/heap
+// so the ordering rule reads in one place.
+type stackIndexHeap struct {
+	items []int
+}
+
+func (h *stackIndexHeap) len() int { return len(h.items) }
+
+func (h *stackIndexHeap) push(v int) {
+	h.items = append(h.items, v)
+	i := len(h.items) - 1
+	for i > 0 {
+		parent := (i - 1) / 2
+		if h.items[parent] <= h.items[i] {
+			break
+		}
+		h.items[parent], h.items[i] = h.items[i], h.items[parent]
+		i = parent
+	}
+}
+
+func (h *stackIndexHeap) pop() int {
+	top := h.items[0]
+	last := len(h.items) - 1
+	h.items[0] = h.items[last]
+	h.items = h.items[:last]
+	i := 0
+	for {
+		left, right := 2*i+1, 2*i+2
+		smallest := i
+		if left < len(h.items) && h.items[left] < h.items[smallest] {
+			smallest = left
+		}
+		if right < len(h.items) && h.items[right] < h.items[smallest] {
+			smallest = right
+		}
+		if smallest == i {
+			break
+		}
+		h.items[i], h.items[smallest] = h.items[smallest], h.items[i]
+		i = smallest
+	}
+	return top
 }
 
 // Descendants returns all transitive children of the given branch.

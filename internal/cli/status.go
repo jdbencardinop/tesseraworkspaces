@@ -72,9 +72,21 @@ null and lists are never null.`,
 			if err != nil {
 				return err
 			}
+			for i := range report.Features {
+				f := &report.Features[i]
+				f.Reparent = reparentProjectionFor(ws, f.Feature, f.Path)
+			}
 			if feature != "" {
 				if ferr := report.FilterFeature(feature); ferr != nil {
 					return ferr
+				}
+			}
+			// §11.10 rule 1: the anchored line precedes every stdout write.
+			// The report itself is already built read-only; this is a pure
+			// projection of what it measured.
+			for _, f := range report.Features {
+				if f.Reparent != nil {
+					_, _ = fmt.Fprintln(cmd.ErrOrStderr(), f.Reparent.ObservabilityLine())
 				}
 			}
 			internal.NormalizeAgentStatus(report)

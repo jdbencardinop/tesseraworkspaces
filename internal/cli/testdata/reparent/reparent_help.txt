@@ -1,0 +1,45 @@
+Move one stack entry onto a new parent and replay its descendants.
+
+A reparent changes the recorded topology of a stack: the target entry's base
+becomes the destination, every descendant is replayed onto its new parent, and
+stack.yaml records the new base and the new cutoff for every moved row in one
+atomic write.
+
+--plan describes the reparent this invocation would perform and then exits. It
+moves no branch, writes no tws runtime state, and makes no provider call. It is
+not Git-write-free: a plan fetches exactly where the run it describes fetches —
+an external plan fetches by default, a checkout plan only with --fetch.
+
+A fresh execution is always guarded. It requires --approve-plan with the
+fingerprint a --plan printed and at least one of --max-replay-per-entry or
+--max-replay-total; there is no unguarded reparent route. The limits bound this
+invocation only and are re-enforced against freshly measured counts immediately
+before each row is computed.
+
+--continue resumes the persisted run and --abort rolls it back. Both take the
+target, destination, cutoff, policy, limits, validation command and closure
+from persisted state; supplying any of them refuses before any lock or Git
+command. Neither fetches.
+
+tws changes no remote ref and no pull request. A reparented branch whose pull
+request still points at the old base is recorded locally so the next push warns
+and strengthens its lease.
+
+Usage:
+  tws stack reparent <feature> <entry> --onto <dest> [flags]
+
+Flags:
+      --abort                      Roll the persisted reparent run back
+      --approve-plan string        Approve the exact plan with the fingerprint printed by --plan (required on a fresh execution)
+      --continue                   Resume the persisted reparent run
+      --cutoff string              Operator-authored replay boundary for the target entry
+      --fetch                      Fetch before planning (external default)
+  -h, --help                       help for reparent
+      --json                       Emit the plan document as JSON on stdout (requires --plan)
+      --max-replay-per-entry int   Refuse before computing if any row of this invocation replays more than N candidates (this invocation only)
+      --max-replay-total int       Refuse before computing if this invocation replays more than N candidates in total (this invocation only)
+      --no-fetch                   Plan and compute from local refs only; no automatic network input (checkout default)
+      --onto string                Destination the target entry is reparented onto
+      --onto-kind string           How --onto is interpreted: auto, entry, or ref (default "auto")
+      --plan                       Describe the reparent this invocation would perform, then exit; moves no branch and writes no tws state, but still fetches wherever the route it describes fetches (see --no-fetch)
+  -v, --verbose                    Show full git fetch output

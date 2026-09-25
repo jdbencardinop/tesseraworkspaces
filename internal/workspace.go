@@ -337,13 +337,17 @@ func metadataRootExists(root string) bool {
 }
 
 func inferExternalRepoRoot(metadataRoot string, cfg Config) (string, error) {
+	return inferExternalRepoRootWith(metadataRoot, cfg, MainRepoRootIn)
+}
+
+func inferExternalRepoRootWith(metadataRoot string, cfg Config, resolveRepoRoot func(string) (string, error)) (string, error) {
 	metadataRoot = canonicalize(metadataRoot)
 	candidates := make(map[string]bool)
 	addCandidate := func(path string) {
 		if path == "" {
 			return
 		}
-		if root, err := MainRepoRootIn(path); err == nil {
+		if root, err := resolveRepoRoot(path); err == nil {
 			candidates[canonicalize(root)] = true
 		}
 	}
@@ -392,6 +396,113 @@ func inferExternalRepoRoot(metadataRoot string, cfg Config) (string, error) {
 		return "", fmt.Errorf("external workspace %s maps to multiple default repositories (%s); run from a worktree or repository", metadataRoot, strings.Join(roots, ", "))
 	}
 	return "", fmt.Errorf("cannot determine source repository for external workspace %s; run from a worktree or configure the workspace path", metadataRoot)
+}
+
+// ResolveReparentWorkspaceWithoutGit is the missing-executable fallback used
+// only by the reparent plan route. It never treats cwd itself as a repository:
+// a repository root must be proven by a real .git directory/file, or inferred
+// from a real external workspace whose configured/worktree candidates carry
+// such a marker.
+func ResolveReparentWorkspaceWithoutGit(cwd string, cfg Config) (Workspace, error) {
+	if repoRoot, err := filesystemGitWorktreeRootIn(cwd); err == nil {
+		return ResolveCurrentWorkspaceE(repoRoot, cfg)
+	}
+	metadataRoot := ""
+	if envRoot := strings.TrimSpace(os.Getenv("TWS_ROOT")); envRoot != "" {
+		root := canonicalize(cleanAbsolute(envRoot))
+		current := canonicalize(cleanAbsolute(cwd))
+		if current == root || strings.HasPrefix(current, root+string(filepath.Separator)) {
+			metadataRoot = root
+		}
+	}
+	if metadataRoot == "" {
+		metadataRoot = DetectWorkspaceRoot(cwd, cfg)
+	}
+	if metadataRoot == "" || !metadataRootExists(metadataRoot) {
+		return Workspace{}, fmt.Errorf("not inside a filesystem-proven git repository or tws workspace")
+	}
+	repoRoot, err := inferExternalRepoRootWith(metadataRoot, cfg, filesystemGitWorktreeRootIn)
+	if err != nil {
+		return Workspace{}, err
+	}
+	return Workspace{
+		RepoRoot:     repoRoot,
+		Mode:         ModeExternal,
+		MetadataRoot: canonicalize(metadataRoot),
+		StableID:     stableID(repoRoot),
+		Caps:         capsFor(ModeExternal),
+	}, nil
+}
+
+func filesystemGitWorktreeRootIn(path string) (string, error) {
+	current := cleanAbsolute(path)
+	if info, err := os.Stat(current); err == nil && !info.IsDir() {
+		current = filepath.Dir(current)
+	}
+	for {
+		if root, ok := filesystemGitRepositoryRoot(current); ok {
+			return root, nil
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		current = parent
+	}
+	return "", fmt.Errorf("%s is not inside a filesystem-proven git worktree", path)
+}
+
+func filesystemGitRepositoryRoot(root string) (string, bool) {
+	marker := filepath.Join(root, ".git")
+	info, err := os.Lstat(marker)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 {
+		return "", false
+	}
+	if info.IsDir() {
+		head, headErr := os.Lstat(filepath.Join(marker, "HEAD"))
+		objects, objectsErr := os.Lstat(filepath.Join(marker, "objects"))
+		if headErr != nil || !head.Mode().IsRegular() ||
+			objectsErr != nil || !objects.IsDir() {
+			return "", false
+		}
+		return canonicalize(root), true
+	}
+	if !info.Mode().IsRegular() {
+		return "", false
+	}
+	data, err := os.ReadFile(marker)
+	if err != nil || len(data) > 4096 {
+		return "", false
+	}
+	line := strings.TrimSpace(string(data))
+	if !strings.HasPrefix(line, "gitdir:") {
+		return "", false
+	}
+	gitDir := strings.TrimSpace(strings.TrimPrefix(line, "gitdir:"))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(root, gitDir)
+	}
+	gitDir = filepath.Clean(gitDir)
+	dirInfo, err := os.Lstat(gitDir)
+	if err != nil || !dirInfo.IsDir() || dirInfo.Mode()&os.ModeSymlink != 0 {
+		return "", false
+	}
+	head, err := os.Lstat(filepath.Join(gitDir, "HEAD"))
+	if err != nil || !head.Mode().IsRegular() {
+		return "", false
+	}
+	commonDir := gitDir
+	if commonData, readErr := os.ReadFile(filepath.Join(gitDir, "commondir")); readErr == nil {
+		commonDir = strings.TrimSpace(string(commonData))
+		if !filepath.IsAbs(commonDir) {
+			commonDir = filepath.Join(gitDir, commonDir)
+		}
+		commonDir = filepath.Clean(commonDir)
+	}
+	if filepath.Base(commonDir) == ".git" {
+		return canonicalize(filepath.Dir(commonDir)), true
+	}
+	return canonicalize(root), true
 }
 
 // ResolveCurrentWorkspaceE is an error-returning resolver for use in CLI
