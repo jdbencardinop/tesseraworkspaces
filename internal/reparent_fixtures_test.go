@@ -36,6 +36,15 @@ func reparentTestGitCommand(t *testing.T, dir string, args ...string) *exec.Cmd 
 	return cmd
 }
 
+func reparentTestGitIdentity(t *testing.T) {
+	t.Helper()
+	// Production Git children inherit the test process, not gitInTest's env.
+	t.Setenv("GIT_AUTHOR_NAME", "test")
+	t.Setenv("GIT_AUTHOR_EMAIL", "test@test.com")
+	t.Setenv("GIT_COMMITTER_NAME", "test")
+	t.Setenv("GIT_COMMITTER_EMAIL", "test@test.com")
+}
+
 // newReparentPrimitiveRepo builds a real repository with three commits on
 // main. GIT_CONFIG_COUNT=0 is set for the whole test process, because
 // production probes set no cmd.Env and inherit this process: hardening only
@@ -49,6 +58,7 @@ func newReparentPrimitiveRepo(t *testing.T) *reparentRepo {
 	reparentCountGitLeafFor(t)
 	t.Setenv("GIT_CONFIG_COUNT", "0")
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	reparentTestGitIdentity(t)
 	dir := canonicalize(t.TempDir())
 	gitInTest(t, dir, "init", "-q", "-b", "main", ".")
 	repo := &reparentRepo{t: t, Dir: dir}
@@ -56,6 +66,44 @@ func newReparentPrimitiveRepo(t *testing.T) *reparentRepo {
 	repo.Commit("two.txt", "two")
 	repo.Commit("three.txt", "three")
 	return repo
+}
+
+func TestReparentFixtureProvidesGitIdentity(t *testing.T) {
+	for _, fixture := range []struct {
+		name  string
+		build func(*testing.T) *reparentWorkspace
+	}{
+		{"external", func(t *testing.T) *reparentWorkspace { return newReparentWorkspace(t, ModeExternal) }},
+		{"checkout", func(t *testing.T) *reparentWorkspace { return newReparentWorkspace(t, ModeCheckout) }},
+		{"sha256", newReparentSHA256Workspace},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+			for _, variable := range []string{
+				"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL",
+				"GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL",
+			} {
+				t.Setenv(variable, "")
+			}
+
+			w := fixture.build(t)
+			for _, variable := range []string{"GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"} {
+				result, err := runReparentGit(w.Repo.Dir, nil, "var", variable)
+				if err != nil {
+					t.Fatalf("production Git child lacks %s: %v\n%s", variable, err, result.Stderr)
+				}
+				if !strings.HasPrefix(string(result.Stdout), "test <test@test.com> ") {
+					t.Fatalf("production Git child inherited host identity: %s", result.Stdout)
+				}
+			}
+			in, _ := w.approvedInput()
+			run := w.begin(in)
+			if err := RunReparent(run); err != nil {
+				t.Fatalf("reparent without host identity: %v", err)
+			}
+			assertReparentResidueRemoved(t, w, run.State.RunID)
+		})
+	}
 }
 
 // Commit writes a file and commits it, returning the new commit's OID.

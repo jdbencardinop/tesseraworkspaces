@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "feature": "fix-reparent-test-git-identity",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_d1281cf6f781",
+      "kind": "record",
+      "patch_sha256": "1f5cf9039519b185ba81f9368f6e1a288bcddd959d8dce13ca1116faaf987c98",
+      "git_patch_id": "8e34b055b558d35cedf1f782752ac0d8ca3f6e76",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "804197156a93da6a495a89b71584b591de1cc0f3ff023c35a30e525088b0d556",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "",
+      "base_commit": "6e1a8507540d8cc42ed00a026d8e45492b285c04",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "internal/reparent_fixtures_test.go",
+        "internal/reparent_run_test.go"
+      ],
+      "dependencies": [
+        {
+          "slug": "safe-reparent-restack",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "40420a110417f5e1d82c1de75bc4f7f6a05f01258c674850780710caacfe8f33",
+          "parent_recipe_sha256": "e064b4a211f42944ff79af7a40ef8fbb3b7d1f8e8c30a4d9f035afc91fd049af"
+        }
+      ],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}

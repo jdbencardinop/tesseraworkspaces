@@ -5384,6 +5384,7 @@ func newReparentSHA256Workspace(t *testing.T) *reparentWorkspace {
 	reparentCountGitLeafFor(t)
 	t.Setenv("GIT_CONFIG_COUNT", "0")
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	reparentTestGitIdentity(t)
 	dir := canonicalize(t.TempDir())
 	probe := reparentTestGitCommand(t, "", "init", "--object-format=sha256", "-q", "-b", "main", dir)
 	if out, err := probe.CombinedOutput(); err != nil {
@@ -5527,6 +5528,7 @@ func TestReparentCASRaceUnderReftableBackend(t *testing.T) {
 	reparentCountGitLeafFor(t)
 	t.Setenv("GIT_CONFIG_COUNT", "0")
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	reparentTestGitIdentity(t)
 	dir := canonicalize(t.TempDir())
 	probe := reparentTestGitCommand(t, "", "init", "--ref-format=reftable", "-q", "-b", "main", dir)
 	if out, err := probe.CombinedOutput(); err != nil {
