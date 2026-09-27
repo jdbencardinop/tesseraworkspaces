@@ -121,10 +121,9 @@ func TestSyncPlanDocs_FlagWorkflowSurfacesCarryAllFiveLiterals(t *testing.T) {
 // current-target position. It also asserts the negative half of §22.33-ii's
 // own rule: neither file may carry any of the five flag literals.
 //
-// safe-reparent-restack T-086 / AC-100 retargets both predicates deliberately:
-// "safe reparent/restack" has moved from the current target into the shipped
-// list, "rebase plan guard" still precedes it there, and the current/next
-// target is now "scoped status projection". The negative half is unchanged.
+// Released safety features stay in the shipped list. Post-release
+// prioritization makes ordinary sync safety the current target; the negative
+// flag-literal contract is unchanged.
 func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t *testing.T) {
 	literals := []string{"--plan", "--max-replay-per-entry", "--max-replay-total", "--approve-plan", "plan-guard:"}
 
@@ -147,17 +146,25 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 		guardIdx := strings.Index(ci, "rebase plan guard")
 		reparentIdx := strings.Index(ci, "safe reparent/restack")
 		targetIdx := strings.Index(ci, "current target:")
-		backlogIdx := strings.Index(ci, "p1 stack safety and observability backlog")
+		backlogIdx := strings.Index(ci, "prioritized tws backlog")
 		if guardIdx < 0 || reparentIdx < 0 || targetIdx < 0 || backlogIdx < 0 {
 			t.Fatalf("docs/roadmap.md is missing one of the required anchors (guard=%d reparent=%d target=%d backlog=%d)", guardIdx, reparentIdx, targetIdx, backlogIdx)
 		}
 		if guardIdx >= reparentIdx || reparentIdx >= targetIdx || targetIdx >= backlogIdx {
-			t.Fatalf("docs/roadmap.md must order: shipped \"rebase plan guard\" (%d) before shipped \"safe reparent/restack\" (%d) before \"Current target:\" (%d) before the P1 backlog heading (%d)", guardIdx, reparentIdx, targetIdx, backlogIdx)
+			t.Fatalf("docs/roadmap.md must order: shipped \"rebase plan guard\" (%d) before shipped \"safe reparent/restack\" (%d) before \"Current target:\" (%d) before the prioritized backlog heading (%d)", guardIdx, reparentIdx, targetIdx, backlogIdx)
 		}
 
 		targetTail := ci[targetIdx : targetIdx+min(80, len(ci)-targetIdx)]
-		if !strings.Contains(targetTail, "scoped status projection") {
-			t.Fatalf(`docs/roadmap.md's "Current target:" sentence must name "scoped status projection", got: %q`, targetTail)
+		if !strings.Contains(targetTail, "ordinary sync safety (issue #4)") {
+			t.Fatalf(`docs/roadmap.md's "Current target:" sentence must name ordinary sync safety (#4), got: %q`, targetTail)
+		}
+		previous := backlogIdx
+		for _, issue := range []string{"[#4:", "[#1:", "[#3:", "[#2:"} {
+			index := strings.Index(ci, issue)
+			if index <= previous {
+				t.Fatalf("docs/roadmap.md must order the backlog as #4, #1, #3, #2; %s is at %d after %d", issue, index, previous)
+			}
+			previous = index
 		}
 
 		normalized := normalizeProse(content)
@@ -198,17 +205,17 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 		shippedIdx := strings.Index(ci, "current shipped checkout slices")
 		guardIdx := strings.Index(ci, "rebase plan guard")
 		reparentIdx := strings.Index(ci, "safe reparent/restack")
-		nextFeatureIdx := strings.Index(ci, "next roadmap feature:")
+		nextFeatureIdx := strings.Index(ci, "next roadmap work:")
 		if shippedIdx < 0 || guardIdx < 0 || reparentIdx < 0 || nextFeatureIdx < 0 {
 			t.Fatalf("docs/engineering-workflow.md is missing one of the required anchors (shipped=%d guard=%d reparent=%d next=%d)", shippedIdx, guardIdx, reparentIdx, nextFeatureIdx)
 		}
 		if shippedIdx >= guardIdx || guardIdx >= reparentIdx || reparentIdx >= nextFeatureIdx {
-			t.Fatalf("docs/engineering-workflow.md must order: the shipped-slices heading (%d) before \"rebase plan guard\" (%d) before slice 13's \"safe reparent/restack\" (%d) before \"Next roadmap feature:\" (%d)", shippedIdx, guardIdx, reparentIdx, nextFeatureIdx)
+			t.Fatalf("docs/engineering-workflow.md must order: the shipped-slices heading (%d) before \"rebase plan guard\" (%d) before slice 13's \"safe reparent/restack\" (%d) before \"Next roadmap work:\" (%d)", shippedIdx, guardIdx, reparentIdx, nextFeatureIdx)
 		}
 
 		nextTail := ci[nextFeatureIdx : nextFeatureIdx+min(80, len(ci)-nextFeatureIdx)]
-		if !strings.Contains(nextTail, "scoped status projection") {
-			t.Fatalf(`docs/engineering-workflow.md's "Next roadmap feature:" sentence must name "scoped status projection", got: %q`, nextTail)
+		if !strings.Contains(nextTail, "ordinary sync safety (issue #4)") {
+			t.Fatalf(`docs/engineering-workflow.md's "Next roadmap work:" sentence must name ordinary sync safety (#4), got: %q`, nextTail)
 		}
 
 		assertNoFlagLiteral(t, "docs/engineering-workflow.md", content)

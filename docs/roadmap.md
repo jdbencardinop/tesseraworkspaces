@@ -84,8 +84,15 @@ Shipped foundations:
   reconstructs only the matching recovery reservation. v1.2.16 only fails closed for same-feature sync after envelope
   birth; do not use an older tws while any reparent is active or recoverable.
 
-Current target: **scoped status projection** — let the status surfaces project
-only the feature the operator asked about instead of scanning every feature.
+Current target: **ordinary sync safety (issue #4)** — reproduce both reported
+defects against released v1.2.17, then prioritize any remaining anchor-rollback
+or replay-cutoff defect. Safe reparent/restack is a separate command and does
+not establish that ordinary sync is fixed.
+
+The approved delivery order is **#4, #1, #3, #2**. Keep each existing tpatch
+feature as its own implementation boundary; the issue-to-feature mapping below
+is the queue, not permission to combine unrelated fixes. Lane B coordination
+is handled in its separate thread.
 
 Follow-ups explicitly owned by later features rather than by `tws status`:
 
@@ -118,11 +125,30 @@ After resolving a rebase conflict, `tws sync --continue` must resume deferred de
 
 For decoupled names, `StackEntry.Name` identifies the tws worktree while `StackEntry.GitBranch()` identifies the Git branch. Sync must use the latter for Git validation and ref operations.
 
-## P1 stack safety and observability backlog
+## Prioritized tws backlog
 
 - **Sync modes (shipped)**: local-only propagation, no-fetch operation, surgical branch/descendant sync, and explicit root targets, with the frozen decision persisted and carried through `--continue`/`--abort`.
 - **Safe reparent/restack (shipped)**: `tws stack reparent` coordinates three separate effects — Git refs, `stack.yaml` metadata, and worktree/index state — behind a preview-and-approve gate. Runtime artifacts remain durable recovery evidence rather than a separate effect. Its single compare-and-swap ref transaction is race-atomic, crash-atomic only on the reftable backend, and the run has one commit point with an explicit forward-only recovery contract.
-- **Scoped status projection**: project only the requested feature on the status surfaces rather than scanning every feature of the workspace (issue #3).
+
+| Order | Priority | GitHub issue | Existing tpatch features |
+|---|---|---|---|
+| 1 | P0: reproduce, then resolve remaining safety defects | [#4: ordinary sync rollback and replay cutoff](https://github.com/jdbencardinop/tesseraworkspaces/issues/4) | [`sync-transactional-abort`](../.tpatch/features/sync-transactional-abort/request.md), [`sync-cutoff-integrity`](../.tpatch/features/sync-cutoff-integrity/request.md) |
+| 2 | P1: correctness | [#1: slash-containing worktree injection](https://github.com/jdbencardinop/tesseraworkspaces/issues/1) | [`fix-inject-slash-worktree-discovery`](../.tpatch/features/fix-inject-slash-worktree-discovery/request.md) |
+| 3 | P1: scoped-status reliability | [#3: avoid building unrelated feature status](https://github.com/jdbencardinop/tesseraworkspaces/issues/3) | [`scoped-status-projection`](../.tpatch/features/scoped-status-projection/request.md) |
+| 4 | P2: workflow enhancement | [#2: role-aware templates](https://github.com/jdbencardinop/tesseraworkspaces/issues/2) | [`named-feature-templates`](../.tpatch/features/named-feature-templates/request.md), [`template-conflict-resolution`](../.tpatch/features/template-conflict-resolution/request.md) |
+
+The v1.2.17 baseline reproduction confirms incomplete anchor rollback in both
+workspace modes. A controlled stale-cutoff fixture also replays upstream history
+and fails, while the correct-cutoff control succeeds; the origin of the stale
+metadata remains under investigation. Start with
+[`sync-transactional-abort`](../.tpatch/features/sync-transactional-abort/analysis.md),
+then [`sync-cutoff-integrity`](../.tpatch/features/sync-cutoff-integrity/analysis.md).
+
+Nonblocking reparent follow-up:
+[`fix-reparent-completion-context`](../.tpatch/features/fix-reparent-completion-context/request.md)
+aligns shell-completion candidates with the execution-selected external feature
+root and target-entry repository. Explicit execution remains protected; this
+follow-up does not displace the issue queue above.
 
 ## Agent integration — P2
 
