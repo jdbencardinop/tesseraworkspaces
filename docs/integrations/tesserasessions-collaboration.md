@@ -1,8 +1,50 @@
 # tws and tesserasessions collaboration plan
 
-Status: revised after tesserasessions changes-requested review
+Status: runtime-boundary ADR jointly approved and published; dependent PRDs pending
 
-Date: 2026-09-11
+Updated: 2026-09-27
+
+## Approved artifact references
+
+The canonical
+[`ADR-RUNTIME-BOUNDARY`](https://github.com/jdbencardinop/tesserasessions/blob/53e63f751611b084c492c1f1179a6002c20a3125/docs/adrs/ADR-001-tws-tss-runtime-control-boundary.md)
+is owned by tss and jointly approved. Its published bytes are identical to the
+approved mailbox draft; the mailbox draft is now superseded.
+
+| Artifact | Repository | Commit | Path | SHA-256 |
+| --- | --- | --- | --- | --- |
+| Runtime/control boundary | `jdbencardinop/tesserasessions` | `53e63f751611b084c492c1f1179a6002c20a3125` | `docs/adrs/ADR-001-tws-tss-runtime-control-boundary.md` | `8dd2face55393a0a98d51db683c3d6192ece10136784b14224e70a9a82e00c9a` |
+| Approved planning snapshot | `jdbencardinop/tesseraworkspaces` | `e251db119c32a87375687931ca5fdd7b9139a621` | `docs/integrations/tesserasessions-collaboration.md` | `e6ca0b83a13a4c6e8223d762265b7f70d7baccdb7d8f20898f32d0070b8608bf` |
+
+The planning approval applies to the pinned historical bytes, not every later
+revision of this file. This document now records tws follow-ups and links the
+canonical decisions; it is not a second runtime-status or control contract.
+Artifact provenance uses the commit containing the approved bytes, never a
+later mailbox-only coordination commit.
+
+The accepted ADR requires fresh exact `observe_ref` evidence to govern its
+referenced target. Status-v1 path observations remain independent unless tss
+provides generation-bound equivalence evidence; they may add activity or
+attention but never recover control authority. Stale exact evidence cannot
+erase fresher discovery, and tws-owned liveness, failures, and final rollups
+retain authority. The control PRD must keep `screen_heuristic` and
+`foreground_command` as distinct provenance sources.
+
+`PRD-TWS-SESSION-CONTROL-CLIENT` is a tws-owned follow-up: the sole canonical
+persisted provider-slot state machine, native-session conflict checks, opaque
+reference storage, crash recovery, and unresolved-quarantine UX. It consumes
+the approved tss control protocol rather than redefining it. Direct-process
+birth identity and fail-closed native tmux identity checks precede provider
+reference storage or provider-backed launch.
+
+Status-consumer PRD drafting remains independent of control work and uses the
+existing status-v1 contract. Control work proceeds through the joint identity
+ADR and threat model, the tss control PRD, then the tws client PRD. Each
+implementation still needs its own approved, committed feature boundary.
+
+Lane B runtime-boundary coordination is converged. Product priorities remain
+in the separate [tws roadmap](../roadmap.md); this coordination work does not
+start or reorder product implementation. Workmux remains deferred.
 
 ## Existing foundation
 
@@ -176,6 +218,7 @@ The control observation should state how each semantic value was observed:
 
 - native provider state;
 - agent lifecycle hook;
+- screen-content heuristic, distinct from foreground-command evidence;
 - foreground command heuristic;
 - persisted-store evidence;
 - unknown.
@@ -385,15 +428,16 @@ superseded
 blocked
 ```
 
-## Initial joint deliverables
+## Joint deliverables
 
-| ID | Deliverable | Owner | Initial state |
+| ID | Deliverable | Owner | State |
 | --- | --- | --- | --- |
-| `ADR-RUNTIME-BOUNDARY` | Runtime and control ownership boundary | tss canonical, joint review | changes requested |
-| `PRD-TSS-STATUS-CONSUMER` | tws adapter for existing status schema | tws | reviewing |
-| `PRD-SESSION-CONTROL` | Narrow versioned session-control provider contract | tss-led | changes requested |
-| `ADR-SESSION-IDENTITY` | Durable provider session identity and reference storage | tss canonical, joint review | changes requested |
-| `THREAT-SESSION-CONTROL` | Quoting, target ownership, stale identity, and destructive-operation threat model | tss with tws topology/direct-process addendum | changes requested |
+| `ADR-RUNTIME-BOUNDARY` | Runtime and control ownership boundary | tss canonical, joint review | approved and published at the pinned reference above |
+| `PRD-TSS-STATUS-CONSUMER` | tws adapter for existing status schema | tws | accepted for drafting against status v1 |
+| `PRD-SESSION-CONTROL` | Narrow versioned session-control provider contract | tss-led | accepted for drafting after identity/threat-model agreement |
+| `PRD-TWS-SESSION-CONTROL-CLIENT` | Provider-slot state machine and recovery UX consuming the tss protocol | tws | accepted follow-up; awaits approved control protocol |
+| `ADR-SESSION-IDENTITY` | Durable provider session identity and reference storage | tss canonical, joint review | accepted for drafting |
+| `THREAT-SESSION-CONTROL` | Quoting, target ownership, stale identity, and destructive-operation threat model | tss with tws topology/direct-process addendum | accepted for drafting |
 | `RESEARCH-WORKMUX-PROVIDER` | Optional workmux provider feasibility | tss | deferred |
 
 ## Accepted review decisions
@@ -473,12 +517,14 @@ Two independent axes are easy to conflate.
 
 ### Session launch mode
 
-`direct` and `tmux` describe how the agent/shell process is launched:
+`direct`, `tmux`, and feature-wide `all` describe launch styles, not workspace
+modes:
 
 | Session launch | Meaning |
 | --- | --- |
 | `direct` | tws starts the agent as a child process in the current terminal, then normally starts a shell after the agent exits |
 | `tmux` | tws creates or attaches to a tmux target and runs the agent there |
+| `all` | External feature-wide tmux launch with orchestrator and worktree windows; not an additional workspace mode |
 
 The axes combine:
 
