@@ -50,6 +50,59 @@ func SaveSyncState(featurePath string, s *SyncState) error {
 	return atomicWriteFile(SyncStatePath(featurePath), data, 0644)
 }
 
+func LoadTransactionalSyncSentinel(featurePath string) (*SyncState, error) {
+	data, err := readSyncStateFile(SyncStatePath(featurePath))
+	if err != nil {
+		return nil, err
+	}
+	var sentinel SyncState
+	if err := decodeStrictSyncEnvelope(data, &sentinel); err != nil {
+		return nil, err
+	}
+	return &sentinel, nil
+}
+
+// RestoreTransactionalSyncSentinel installs a complete compatibility marker
+// only if its path is still absent. The authoritative payload is not changed.
+func RestoreTransactionalSyncSentinel(featurePath string, payload *SyncRunState) error {
+	if err := validateSyncRunStateEnvelope(featurePath, payload); err != nil {
+		return err
+	}
+	path := SyncStatePath(featurePath)
+	if err := syncIOFault(SyncIOWriteSentinel, path); err != nil {
+		return err
+	}
+	data, err := yaml.Marshal(&SyncState{
+		StartedAt: payload.StartedAt, FailedBranch: payload.Marker,
+		Pending: []string{}, Completed: []string{}, Skipped: []string{},
+	})
+	if err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(featurePath, ".tws-state-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name()) //nolint:errcheck
+	defer file.Close()           //nolint:errcheck
+	if err := file.Chmod(0644); err != nil {
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := os.Link(file.Name(), path); err != nil {
+		return fmt.Errorf("restore missing sync compatibility marker without replacing existing evidence: %w", err)
+	}
+	return syncDir(featurePath)
+}
+
 // RemoveSyncState removes the legacy state/sentinel file, returning any error
 // other than "already gone" (§12.2c rule 2).
 func RemoveSyncState(featurePath string) error {

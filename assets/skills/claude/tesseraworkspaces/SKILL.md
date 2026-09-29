@@ -198,9 +198,36 @@ If `test_command` is configured, it runs after each successful rebase. Validatio
 
 **Conflict recovery:** When sync hits a conflict, it saves state and prints instructions. After resolving, run `tws sync <feature> --continue`; deferred descendants return to pending and are rebased before completion. If another branch fails, the updated state is preserved. `Sync complete` is printed only after configured parent-child ancestry is current.
 
+**Transactional abort:** New ordinary sync runs snapshot the exact selected
+branch tips and exact pre-run `stack.yaml` bytes before mutating a branch.
+Abort restores only run-attributable local effects with per-repository
+compare-and-swap ref updates; refs, metadata, and checkout/worktree state are
+separate effects, so multi-repository rollback is not one atomic operation.
+Later user work is preserved by refusing the rollback. If native Git reflog
+evidence cannot prove that an allowed ref move came from tws's rebase,
+recovery refuses conservatively.
+
+Validation is ref/checkout-read-only. If a validator commits, rebases, resets,
+moves refs, switches branches, or detaches `HEAD`, tws preserves the journal
+and work and requires manual recovery instead of adopting or erasing the
+change.
+
+The first push **attempt** is the publication boundary. Once its intent is
+durable, recovery is forward-only with `--continue`; never recommend
+`--abort`. Older recovery state lacks the complete snapshot and its abort path
+warns that earlier branch movement may remain. Successful no-flag sync behavior
+remains unchanged. Once all forward effects succeed, durable completion precedes
+pin deletion; subsequent recovery only finishes cleanup without rolling back
+refs or metadata.
+
+If external `stack.yaml` is absent, the historical compatibility path requires
+interactive confirmation or `--allow-nontransactional`. It has no complete
+rollback and earlier branches may remain moved. Noninteractive default is
+refusal, and malformed or unreadable stack metadata never qualifies.
+
 **Amend-aware:** If a parent branch was amended, sync uses `--onto` to avoid ghost conflicts from stale SHAs.
 
-Sync modes apply to both workspace modes and are three independent axes: `--fetch`/`--no-fetch` (input refs; external defaults to `fetch`, checkout to `no-fetch`), `--full`/`--local-only` (propagation), and `--only <entry>`/`--from <entry>` (scope, by logical `stack.yaml` name). Running `tws sync <feature>` with no mode flag is unchanged. `--no-fetch` forbids automatic network input only; an explicit `--push` is still allowed. A scoped run drops `git rebase --update-refs`, so unselected branches never move. With `--only` or `--from`, `--push` is strict and resumable: the run stops at the first rejected push, keeps its recovery state, and `--continue` retries only entries that were never pushed. A `scope=all` run pushes the whole feature leniently, as `tws push` does. Do not resume a scoped checkout sync with an older `tws`; abort it instead.
+Sync modes apply to both workspace modes and are three independent axes: `--fetch`/`--no-fetch` (input refs; external defaults to `fetch`, checkout to `no-fetch`), `--full`/`--local-only` (propagation), and `--only <entry>`/`--from <entry>` (scope, by logical `stack.yaml` name). Successful no-mode-flag behavior remains unchanged. `--no-fetch` forbids automatic network input only; an explicit `--push` is still allowed. A scoped run drops `git rebase --update-refs`, so unselected branches never move. Every new ordinary-sync `--push` is strict and resumable: the run stops at the first rejected push, keeps its recovery state, and `--continue` retries only entries that were never pushed. A `scope=all` run still pushes the whole feature; standalone `tws push` retains lenient failure behavior. Do not use an older `tws` to continue or abort a transactional sync run.
 
 **Plan, read, approve, execute.** Before a wide or unfamiliar sync, run `tws sync <feature> --plan --json --max-replay-per-entry <n>` (or `--max-replay-total <n>`) and read the document before touching anything: `entries[]` for each branch's old base, new base, and `candidates` count — an upper bound, never a promise of what gets applied — plus `blockers[]`/`warnings[]` for anything that needs attention and the human tail's `Approval fingerprint:` line. `--plan` fetches exactly where the run it describes fetches — an external plan fetches by default, a checkout plan only under `--fetch`, and `--plan --continue` never fetches — so it is not a network no-op. Decide whether to proceed from the single admission fact `runnable && !guard.would_refuse && guard.execute_blocked_by == [] && refusal.kind == null`, never from `--plan`'s own exit status, which is `0` even for a refusal. To execute, extract the fingerprint explicitly (`sed -n 's/^Approval fingerprint: //p'`, never `tail -1`) and re-run with the same limit and `--approve-plan <fingerprint>` — `--approve-plan` requires at least one of `--max-replay-per-entry`/`--max-replay-total` on every route, `--plan` included; a plan with no limit mints no fingerprint, so there is no limitless approval workflow. A guarded refusal exits `1` and writes exactly one `plan-guard: <kind>: <detail>` line on stderr — parse that anchored line, never a substring of ordinary output; a `state-preserved: ` prefix on the detail means something on disk outlives the refusal, while a refusal tws already performed (dirty tree, held lock, unresolvable base, incomplete previous run) keeps its own wording and is never marked. A guarded run's limits are recorded in recovery state, so an older tws release refuses to resume it instead of silently dropping the guard.
 

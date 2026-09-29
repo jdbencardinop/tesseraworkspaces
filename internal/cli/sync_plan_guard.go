@@ -670,7 +670,8 @@ func originLimit(v *int, origin string) internal.PlanGuardLimit {
 // externalPersistedGuarded mirrors internal's checkoutRecoveryIsGuarded for
 // the external payload: guarded exactly at state_version 3.
 func externalPersistedGuarded(payload *internal.SyncRunState) bool {
-	return payload != nil && payload.StateVersion >= internal.SyncRunStateGuardedVersion
+	return payload != nil && (payload.StateVersion == internal.SyncRunStateGuardedVersion ||
+		payload.StateVersion == internal.SyncRunStateTransactionalGuardedVersion || payload.PlanGuarded)
 }
 
 // resolveExternalLimit mirrors internal.resolveCheckoutLimit for the

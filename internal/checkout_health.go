@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -123,6 +124,8 @@ type CheckoutSyncReport struct {
 	Liveness      string           `json:"liveness"` // live, stale, invalid
 	Guidance      string           `json:"guidance,omitempty"`
 	Severity      CheckoutSeverity `json:"severity"`
+
+	recovery *transactionalSyncRecoveryProjection
 }
 
 // CheckoutSessionReport describes the checkout agent session and lock state.
@@ -393,10 +396,157 @@ func buildSyncReports(ws Workspace, proc ProcessChecker) []CheckoutSyncReport {
 		}
 		feature := strings.TrimSuffix(name, "-checkout-sync.yaml")
 		txPath := filepath.Join(stateDir, name)
-		report := buildOneSyncReport(feature, txPath, stateDir, proc, ReparentActiveInStateDir(stateDir, feature))
+		featurePath, resolveErr := ws.ResolveFeaturePathOrLegacy(feature)
+		if resolveErr != nil {
+			featurePath = ws.FeaturePath(feature)
+		}
+		report := buildOneSyncReport(feature, featurePath, txPath, stateDir, proc, ReparentActiveInStateDir(stateDir, feature))
 		reports = append(reports, report)
 	}
 	return reports
+}
+
+type transactionalSyncRecoveryProjection struct {
+	kind     string
+	message  string
+	guidance string
+}
+
+// SyncTransactionValidatorMutated reports the last validation whose ref or
+// checkout image changed, without probing live Git state.
+func SyncTransactionValidatorMutated(tx *SyncTransaction) (string, bool) {
+	if tx == nil || len(tx.Validations) == 0 {
+		return "", false
+	}
+	last := tx.Validations[len(tx.Validations)-1]
+	return last.Entry, last.Status == SyncTxnActionMutated
+}
+
+func projectTransactionalSyncRecovery(feature string, tx *SyncTransaction) *transactionalSyncRecoveryProjection {
+	if tx == nil {
+		return nil
+	}
+	validatorEntry, validatorMutated := SyncTransactionValidatorMutated(tx)
+	switch {
+	case validatorMutated:
+		return &transactionalSyncRecoveryProjection{
+			kind:    "validator-mutated",
+			message: "validator changed refs or checkout state; automatic sync recovery is unsafe",
+			guidance: fmt.Sprintf(
+				"preserve the sync journal and working tree; inspect the recorded validation for %s and recover manually using its ref and checkout images",
+				validatorEntry,
+			),
+		}
+	case SyncTransactionCleanupOnly(tx):
+		message := "transactional sync already completed; cleanup remains"
+		if tx.Completion == "cancelled-before-mutation" {
+			message = "transactional sync stopped before mutation; cancellation cleanup remains"
+		}
+		return &transactionalSyncRecoveryProjection{
+			kind: "cleanup-only", message: message,
+			guidance: fmt.Sprintf("finish cleanup without rolling back refs or metadata: tws sync %s --continue", feature),
+		}
+	case SyncTransactionPublished(tx):
+		return &transactionalSyncRecoveryProjection{
+			kind:     "publication-started",
+			message:  "transactional sync publication has started; local rollback is disabled",
+			guidance: fmt.Sprintf("publication recovery is forward-only; run: tws sync %s --continue", feature),
+		}
+	case SyncTransactionRollingBack(tx):
+		message := "transactional sync rollback is in progress"
+		if tx.Phase == SyncTxnCleanup {
+			message = "transactional sync rollback cleanup is incomplete"
+		}
+		return &transactionalSyncRecoveryProjection{
+			kind:     "rolling-back",
+			message:  message,
+			guidance: fmt.Sprintf("rollback has started; run: tws sync %s --abort", feature),
+		}
+	default:
+		return &transactionalSyncRecoveryProjection{
+			kind:     "forward",
+			message:  "transactional sync recovery is pending forward progress",
+			guidance: fmt.Sprintf("run: tws sync %s --continue  or  tws sync %s --abort", feature, feature),
+		}
+	}
+}
+
+func liveTransactionalSyncGuidance(recovery *transactionalSyncRecoveryProjection) string {
+	if recovery == nil || recovery.guidance == "" {
+		return ""
+	}
+	if recovery.kind == "validator-mutated" {
+		return recovery.guidance
+	}
+	return "if the current sync process stops, " + recovery.guidance
+}
+
+func checkoutSyncValidatorMutationPresent(featurePath string) bool {
+	tx, err := LoadCheckoutTransaction(featurePath)
+	if err != nil {
+		return false
+	}
+	_, mutated := SyncTransactionValidatorMutated(tx.Transaction)
+	return mutated
+}
+
+func syncStateVersionHint(data []byte) (int, bool) {
+	var probe struct {
+		StateVersion int `yaml:"state_version"`
+	}
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	if err := decoder.Decode(&probe); err != nil {
+		return 0, false
+	}
+	return probe.StateVersion, true
+}
+
+func loadCheckoutTransactionForObservability(featurePath, txPath string) (*CheckoutTransaction, bool, error) {
+	data, err := readSyncStateFile(txPath)
+	if err != nil {
+		return nil, false, err
+	}
+	versionHint, hinted := syncStateVersionHint(data)
+	transactional := hinted && versionHint >= CheckoutTransactionTransactionalVersion
+
+	if filepath.Clean(txPath) == filepath.Clean(CheckoutTransactionPath(featurePath)) {
+		tx, loadErr := LoadCheckoutTransaction(featurePath)
+		return tx, transactional, loadErr
+	}
+
+	root, err := syncEnvelopeRoot(data)
+	if err != nil {
+		return nil, transactional, err
+	}
+	version, err := syncEnvelopeVersion(root)
+	if err != nil {
+		return nil, transactional, err
+	}
+	switch version {
+	case 0, 1, CheckoutTransactionVersion, CheckoutTransactionGuardedVersion:
+		if err := rejectLegacyTransactionalFields(root); err != nil {
+			return nil, transactional, err
+		}
+		var tx CheckoutTransaction
+		if err := yaml.Unmarshal(data, &tx); err != nil {
+			return nil, transactional, err
+		}
+		if tx.Transaction != nil || tx.PlanGuarded {
+			return nil, transactional, errors.New("legacy checkout sync state carries transactional evidence")
+		}
+		return &tx, transactional, nil
+	case CheckoutTransactionTransactionalVersion, CheckoutTransactionTransactionalGuardedVersion:
+		var tx CheckoutTransaction
+		if err := decodeStrictSyncEnvelope(data, &tx); err != nil {
+			return nil, transactional, err
+		}
+		if err := validateCheckoutTransactionEnvelope(featurePath, &tx); err != nil {
+			return nil, transactional, fmt.Errorf("invalid transactional checkout sync state: %w", err)
+		}
+		return &tx, transactional, nil
+	default:
+		return nil, transactional, fmt.Errorf("unsupported checkout sync transaction state version %d", version)
+	}
 }
 
 // buildOneSyncReport projects one checkout sync transaction.
@@ -407,31 +557,22 @@ func buildSyncReports(ws Workspace, proc ProcessChecker) []CheckoutSyncReport {
 // Telling an operator to remove them would bypass the transaction, so the
 // three manual-removal hints below are suppressed. Liveness and severity are
 // still reported; only the guidance is withheld.
-func buildOneSyncReport(feature, txPath, stateDir string, proc ProcessChecker, reparentActive bool) CheckoutSyncReport {
+func buildOneSyncReport(feature, featurePath, txPath, stateDir string, proc ProcessChecker, reparentActive bool) CheckoutSyncReport {
 	r := CheckoutSyncReport{
 		Feature:  feature,
 		Severity: SeverityOK,
 	}
 
-	data, err := os.ReadFile(txPath)
+	tx, _, err := loadCheckoutTransactionForObservability(featurePath, txPath)
 	if err != nil {
 		r.Liveness = "invalid"
 		r.Severity = SeverityError
 		if !reparentActive {
-			r.Guidance = "state file unreadable; manually remove " + txPath
+			r.Guidance = "sync recovery evidence is unreadable, corrupt, or unsupported; preserve and inspect " + txPath
 		}
 		return r
 	}
-
-	var tx CheckoutTransaction
-	if err := yaml.Unmarshal(data, &tx); err != nil {
-		r.Liveness = "invalid"
-		r.Severity = SeverityError
-		if !reparentActive {
-			r.Guidance = "corrupt transaction state; manually remove " + txPath
-		}
-		return r
-	}
+	r.recovery = projectTransactionalSyncRecovery(feature, tx.Transaction)
 
 	r.Stage = string(tx.Stage)
 	// Derive current branch from plan if available
@@ -454,7 +595,11 @@ func buildOneSyncReport(feature, txPath, stateDir string, proc ProcessChecker, r
 		r.Liveness = "stale"
 		r.LockLive = false
 		r.Severity = SeverityWarning
-		r.Guidance = fmt.Sprintf("stale sync transaction; run: tws sync %s --abort", feature)
+		if r.recovery != nil {
+			r.Guidance = r.recovery.guidance
+		} else {
+			r.Guidance = fmt.Sprintf("stale sync transaction; run: tws sync %s --abort", feature)
+		}
 		return r
 	}
 
@@ -473,11 +618,17 @@ func buildOneSyncReport(feature, txPath, stateDir string, proc ProcessChecker, r
 		r.LockLive = true
 		r.Liveness = "live"
 		r.Severity = SeverityInfo
+		if r.recovery != nil && r.recovery.kind == "validator-mutated" {
+			r.Severity = SeverityWarning
+		}
+		r.Guidance = liveTransactionalSyncGuidance(r.recovery)
 	} else {
 		r.LockLive = false
 		r.Liveness = "stale"
 		r.Severity = SeverityWarning
-		if tx.FailureMsg != "" {
+		if r.recovery != nil {
+			r.Guidance = r.recovery.guidance
+		} else if tx.FailureMsg != "" {
 			r.Guidance = fmt.Sprintf("sync failed (%s) at stage %s; run: tws sync %s --continue  or  tws sync %s --abort", tx.FailureMsg, tx.Stage, feature, feature)
 		} else {
 			r.Guidance = fmt.Sprintf("stale sync lock (pid %d dead) at stage %s; run: tws sync %s --continue  or  tws sync %s --abort", lock.PID, tx.Stage, feature, feature)
@@ -589,7 +740,7 @@ func buildFeatureEntries(ws Workspace, cfg Config) ([]CheckoutFeatureEntry, erro
 		}
 		edges, _ := FeatureStackEdges(ws, cfg, feature, fp, stack)
 		edges = ancestryEdgesFor(feature, stack, edges)
-		if ReparentGuidanceSuppressed(ws, feature, fp) {
+		if ReparentGuidanceSuppressed(ws, feature, fp) || checkoutSyncValidatorMutationPresent(fp) {
 			edges = SuppressReparentAncestryGuidance(edges)
 		}
 		for i, se := range stack.Branches {
@@ -964,7 +1115,7 @@ func buildCheckoutListEntries(ws Workspace, cfg Config) ([]CheckoutListEntry, er
 		}
 		edges, _ := FeatureStackEdges(ws, cfg, feature, fp, stack)
 		edges = ancestryEdgesFor(feature, stack, edges)
-		if ReparentGuidanceSuppressed(ws, feature, fp) {
+		if ReparentGuidanceSuppressed(ws, feature, fp) || checkoutSyncValidatorMutationPresent(fp) {
 			edges = SuppressReparentAncestryGuidance(edges)
 		}
 		for i, se := range stack.Branches {

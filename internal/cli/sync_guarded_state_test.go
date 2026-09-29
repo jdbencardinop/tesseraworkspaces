@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -312,8 +313,9 @@ func TestSyncGuardedState_UpgradeArmedContinuationEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("payload must survive the conflict: %v", err)
 	}
-	if before.StateVersion != internal.SyncRunStateVersion || before.Route != "" {
-		t.Fatalf("fixture must start unguarded: %+v", before)
+	if before.StateVersion != internal.SyncRunStateTransactionalVersion ||
+		before.Route != internal.RouteNewMode || before.PlanGuarded || before.Transaction == nil {
+		t.Fatalf("fixture must start as an unguarded transactional v4 run: %+v", before)
 	}
 	if before.FailedBranch != "parent" {
 		t.Fatalf("fixture must fail on parent, leaving child pending: %+v", before)
@@ -341,8 +343,8 @@ func TestSyncGuardedState_UpgradeArmedContinuationEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the upgraded payload must survive the injected failure: %v", err)
 	}
-	if after.StateVersion != internal.SyncRunStateGuardedVersion {
-		t.Fatalf("state_version = %d, want %d after the armed continuation upgrade", after.StateVersion, internal.SyncRunStateGuardedVersion)
+	if after.StateVersion != internal.SyncRunStateTransactionalGuardedVersion || !after.PlanGuarded {
+		t.Fatalf("state_version/plan_guarded = %d/%v, want transactional guarded v5", after.StateVersion, after.PlanGuarded)
 	}
 	if after.Route != internal.RouteNewMode {
 		t.Fatalf("route = %q, want %q", after.Route, internal.RouteNewMode)
@@ -356,6 +358,9 @@ func TestSyncGuardedState_UpgradeArmedContinuationEndToEnd(t *testing.T) {
 	// injected crash hit — that is real execution, not upgrade corruption.
 	if after.Marker != before.Marker || after.OwnerToken != before.OwnerToken || after.Feature != before.Feature {
 		t.Fatalf("the upgrade must not disturb the run's identity: before=%+v after=%+v", before, after)
+	}
+	if after.Transaction == nil || after.Transaction.RunID != before.Transaction.RunID {
+		t.Fatalf("the upgrade replaced transactional rollback evidence: before=%+v after=%+v", before.Transaction, after.Transaction)
 	}
 	if after.FailedBranch != "child" {
 		t.Fatalf("failed_branch = %q, want %q (the entry being revalidated when the hook fired)", after.FailedBranch, "child")
@@ -1716,11 +1721,13 @@ func countDeclarations(src, name string) int {
 }
 
 // TestSyncGuardedState_Criterion22_24i_x_VersionWritingSitesHaveOneOwnerEach
-// is §22.24i (x)'s executable owner. It enumerates the FIVE sites of §13.6
-// rule 2a binding 6 — three BIRTH sites and two UPGRADE writers — and shows
-// there is no sixth, by parsing declarations rather than grepping call sites.
+// is §22.24i (x)'s executable owner. It enumerates the legacy and
+// transactional birth/upgrade writers and pins the exact assignment count in
+// each owner rather than allowing any function that happens to mention a
+// version.
 //
-//	births:   setupSyncRunState (its `birth` argument),
+//	births:   setupSyncRunState (genuine legacy fixtures),
+//	          setupTransactionalSyncRunState (new external v4/v5 runs),
 //	          setupGuardedLegacyRunState,
 //	          the CheckoutTransaction literal in RunCheckoutSync
 //	upgrades: upgradeGuardedSyncRunState,
@@ -1743,6 +1750,7 @@ func TestSyncGuardedState_Criterion22_24i_x_VersionWritingSitesHaveOneOwnerEach(
 		file string
 	}{
 		{"setupSyncRunState", modesSrc, "internal/cli/sync_modes.go"},
+		{"setupTransactionalSyncRunState", modesSrc, "internal/cli/sync_modes.go"},
 		{"setupGuardedLegacyRunState", modesSrc, "internal/cli/sync_modes.go"},
 		{"upgradeGuardedSyncRunState", modesSrc, "internal/cli/sync_modes.go"},
 		{"upgradeGuardedCheckoutTransaction", checkoutSrc, "internal/checkout_sync.go"},
@@ -1753,7 +1761,7 @@ func TestSyncGuardedState_Criterion22_24i_x_VersionWritingSitesHaveOneOwnerEach(
 	}
 	// The two cli writers must NOT also be declared in the internal package,
 	// and vice versa: one owner per site means one file.
-	for _, name := range []string{"setupGuardedLegacyRunState", "upgradeGuardedSyncRunState"} {
+	for _, name := range []string{"setupTransactionalSyncRunState", "setupGuardedLegacyRunState", "upgradeGuardedSyncRunState"} {
 		if countDeclarations(checkoutSrc, name) != 0 || countDeclarations(runStateSrc, name) != 0 {
 			t.Fatalf("%s is declared outside internal/cli/sync_modes.go", name)
 		}
@@ -1762,24 +1770,44 @@ func TestSyncGuardedState_Criterion22_24i_x_VersionWritingSitesHaveOneOwnerEach(
 		t.Fatalf("upgradeGuardedCheckoutTransaction is declared outside internal/checkout_sync.go")
 	}
 
-	// (b) there is no SIXTH site: no assignment of a StateVersion outside the
-	// five, and the two savers preserve rather than set it.
+	// (b) every assignment has one declared owner and every owner has the
+	// exact number of writes its birth/upgrade branch requires.
 	assignRe := regexp.MustCompile(`(?m)^\s*(?:tx\.|payload\.|p\.)?StateVersion\s*=`)
 	for _, tc := range []struct {
-		file string
-		src  string
-		want []string
+		file       string
+		src        string
+		wantWrites map[string]int
 	}{
-		{"internal/cli/sync_modes.go", modesSrc, []string{"setupSyncRunState", "setupGuardedLegacyRunState", "upgradeGuardedSyncRunState", "newGuardedLegacyPayload", "newGuardedLegacySentinel"}},
-		{"internal/checkout_sync.go", checkoutSrc, []string{"upgradeGuardedCheckoutTransaction", "RunCheckoutSync"}},
+		{"internal/cli/sync_modes.go", modesSrc, map[string]int{
+			"setupSyncRunState":              1,
+			"setupTransactionalSyncRunState": 2,
+			"newGuardedLegacyPayload":        1,
+			"upgradeGuardedSyncRunState":     2,
+		}},
+		{"internal/checkout_sync.go", checkoutSrc, map[string]int{
+			"upgradeGuardedCheckoutTransaction": 2,
+			"RunCheckoutSync":                   1,
+		}},
 	} {
+		gotWrites := map[string]int{}
 		for _, m := range assignRe.FindAllStringIndex(tc.src, -1) {
 			owner := enclosingFuncName(tc.src, m[0])
-			if !slices.Contains(tc.want, owner) {
-				t.Fatalf("%s: StateVersion is assigned inside %q, which is not one of the declared version-writing owners %v",
-					tc.file, owner, tc.want)
+			if _, ok := tc.wantWrites[owner]; !ok {
+				t.Fatalf("%s: StateVersion is assigned inside undeclared owner %q; declared owners are %v",
+					tc.file, owner, slices.Sorted(maps.Keys(tc.wantWrites)))
+			}
+			gotWrites[owner]++
+		}
+		for owner, want := range tc.wantWrites {
+			if gotWrites[owner] != want {
+				t.Fatalf("%s: %s has %d StateVersion assignments, want exactly %d",
+					tc.file, owner, gotWrites[owner], want)
 			}
 		}
+	}
+	runCheckoutBody := funcBody(t, checkoutSrc, "RunCheckoutSync")
+	if strings.Count(runCheckoutBody, "StateVersion:      CheckoutTransactionTransactionalVersion") != 1 {
+		t.Fatal("RunCheckoutSync must have exactly one transactional v4 birth literal")
 	}
 	// SaveSyncRunState / SaveCheckoutTransaction preserve rather than set.
 	for _, tc := range []struct {
@@ -2252,7 +2280,7 @@ func TestSyncGuardedState_Criterion22_24i_ArmedContinuationUpgradeLifecycle(t *t
 }
 
 // ===========================================================================
-// §13.2a step 10a — the armed v2 -> v3 upgrade happens only AFTER guard
+// §13.2a step 10a — the armed v4 -> v5 upgrade happens only AFTER guard
 // admission, never before it.
 // ===========================================================================
 
@@ -2269,7 +2297,7 @@ func sha256File(t *testing.T, path string) string {
 
 // TestSyncGuardedState_ArmedContinuationUpgradesOnlyAfterGuardAdmission is
 // the regression for the early-upgrade bug: an ARMED external cell-5
-// continuation that the guard REFUSES must leave the persisted v2 payload
+// continuation that the guard REFUSES must leave the persisted v4 payload
 // byte-identical, and the next FLAGLESS `--continue` over it must still be
 // unguarded. The upgrade belongs at §13.2a step 10a — after
 // EvaluatePlanGuard has admitted the run and after the guard reclaim — and
@@ -2279,15 +2307,17 @@ func TestSyncGuardedState_ArmedContinuationUpgradesOnlyAfterGuardAdmission(t *te
 	f.advanceRoot(t)
 	f.makeConflict(t)
 	if _, _, exit := runSync(t, f.feature, "--only", "child"); exit == 0 {
-		t.Fatal("expected a conflict to persist a cell-5 v2 payload")
+		t.Fatal("expected a conflict to persist a cell-5 v4 payload")
 	}
 	f.detachGuard(t)
 	resolveRebase(t, f.wt("child"))
 
 	payloadPath := internal.SyncRunStatePath(f.featurePath)
 	before := sha256File(t, payloadPath)
-	if pre, err := internal.LoadSyncRunState(f.featurePath); err != nil || pre.StateVersion == internal.SyncRunStateGuardedVersion {
-		t.Fatalf("the subject must start UNGUARDED (err=%v)", err)
+	if pre, err := internal.LoadSyncRunState(f.featurePath); err != nil ||
+		pre.StateVersion != internal.SyncRunStateTransactionalVersion ||
+		pre.PlanGuarded || pre.Transaction == nil {
+		t.Fatalf("the subject must start as transactional unguarded v4 (state=%+v err=%v)", pre, err)
 	}
 
 	// An armed continuation the guard refuses: a limit of 0 against a row
@@ -2302,14 +2332,15 @@ func TestSyncGuardedState_ArmedContinuationUpgradesOnlyAfterGuardAdmission(t *te
 
 	if after := sha256File(t, payloadPath); after != before {
 		t.Fatalf("the REFUSED invocation rewrote the persisted payload: sha256 %s -> %s\n"+
-			"the armed v2 -> v3 upgrade must sit at §13.2a step 10a, below guard admission", before, after)
+			"the armed v4 -> v5 upgrade must sit at §13.2a step 10a, below guard admission", before, after)
 	}
 	reloaded, err := internal.LoadSyncRunState(f.featurePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reloaded.StateVersion == internal.SyncRunStateGuardedVersion {
-		t.Fatal("a refused armed continuation must not upgrade the payload to v3")
+	if reloaded.StateVersion != internal.SyncRunStateTransactionalVersion ||
+		reloaded.PlanGuarded || reloaded.Transaction == nil {
+		t.Fatalf("a refused armed continuation changed the v4 wrapper: %+v", reloaded)
 	}
 	if reloaded.Route == internal.RouteNewMode && reloaded.MaxReplayTotal != nil {
 		t.Fatalf("a refused armed continuation must persist no limit, got %+v", reloaded)

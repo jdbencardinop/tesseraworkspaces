@@ -442,17 +442,6 @@ var (
 	syncStateDynamicKeys = map[string]dynamicShape{
 		"started_at": shapeRFC3339UTC,
 	}
-	checkoutTxDynamicKeys = map[string]dynamicShape{
-		"started_at":   shapeRFC3339UTC,
-		"lock_pid":     shapePositiveInt,
-		"lock_created": shapeRFC3339UTC,
-	}
-	syncRunStateDynamicKeys = map[string]dynamicShape{
-		"started_at":  shapeRFC3339UTC,
-		"updated_at":  shapeRFC3339UTC,
-		"marker":      shapeMarker,
-		"owner_token": shapeHex32,
-	}
 	syncRunGuardDynamicKeys = map[string]dynamicShape{
 		"pid":     shapePositiveInt,
 		"created": shapeRFC3339UTC,
@@ -1224,6 +1213,25 @@ func syncFreeze(t *testing.T, fixture string, fx *goldenFixture, ws internal.Wor
 	}
 }
 
+func syncFreezeMissingStackRefusal(t *testing.T, fixture string, fx *goldenFixture, ws internal.Workspace, res syncCaptureResult) {
+	t.Helper()
+	reps := syncReplacements(t, fx, ws)
+	norm := func(label, s string) string {
+		return goldenNormalizeText(t, fixture+"/"+label, reps, ws.StableID, s)
+	}
+	syncStream(t, fixture, "stdout.txt", norm("stdout.txt", res.stdout), res.exit)
+	syncStream(t, fixture, "stderr.txt", norm("stderr.txt", res.stderr), res.exit)
+	syncGolden(t, fixture, "refs.txt", norm("refs.txt", syncSnapshotRefs(t, fx.repo)))
+	syncGolden(t, fixture, "remote-refs.txt", norm("remote-refs.txt", syncSnapshotRefs(t, fx.remote)))
+	got := normalizeRecords(res.records, reps, ws.StableID)
+	for _, rec := range got {
+		if rec.Verb() != "rev-parse" {
+			t.Fatalf("%s: noninteractive missing-stack refusal executed mutating/network Git: %s", fixture, rec)
+		}
+	}
+	syncGolden(t, fixture, "argv.log", norm("argv.log", syncRenderRecords(got)))
+}
+
 // ---------------------------------------------------------------------------
 // Comparison mode 3 — ordered argv comparison under exactly three closed
 // C4 carve-outs (§17.1)
@@ -1435,15 +1443,115 @@ func syncStateRefExternal(fx *goldenFixture) syncStateRef {
 	}
 }
 
-func syncStateRefCheckout(fx *goldenFixture, feature string) syncStateRef {
-	return syncStateRef{
-		surface: "state-checkout-sync.yaml",
-		path:    filepath.Join(fx.metaRoot, "state", feature+"-checkout-sync.yaml"),
-		spec: stateCompareSpec{
-			AdditiveKeys:       []string{"plan[].name"},
-			DynamicKeys:        checkoutTxDynamicKeys,
-			ConflictFailureMsg: true,
-		},
+// Transactional births deliberately add journal probes, pins, and v4 evidence.
+// Keep the older captures immutable while still comparing successful command
+// output, ordinary Git mutation argv, final refs, remote refs, and metadata.
+func syncFreezeTransactional(t *testing.T, fixture string, fx *goldenFixture, ws internal.Workspace, res syncCaptureResult, abort bool) {
+	t.Helper()
+	reps := syncReplacements(t, fx, ws)
+	norm := func(label, text string) string {
+		return goldenNormalizeText(t, fixture+"/"+label, reps, ws.StableID, text)
+	}
+	if abort {
+		if res.exit != 0 || !strings.Contains(res.stdout, "Rollback restored 1 repository ref set(s), exact stack metadata, and recorded checkout holders.") {
+			t.Fatalf("transactional abort: exit=%d\nstdout:\n%s\nstderr:\n%s", res.exit, res.stdout, res.stderr)
+		}
+		if fx.mode == internal.ModeExternal && !strings.Contains(res.stdout, "all run-owned local refs and stack metadata were restored") {
+			t.Fatalf("external abort omitted its restored-effects summary: %s", res.stdout)
+		}
+		if fx.mode == internal.ModeCheckout && !strings.Contains(res.stdout, "Checkout sync aborted, original branch restored.") {
+			t.Fatalf("checkout abort omitted its original-checkout summary: %s", res.stdout)
+		}
+	} else {
+		if res.exit != 0 && strings.Contains(fixture, "continue") {
+			t.Fatalf("continue failed before compatibility comparison:\n%s\n%s", res.stdout, res.stderr)
+		}
+		syncStream(t, fixture, "stdout.txt", norm("stdout.txt", res.stdout), res.exit)
+		syncStream(t, fixture, "stderr.txt", norm("stderr.txt", res.stderr), res.exit)
+	}
+	refs := syncSnapshotRefs(t, fx.repo)
+	var ordinary []string
+	for _, line := range strings.Split(refs, "\n") {
+		if !strings.HasPrefix(line, "refs/tws/sync/") {
+			ordinary = append(ordinary, line)
+		}
+	}
+	if !abort {
+		syncGolden(t, fixture, "refs.txt", norm("refs.txt", strings.Join(ordinary, "\n")))
+	}
+	syncGolden(t, fixture, "remote-refs.txt", norm("remote-refs.txt", syncSnapshotRefs(t, fx.remote)))
+	data, err := os.ReadFile(internal.StackPath(fx.featurePath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fixture == "external-continue" {
+		var wanted, actual internal.Stack
+		if err := yaml.Unmarshal([]byte(syncReadEvidence(t, fixture, "stack.yaml")), &wanted); err != nil {
+			t.Fatal(err)
+		}
+		if err := yaml.Unmarshal(data, &actual); err != nil {
+			t.Fatal(err)
+		}
+		for i := range wanted.Branches {
+			if wanted.Branches[i].Name == "child" {
+				wanted.Branches[i].LastBaseSHA = gitOutput(t, fx.repo, "rev-parse", "parent")
+			}
+		}
+		wantBytes, err := yaml.Marshal(wanted)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotBytes, err := yaml.Marshal(actual)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(wantBytes) != string(gotBytes) {
+			t.Fatalf("resumed row must record only its completed parent postimage:\nwant %s\ngot %s", wantBytes, gotBytes)
+		}
+	} else if !abort {
+		syncGolden(t, fixture, "stack.yaml", norm("stack.yaml", string(data)))
+	}
+	if res.exit == 0 {
+		if strings.Contains(refs, "refs/tws/sync/") {
+			t.Fatalf("completed sync leaked preimage refs:\n%s", refs)
+		}
+		if internal.HasSyncRunState(fx.featurePath) || internal.HasCheckoutTransaction(fx.featurePath) {
+			t.Fatal("completed sync retained its transaction")
+		}
+	} else if fx.mode == internal.ModeExternal {
+		state, err := internal.LoadSyncRunState(fx.featurePath)
+		if err != nil || state == nil || state.StateVersion != internal.SyncRunStateTransactionalVersion || state.Route != internal.RouteLegacy || state.Transaction == nil {
+			t.Fatalf("new no-flag failure needs valid legacy-route v4 rollback evidence: %+v, %v", state, err)
+		}
+	} else {
+		state, err := internal.LoadCheckoutTransaction(fx.featurePath)
+		if err != nil || state == nil || state.StateVersion != internal.CheckoutTransactionTransactionalVersion || state.Route != internal.RouteLegacy || state.Transaction == nil {
+			t.Fatalf("new checkout failure needs valid legacy-route v4 rollback evidence: %+v, %v", state, err)
+		}
+	}
+	if abort {
+		return // rollback mutation sequence is covered by exact preimage tests.
+	}
+	want := parseRenderedRecords(t, fixture, syncReadEvidence(t, fixture, "argv.log"))
+	got := normalizeRecords(res.records, reps, ws.StableID)
+	mutations := func(records []normRecord) []normRecord {
+		var result []normRecord
+		for _, record := range records {
+			switch record.Verb() {
+			case "fetch", "rebase", "checkout", "switch", "push":
+				result = append(result, record)
+			}
+		}
+		return result
+	}
+	want, got = mutations(want), mutations(got)
+	if len(want) != len(got) {
+		t.Fatalf("ordinary mutation count changed:\nwant %s\ngot %s", describeRecords(want), describeRecords(got))
+	}
+	for i := range want {
+		if want[i].Key() != got[i].Key() {
+			t.Fatalf("ordinary mutation %d changed: want %s; got %s", i, want[i], got[i])
+		}
 	}
 }
 
@@ -1457,7 +1565,7 @@ func TestSyncNoFlag_ExternalClean(t *testing.T) {
 	ws := syncGoldenEnv(t, fx.repo)
 
 	res := syncMeasure(t, true, syncCmd, syncGoldenFeature)
-	syncFreeze(t, "external-clean", fx, ws, res, nil)
+	syncFreezeTransactional(t, "external-clean", fx, ws, res, false)
 }
 
 func TestSyncNoFlag_ExternalConflict(t *testing.T) {
@@ -1466,7 +1574,7 @@ func TestSyncNoFlag_ExternalConflict(t *testing.T) {
 	ws := syncGoldenEnv(t, fx.repo)
 
 	res := syncMeasure(t, true, syncCmd, syncGoldenFeature)
-	syncFreeze(t, "external-conflict", fx, ws, res, []syncStateRef{syncStateRefExternal(fx)})
+	syncFreezeTransactional(t, "external-conflict", fx, ws, res, false)
 }
 
 func TestSyncNoFlag_ExternalContinue(t *testing.T) {
@@ -1481,21 +1589,28 @@ func TestSyncNoFlag_ExternalContinue(t *testing.T) {
 	goldenWrite(t, filepath.Join(childPath, "shared.txt"), "resolved\n")
 	b.git(childPath, "add", "shared.txt")
 	b.git(childPath, "-c", "core.editor=true", "rebase", "--continue")
+	(&scopedFixture{featurePath: fx.featurePath}).detachGuard(t)
 
 	res := syncMeasure(t, true, syncCmd, syncGoldenFeature, "--continue")
-	syncFreeze(t, "external-continue", fx, ws, res, nil)
+	syncFreezeTransactional(t, "external-continue", fx, ws, res, false)
 }
 
 func TestSyncNoFlag_ExternalAbortWithState(t *testing.T) {
 	b := newGoldenBuilder(t)
 	fx := syncExternalLinear(b, syncGoldenFeature, true)
 	ws := syncGoldenEnv(t, fx.repo)
+	refsBefore := syncSnapshotRefs(t, fx.repo)
+	metadataBefore := readFileString(t, internal.StackPath(fx.featurePath))
 
 	if exit := syncUnmeasured(t, syncCmd, syncGoldenFeature); exit == 0 {
 		t.Fatal("the conflict fixture must fail the preparation sync")
 	}
+	(&scopedFixture{featurePath: fx.featurePath}).detachGuard(t)
 	res := syncMeasure(t, true, syncCmd, syncGoldenFeature, "--abort")
-	syncFreeze(t, "external-abort-state", fx, ws, res, nil)
+	syncFreezeTransactional(t, "external-abort-state", fx, ws, res, true)
+	if syncSnapshotRefs(t, fx.repo) != refsBefore || readFileString(t, internal.StackPath(fx.featurePath)) != metadataBefore {
+		t.Fatal("no-flag abort did not restore every pre-run ref and exact metadata")
+	}
 }
 
 func TestSyncNoFlag_ExternalAbortWithoutState(t *testing.T) {
@@ -1510,15 +1625,15 @@ func TestSyncNoFlag_ExternalAbortWithoutState(t *testing.T) {
 func TestSyncNoFlag_ExternalFallback(t *testing.T) {
 	b := newGoldenBuilder(t)
 	fx := syncExternalLinear(b, syncGoldenFeature, false)
-	// A feature that genuinely has no readable stack.yaml under either
-	// derivation takes today's frozen syncFallback path (§4.2 item 7).
+	// A feature with absent stack.yaml now refuses noninteractive execution
+	// unless automation explicitly opts into the nontransactional fallback.
 	if err := os.Remove(filepath.Join(fx.featurePath, "stack.yaml")); err != nil {
 		t.Fatal(err)
 	}
 	ws := syncGoldenEnv(t, fx.repo)
 
 	res := syncMeasure(t, true, syncCmd, syncGoldenFeature)
-	syncFreeze(t, "external-fallback", fx, ws, res, nil)
+	syncFreezeMissingStackRefusal(t, "external-fallback", fx, ws, res)
 }
 
 func TestSyncNoFlag_ExternalStaleEdge(t *testing.T) {
@@ -1549,7 +1664,7 @@ func TestSyncNoFlag_CheckoutClean(t *testing.T) {
 	ws := syncGoldenEnv(t, fx.repo)
 
 	res := syncMeasure(t, false, syncCmd, syncGoldenFeature)
-	syncFreeze(t, "checkout-clean", fx, ws, res, nil)
+	syncFreezeTransactional(t, "checkout-clean", fx, ws, res, false)
 }
 
 func TestSyncNoFlag_CheckoutConflict(t *testing.T) {
@@ -1558,7 +1673,7 @@ func TestSyncNoFlag_CheckoutConflict(t *testing.T) {
 	ws := syncGoldenEnv(t, fx.repo)
 
 	res := syncMeasure(t, false, syncCmd, syncGoldenFeature)
-	syncFreeze(t, "checkout-conflict", fx, ws, res, []syncStateRef{syncStateRefCheckout(fx, syncGoldenFeature)})
+	syncFreezeTransactional(t, "checkout-conflict", fx, ws, res, false)
 }
 
 func TestSyncNoFlag_CheckoutContinue(t *testing.T) {
@@ -1574,19 +1689,24 @@ func TestSyncNoFlag_CheckoutContinue(t *testing.T) {
 	b.git(fx.repo, "-c", "core.editor=true", "rebase", "--continue")
 
 	res := syncMeasure(t, false, syncCmd, syncGoldenFeature, "--continue")
-	syncFreeze(t, "checkout-continue", fx, ws, res, nil)
+	syncFreezeTransactional(t, "checkout-continue", fx, ws, res, false)
 }
 
 func TestSyncNoFlag_CheckoutAbort(t *testing.T) {
 	b := newGoldenBuilder(t)
 	fx := syncCheckoutLinear(b, syncGoldenFeature, true)
 	ws := syncGoldenEnv(t, fx.repo)
+	refsBefore := syncSnapshotRefs(t, fx.repo)
+	metadataBefore := readFileString(t, internal.StackPath(fx.featurePath))
 
 	if exit := syncUnmeasured(t, syncCmd, syncGoldenFeature); exit == 0 {
 		t.Fatal("the conflict fixture must fail the preparation sync")
 	}
 	res := syncMeasure(t, false, syncCmd, syncGoldenFeature, "--abort")
-	syncFreeze(t, "checkout-abort", fx, ws, res, nil)
+	syncFreezeTransactional(t, "checkout-abort", fx, ws, res, true)
+	if syncSnapshotRefs(t, fx.repo) != refsBefore || readFileString(t, internal.StackPath(fx.featurePath)) != metadataBefore {
+		t.Fatal("no-flag abort did not restore every pre-run ref and exact metadata")
+	}
 }
 
 // ---------------------------------------------------------------------------

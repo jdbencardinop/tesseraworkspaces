@@ -175,10 +175,35 @@ tws sync auth --fetch                # input refs: fetch first (external default
 - `--only`/`--from` on an archived entry is refused; on an unmaterialized entry it is allowed.
 - Trigger flags on `--continue` require v2 state; against legacy or absent state they are refused.
 - `--abort` cannot be combined with a mode flag: abort is defined by the persisted run.
-- With a scoped mode flag (`--only`/`--from`), `--push` is strict: the run stops at the first rejected push and `--continue` retries only the entries that were never pushed. A `scope=all` run — and plain `tws push` — stays lenient and pushes the whole feature.
+- Every new ordinary-sync `--push` is strict: the run stops at the first rejected push and `--continue` retries only the entries that were never pushed. A `scope=all` run still pushes the whole feature; only standalone `tws push` retains lenient failure behavior.
 - Checkout `--fetch` refreshes remote-tracking refs once, before the plan is built and before the transaction exists. It is best-effort and deliberately **not** resumable: an interrupted refresh leaves no transaction, so the same command simply re-runs.
 - A checkout sync must be run from the repository checkout or any subdirectory of it. A linked worktree of that repository is refused (`checkout sync operates on <repo> but the current directory belongs to working tree <other>`), so a sync can never mutate the wrong working tree.
 - `tws push` is an **external-mode** command. In a checkout workspace it still refuses with `linked worktrees are not supported in checkout mode`; push checkout branches with `tws sync <feature> --push`.
+- New ordinary sync recovery snapshots exact selected branch tips and exact
+  pre-run `stack.yaml` bytes before branch mutation. Abort uses per-repository
+  compare-and-swap ref updates and refuses if later user work moved a ref;
+  refs, metadata, and checkout/worktree state are separate effects, and
+  multi-repository rollback is not atomic as one unit.
+- Immediately before the first push **attempt**, sync records publication.
+  Recovery is then forward-only with `--continue`; do not offer `--abort`.
+  Older recovery state has no complete snapshot and warns that abort cannot
+  restore every earlier movement. If native Git reflog attribution cannot
+  prove a changed allowed ref came from tws's rebase, recovery refuses.
+- After every forward effect succeeds, sync records completion before deleting
+  protection refs. A late recovery verb only finishes cleanup and reports the
+  already-completed run; it does not roll back refs or metadata.
+- Validators are ref/checkout-read-only. If validation moves a ref, switches or
+  detaches `HEAD`, or otherwise changes checkout identity, preserve the journal
+  and work and recover manually; tws will not adopt or erase those changes.
+- An absent external `stack.yaml` may use the historical nontransactional path
+  only after interactive confirmation or `--allow-nontransactional`.
+  Noninteractive default is refusal, complete rollback is unavailable, and an
+  existing malformed or unreadable file never qualifies.
+- The consented missing-stack path still refuses any recovery evidence that
+  appears after its guard claim. `--push` requires stack metadata.
+- If a valid transactional journal lacks only its compatibility marker,
+  recovery follows the journal's phase and restores the marker exclusively.
+  Mixed legacy/transactional records require manual inspection, never deletion.
 
 ### Plan and guard
 

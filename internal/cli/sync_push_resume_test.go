@@ -173,32 +173,37 @@ func TestSyncPush_ScopeAllUsesTheLegacyFeaturePush(t *testing.T) {
 	f.stateFilesGone(t)
 }
 
-// TestSyncPush_ScopeAllKeepsTheLenientFailure pins the other half of §7.6: the
-// legacy loop reports a rejected push per entry and still exits 0, so a
-// scope=all run behaves exactly like `tws push`, not like the strict scoped
-// push.
-func TestSyncPush_ScopeAllKeepsTheLenientFailure(t *testing.T) {
+// New ordinary sync retains publication recovery evidence even at scope=all.
+// Standalone tws push and genuinely legacy recovery keep their old loop.
+func TestSyncPush_ScopeAllRetainsPublicationFailure(t *testing.T) {
 	f := newScopedFixture(t)
 	f.advanceRoot(t)
 	defer rejectPushOf(t, f.remote, "child")()
 
 	stdout, stderr, exit := runSync(t, f.feature, "--full", "--no-fetch", "--push")
-	if exit != 0 {
-		t.Fatalf("a scope=all push failure stays success-shaped: exit=%d\nstdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
+	if exit != 1 {
+		t.Fatalf("a transactional scope=all push failure must fail: exit=%d\nstdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
 	}
 	if !strings.Contains(stdout, "  [x] child (push failed)") {
-		t.Fatalf("missing the lenient per-entry failure line:\n%s", stdout)
+		t.Fatalf("missing the per-entry failure line:\n%s", stdout)
 	}
 	if !strings.Contains(stdout, "  [+] parent (pushed)") {
-		t.Fatalf("the legacy loop continues past a failure:\n%s", stdout)
+		t.Fatalf("the earlier successful push must be reported:\n%s", stdout)
 	}
 	refs := remoteRefs(t, f.remote)
 	if strings.Contains(refs, "refs/heads/child") {
 		t.Fatalf("the refused branch must not be on the remote:\n%s", refs)
 	}
-	// A lenient push is not a failed run: the run finished and tore its state
-	// down, so nothing is left to --continue.
-	f.stateFilesGone(t)
+	payload := loadPayload(t, f.featurePath)
+	if payload.Transaction == nil || !payload.Transaction.Publication.IntentDurable ||
+		strings.Join(payload.Pushed, ",") != "root,parent" {
+		t.Fatalf("publication progress must survive: %+v", payload)
+	}
+	f.detachGuard(t)
+	_, abortErr, abortExit := runSync(t, f.feature, "--abort")
+	if abortExit != 1 || !strings.Contains(abortErr, "publication boundary") {
+		t.Fatalf("published failure must remain forward-only: %d %s", abortExit, abortErr)
+	}
 }
 
 // TestSyncPush_FailureWithNoPriorSuccessKeepsPushedEmpty pins the zero-success

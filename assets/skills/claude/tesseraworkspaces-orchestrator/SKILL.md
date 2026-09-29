@@ -67,11 +67,39 @@ tws sync <feature> --plan --json --max-replay-per-entry <n>   # preview: old bas
 
 Selectors are logical `stack.yaml` names, never Git branches. A scoped run drops
 `--update-refs`, so it never moves a branch outside the selection. Incompatible
-combinations are refused before any fetch, lock, or rebase. With a scoped flag
-(`--only`/`--from`), `--push` is strict: the run stops at the first rejected push
-and `--continue` retries only the entries that were never pushed; a `scope=all`
-run pushes the whole feature leniently, as `tws push` does. Two concurrent syncs
-against one feature remain unsafe.
+combinations are refused before any fetch, lock, or rebase. Every new ordinary
+sync `--push` is strict: it stops at the first rejected push and `--continue`
+retries only entries that were never pushed. A `scope=all` run still pushes the
+whole feature; standalone `tws push` retains lenient failure behavior.
+The shared feature mutation guard rejects concurrent syncs of one feature.
+
+**Recover ordinary sync transactionally.** New runs preserve exact selected
+branch tips and exact pre-run `stack.yaml` bytes before mutation. `--abort`
+uses per-repository compare-and-swap ref updates and refuses rather than
+overwriting later user work; refs, metadata, and holder state are separate
+effects, so multi-repository recovery is not atomic as one unit. If native Git
+reflog evidence cannot attribute an allowed ref change to tws's rebase,
+recovery refuses.
+
+Treat validators as ref/checkout-read-only. If validation commits, rebases,
+resets, moves a ref, switches branches, or detaches `HEAD`, preserve the
+journal and work and direct the operator to manual recovery; never claim tws
+can safely adopt or erase those changes.
+
+Immediately before the first push **attempt**, sync records publication.
+After that boundary only `--continue` is valid; never direct an operator to
+`--abort`. Older recovery state has no complete snapshot and warns that abort
+cannot fully restore earlier movement. Successful no-flag sync remains the
+compatibility target.
+
+Once all forward effects succeed, sync durably records completion before
+deleting protection refs. A later recovery verb only finishes cleanup and
+reports the completed run; it does not roll back refs or metadata.
+
+If external `stack.yaml` is absent, the legacy compatibility sync requires an
+interactive warning and confirmation or `--allow-nontransactional`. It has no
+complete rollback and earlier branches may remain moved. Noninteractive use
+refuses by default; malformed or unreadable metadata always refuses.
 
 **Plan before a wide sync.** Run `--plan` first and read its `entries[]` rows
 before rebasing several branches at once: each row's old base, new base, and

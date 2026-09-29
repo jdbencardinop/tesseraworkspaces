@@ -112,6 +112,25 @@ func pushScoped(feature string, layout externalSyncLayout, stack internal.Stack,
 	if payload == nil {
 		return fmt.Errorf("internal error: new-mode push without run state for %s", feature)
 	}
+	if payload.Transaction != nil {
+		changed := false
+		seen := make(map[string]bool, len(payload.Pushed))
+		for _, name := range payload.Pushed {
+			seen[name] = true
+		}
+		for _, result := range payload.Transaction.Publication.Results {
+			if result.Success && !seen[result.Entry] {
+				payload.Pushed = append(payload.Pushed, result.Entry)
+				seen[result.Entry] = true
+				changed = true
+			}
+		}
+		if changed {
+			if err := internal.SaveSyncRunState(layout.FeaturePath, payload); err != nil {
+				return fmt.Errorf("reconcile durable publication results: %w", err)
+			}
+		}
+	}
 	rebased := make(map[string]bool, len(completed))
 	for _, name := range completed {
 		rebased[name] = true
@@ -162,13 +181,18 @@ func pushScoped(feature string, layout externalSyncLayout, stack internal.Stack,
 	}
 
 	pushed := false
-	for _, selected := range sel.Entries {
+	for index, selected := range sel.Entries {
 		if !rebased[selected.Name] || alreadyPushed[selected.Name] {
 			continue
 		}
 		entry := internal.GetBranch(stack, selected.Name)
 		if entry.Name == "" {
 			continue
+		}
+		if sel.Policy.ScopeKind == internal.SyncScopeAll && TopLevelPushEntryBarrier != nil {
+			if err := TopLevelPushEntryBarrier(index, entry); err != nil {
+				return err
+			}
 		}
 		path := layout.WorktreePath(entry.Name)
 		if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -186,9 +210,35 @@ func pushScoped(feature string, layout externalSyncLayout, stack internal.Stack,
 		if decision.Applies && decision.WarnLine != "" {
 			fmt.Fprintln(os.Stderr, decision.WarnLine) //nolint:errcheck
 		}
-		if err := internal.RunDirClean(repoDir, "git", pushArgv(decision, entry.GitBranch())...); err != nil {
+		var publication internal.SyncTransactionPushIntent
+		if payload.Transaction != nil {
+			publication, err = internal.SyncPreparePublication(payload.Transaction, repoDir, entry.Name, entry.GitBranch())
+			if err != nil {
+				return err
+			}
+			if err := internal.SyncBeginPublication(payload.Transaction, publication, func() error {
+				return internal.SaveSyncRunState(layout.FeaturePath, payload)
+			}); err != nil {
+				return err
+			}
+		}
+		argv := pushArgv(decision, entry.GitBranch())
+		if payload.Transaction != nil {
+			argv = transactionalPushArgv(decision, publication)
+		}
+		pushErr := internal.RunDirClean(repoDir, "git", argv...)
+		if payload.Transaction != nil {
+			if err := internal.SyncFinishPublicationAttempt(payload.Transaction, entry.Name, pushErr, func() error {
+				return internal.SaveSyncRunState(layout.FeaturePath, payload)
+			}); err != nil {
+				return err
+			}
+		}
+		if pushErr != nil {
 			fmt.Printf("  [x] %s (push failed)\n", entry.Name)
-			saveScopedPushFailure(layout.FeaturePath, payload, entry.Name)
+			if err := saveScopedPushFailure(layout.FeaturePath, payload, entry.Name); err != nil {
+				return errors.Join(fmt.Errorf("push failed for %s", entry.Name), err)
+			}
 			return fmt.Errorf("push failed for %s; fix the remote problem, then resume with: tws sync %s --continue", entry.Name, feature)
 		}
 		fmt.Printf("  [+] %s (pushed)\n", entry.Name)
@@ -342,6 +392,14 @@ func pushArgv(d internal.ReparentPushDecision, branch string) []string {
 		args = append(args, "--force-if-includes")
 	}
 	return append(args, "origin", branch)
+}
+
+func transactionalPushArgv(d internal.ReparentPushDecision, intent internal.SyncTransactionPushIntent) []string {
+	args := []string{"push", "--force-with-lease"}
+	if d.ForceIfIncludes {
+		args = append(args, "--force-if-includes")
+	}
+	return append(args, "origin", intent.SourceSHA+":"+intent.DestinationRef)
 }
 
 // pushFeatureCheckout holds the pre-sync-modes push body verbatim. Checkout

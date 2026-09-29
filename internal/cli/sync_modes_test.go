@@ -226,7 +226,7 @@ func TestSyncModes_HelpFlagBlockIsAlphabetical(t *testing.T) {
 		}
 		names = append(names, m[1])
 	}
-	want := []string{"abort", "approve-plan", "continue", "fetch", "from", "full", "json", "local-only", "max-replay-per-entry", "max-replay-total", "no-fetch", "only", "plan", "push", "test", "verbose"}
+	want := []string{"abort", "allow-nontransactional", "approve-plan", "continue", "fetch", "from", "full", "json", "local-only", "max-replay-per-entry", "max-replay-total", "no-fetch", "only", "plan", "push", "test", "verbose"}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Fatalf("help flag block = %v, want %v", names, want)
 	}
@@ -485,13 +485,13 @@ func TestSyncModes_CellMessages(t *testing.T) {
 			"cell10-plain",
 			internal.SyncExternalState{Cell: 10, LegacyPath: "/f/auth/.sync-state.yaml", LegacyErr: errText("broken")},
 			syncVerbPlain, false,
-			"sync state at /f/auth/.sync-state.yaml is unreadable: broken",
+			"sync state at /f/auth/.sync-state.yaml is unreadable: broken; preserve and inspect it — tws will not guess whether recovery is safe",
 		},
 		{
 			"cell10-abort",
 			internal.SyncExternalState{Cell: 10, LegacyPath: "/f/auth/.sync-state.yaml", LegacyErr: errText("broken")},
 			syncVerbAbort, false,
-			"sync state at /f/auth/.sync-state.yaml is unreadable: broken; inspect and remove it manually",
+			"sync state at /f/auth/.sync-state.yaml is unreadable: broken; preserve and inspect it — tws will not guess whether recovery is safe",
 		},
 	}
 	for _, tc := range cases {
@@ -519,7 +519,7 @@ func TestSyncModes_UnreadablePayloadCellsShareOneMessage(t *testing.T) {
 		state := internal.SyncExternalState{Cell: cell, PayloadPath: "/f/auth/.sync-state.v2.yaml", PayloadErr: errText("bad version")}
 		for _, verb := range []syncVerb{syncVerbPlain, syncVerbContinue, syncVerbAbort} {
 			err := syncCellRefusal(verb, "auth", layout, state)
-			want := "scoped sync state at /f/auth/.sync-state.v2.yaml is unreadable or uses an unsupported version (bad version); inspect it and remove it manually — tws will not guess"
+			want := "scoped sync state at /f/auth/.sync-state.v2.yaml is unreadable or uses an unsupported version (bad version); preserve and inspect it — do not delete it or run recovery blindly"
 			if err == nil || err.Error() != want {
 				t.Fatalf("cell %d / %s: got %v", cell, verb, err)
 			}
@@ -537,12 +537,12 @@ func TestSyncModes_MixedAndCorruptCells(t *testing.T) {
 		PayloadPath: "/f/auth/.sync-state.v2.yaml",
 	}
 	err := syncCellRefusal(syncVerbPlain, "auth", layout, mixed)
-	want := "two unfinished syncs are recorded for \"auth\": a legacy sync failed on parent and a scoped sync failed on child; resolve both before syncing (inspect /f/auth/.sync-state.yaml and /f/auth/.sync-state.v2.yaml)"
+	want := "two unfinished syncs are recorded for \"auth\": a legacy sync failed on parent and a scoped sync failed on child; preserve and inspect both before manual recovery (/f/auth/.sync-state.yaml and /f/auth/.sync-state.v2.yaml)"
 	if err == nil || err.Error() != want {
 		t.Fatalf("cell 8 plain:\n got %v\nwant %q", err, want)
 	}
 	err = syncCellRefusal(syncVerbAbort, "auth", layout, mixed)
-	want = "refusing to clear two unfinished syncs at once for \"auth\": a legacy sync failed on parent and a scoped sync failed on child; inspect /f/auth/.sync-state.yaml and /f/auth/.sync-state.v2.yaml and remove them explicitly"
+	want = "refusing to clear two unfinished syncs at once for \"auth\": a legacy sync failed on parent and a scoped sync failed on child; preserve and inspect /f/auth/.sync-state.yaml and /f/auth/.sync-state.v2.yaml for manual recovery"
 	if err == nil || err.Error() != want {
 		t.Fatalf("cell 8 abort:\n got %v\nwant %q", err, want)
 	}
@@ -554,12 +554,12 @@ func TestSyncModes_MixedAndCorruptCells(t *testing.T) {
 		PayloadPath: "/f/auth/.sync-state.v2.yaml",
 	}
 	err = syncCellRefusal(syncVerbPlain, "auth", layout, cell11)
-	want = "sync state at /f/auth/.sync-state.yaml is unreadable, and a scoped sync record beside it failed on child (worktree /f/auth/worktrees/child); resolve or abort that rebase, then remove /f/auth/.sync-state.v2.yaml manually — tws will not guess"
+	want = "sync state at /f/auth/.sync-state.yaml is unreadable, and a scoped sync record beside it failed on child (worktree /f/auth/worktrees/child); preserve and inspect both, including /f/auth/.sync-state.v2.yaml — tws will not guess"
 	if err == nil || err.Error() != want {
 		t.Fatalf("cell 11 plain:\n got %v\nwant %q", err, want)
 	}
 	err = syncCellRefusal(syncVerbAbort, "auth", layout, cell11)
-	want = "refusing to clear unreadable sync state at /f/auth/.sync-state.yaml while a scoped sync record beside it is still unfinished: it failed on child (worktree /f/auth/worktrees/child); inspect both and remove /f/auth/.sync-state.v2.yaml explicitly"
+	want = "refusing to clear unreadable sync state at /f/auth/.sync-state.yaml while a scoped sync record beside it is still unfinished: it failed on child (worktree /f/auth/worktrees/child); preserve and inspect both, including /f/auth/.sync-state.v2.yaml"
 	if err == nil || err.Error() != want {
 		t.Fatalf("cell 11 abort:\n got %v\nwant %q", err, want)
 	}

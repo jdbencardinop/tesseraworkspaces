@@ -303,6 +303,8 @@ type AgentStatusFeatureSync struct {
 	Pending       []string `json:"pending"`
 	Completed     []string `json:"completed"`
 	Skipped       []string `json:"skipped"`
+
+	recovery *transactionalSyncRecoveryProjection
 }
 
 // Feature stack states.
@@ -1377,14 +1379,25 @@ func (b *statusBuilder) attributeSyncBranch(view *AgentStatusFeature, featurePat
 			if e.Name != external.FailedBranch {
 				continue
 			}
-			b.issue(IssueSyncFailedBranch, SeverityWarning, ScopeEntry, e.Feature, e.Name,
-				fmt.Sprintf("an unfinished sync failed on %s", e.Name),
-				fmt.Sprintf("resolve the conflict in %s, then: tws sync %s --continue",
-					filepath.Join(featurePath, "worktrees", e.Name), e.Feature))
+			message := fmt.Sprintf("an unfinished sync failed on %s", e.Name)
+			guidance := fmt.Sprintf("resolve the conflict in %s, then: tws sync %s --continue",
+				filepath.Join(featurePath, "worktrees", e.Name), e.Feature)
+			if view.Sync != nil && view.Sync.recovery != nil {
+				switch view.Sync.recovery.kind {
+				case "rolling-back", "publication-started", "cleanup-only", "validator-mutated":
+					message = view.Sync.recovery.message
+					guidance = view.Sync.recovery.guidance
+				default:
+					guidance = fmt.Sprintf("resolve the conflict in %s, then %s",
+						filepath.Join(featurePath, "worktrees", e.Name), view.Sync.recovery.guidance)
+				}
+			}
+			b.issue(IssueSyncFailedBranch, SeverityWarning, ScopeEntry, e.Feature, e.Name, message, guidance)
 			break
 		}
 	}
-	if view.Sync != nil && view.Sync.Kind == "checkout" && view.Sync.CurrentBranch != nil {
+	if view.Sync != nil && view.Sync.Kind == "checkout" && view.Sync.CurrentBranch != nil &&
+		(view.Sync.recovery == nil || view.Sync.recovery.kind != "validator-mutated") {
 		for i := range view.Entries {
 			e := &view.Entries[i]
 			if e.GitBranch != *view.Sync.CurrentBranch {
@@ -1409,13 +1422,14 @@ func (b *statusBuilder) buildFeatureSync(feature, featurePath string) (*AgentSta
 		if _, err := os.Stat(txPath); err != nil {
 			return nil, nil
 		}
-		rep := buildOneSyncReport(feature, txPath, stateDir, proberAsChecker{b.opts.Proc}, b.suppressCompatibilityHint())
+		rep := buildOneSyncReport(feature, featurePath, txPath, stateDir, proberAsChecker{b.opts.Proc}, b.suppressCompatibilityHint())
 		view := &AgentStatusFeatureSync{
 			Kind:      "checkout",
 			Liveness:  strPtr(rep.Liveness),
 			Pending:   []string{},
 			Completed: []string{},
 			Skipped:   []string{},
+			recovery:  rep.recovery,
 		}
 		if rep.Stage != "" {
 			view.Stage = strPtr(rep.Stage)
@@ -1435,21 +1449,39 @@ func (b *statusBuilder) buildFeatureSync(feature, featurePath string) (*AgentSta
 
 		switch rep.Liveness {
 		case "live":
-			b.issue(IssueSyncInProgress, SeverityInfo, ScopeFeature, feature, "",
-				fmt.Sprintf("checkout sync is in progress at stage %s", rep.Stage), "")
+			message := fmt.Sprintf("checkout sync is in progress at stage %s", rep.Stage)
+			severity := SeverityInfo
+			if rep.recovery != nil {
+				message = rep.recovery.message
+				if rep.recovery.kind == "validator-mutated" {
+					severity = SeverityWarning
+				}
+			}
+			b.issue(IssueSyncInProgress, severity, ScopeFeature, feature, "",
+				message, rep.Guidance)
 		case "stale":
+			message := fmt.Sprintf("checkout sync transaction is stale at stage %s", rep.Stage)
+			if rep.recovery != nil {
+				message = rep.recovery.message
+			}
 			b.issue(IssueSyncStale, SeverityWarning, ScopeFeature, feature, "",
-				fmt.Sprintf("checkout sync transaction is stale at stage %s", rep.Stage),
-				fmt.Sprintf("run: tws sync %s --continue  or  tws sync %s --abort", feature, feature))
+				message, rep.Guidance)
 		default:
+			message := "checkout sync state is corrupt"
+			if rep.Guidance != "" {
+				message += ": " + rep.Guidance
+			}
 			b.issue(IssueSyncInvalid, SeverityWarning, ScopeFeature, feature, "",
-				"checkout sync state is corrupt: "+rep.Guidance,
-				fmt.Sprintf("corrupt sync state; inspect %s then rerun: tws sync %s --abort", stateDir, feature))
+				message, rep.Guidance)
 		}
 		if rep.FailureReason != "" {
+			guidance := fmt.Sprintf("run: tws sync %s --continue  or  tws sync %s --abort", feature, feature)
+			if rep.recovery != nil {
+				guidance = rep.recovery.guidance
+			}
 			b.issue(IssueSyncFailed, SeverityWarning, ScopeFeature, feature, "",
 				"checkout sync recorded a failure: "+rep.FailureReason,
-				fmt.Sprintf("run: tws sync %s --continue  or  tws sync %s --abort", feature, feature))
+				guidance)
 		}
 		return view, nil
 	}
@@ -1572,9 +1604,23 @@ func (b *statusBuilder) buildExternalSyncCell(feature string, st SyncExternalSta
 	if st.PayloadErr != nil || st.PayloadSymlink {
 		view.Liveness = strPtr("invalid")
 		if !b.suppressCompatibilityHint() {
+			guidance := "sync recovery evidence is unreadable or unsupported; preserve and inspect " + st.PayloadPath
 			b.issue(IssueSyncStateInvalid, SeverityWarning, ScopeFeature, feature, "",
 				fmt.Sprintf("scoped sync state at %s is unreadable or uses an unsupported version", st.PayloadPath),
-				"inspect "+st.PayloadPath+" and remove it manually")
+				guidance)
+		}
+		return view, projected
+	}
+
+	if st.Payload != nil && st.Payload.Transaction != nil {
+		recovery := projectTransactionalSyncRecovery(feature, st.Payload.Transaction)
+		view.recovery = recovery
+		if st.GuardLive && st.Guard != nil {
+			b.issue(IssueSyncInProgress, SeverityInfo, ScopeFeature, feature, "",
+				recovery.message, liveTransactionalSyncGuidance(recovery))
+		} else {
+			b.issue(IssueSyncStale, SeverityWarning, ScopeFeature, feature, "",
+				recovery.message, recovery.guidance)
 		}
 		return view, projected
 	}

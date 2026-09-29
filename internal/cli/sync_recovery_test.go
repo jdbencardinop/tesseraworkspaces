@@ -219,7 +219,7 @@ func TestSyncRecovery_Case7DeadGuardClearsBoth(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("case 7 with a dead guard must succeed: exit=%d stderr=%q", exit, stderr)
 	}
-	want := fmt.Sprintf("Sync state cleared; stale sync guard from PID %d cleared.\n", dead)
+	want := fmt.Sprintf("Warning: legacy sync state has no rollback snapshots; earlier branch movements and metadata cannot be fully restored.\nSync state cleared; stale sync guard from PID %d cleared.\n", dead)
 	if stdout != want {
 		t.Fatalf("stdout = %q, want %q", stdout, want)
 	}
@@ -241,7 +241,7 @@ func TestSyncRecovery_Case7SelfPIDReleases(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("case 7 must allow releasing its own self-recorded guard: exit=%d stderr=%q", exit, stderr)
 	}
-	if !strings.HasPrefix(stdout, "Sync state cleared; stale sync guard from PID ") {
+	if !strings.HasPrefix(stdout, "Warning: legacy sync state has no rollback snapshots; earlier branch movements and metadata cannot be fully restored.\nSync state cleared; stale sync guard from PID ") {
 		t.Fatalf("stdout = %q, want the case-7 combined message", stdout)
 	}
 	f.stateFilesGone(t)

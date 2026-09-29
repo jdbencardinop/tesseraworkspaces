@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- **Transactional ordinary-sync recovery** — before the first selected branch
+  mutation, new external and checkout sync runs preserve exact selected branch
+  tips, exact pre-run `stack.yaml` bytes, repository/holder identity, and
+  GC-resistant preimage refs. Abort restores attributable local effects with
+  compare-and-swap ref updates per repository and refuses rather than
+  overwriting later user work. Refs, metadata, and holder state remain
+  separate effects; no cross-repository or cross-effect atomicity is claimed.
+  Immediately before the first push **attempt**, a durable publication marker
+  makes recovery forward-only through `--continue`; rollback never changes a
+  remote ref. Older recovery documents keep their legacy path and warn that
+  they cannot fully restore earlier movement. When native Git reflog evidence
+  cannot attribute an allowed ref change to tws's rebase, recovery refuses
+  conservatively. A durable forward-complete decision precedes pin cleanup;
+  after it, either recovery verb finishes cleanup without rolling back.
+  Publication retries push the immutable recorded object ID to the recorded
+  destination, and successful durable results are reconciled before retry
+  selection. Validators are ref/checkout-read-only: detected commits, rebases,
+  resets, ref moves, switches, or detached `HEAD` preserve journal and work for
+  manual recovery. External sync without `stack.yaml` is now an explicit
+  nontransactional compatibility exception requiring interactive confirmation
+  or `--allow-nontransactional`; noninteractive use refuses by default and
+  malformed/unreadable metadata never enters the fallback. Successful no-flag
+  transactional behavior remains the compatibility target.
 - **Safe reparent/restack** — `tws stack reparent <feature> <entry> --onto <dest>`
   moves one stack entry onto a new parent and replays its descendant closure.
   `--plan [--json]` previews the exact run — destination, per-row cutoff,

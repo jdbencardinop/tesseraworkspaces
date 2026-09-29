@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -67,8 +68,8 @@ func TestSyncDeclaredC1_PostChange(t *testing.T) {
 			if !strings.Contains(stderr, wantPrefix) {
 				t.Fatalf("stderr = %q, want a message naming the file", stderr)
 			}
-			if verb.name == "abort" && !strings.Contains(stderr, "inspect and remove it manually") {
-				t.Fatalf("the abort message must require manual removal; got %q", stderr)
+			if !strings.Contains(stderr, "preserve and inspect") || strings.Contains(stderr, "remove it manually") {
+				t.Fatalf("corrupt evidence must be preserved for inspection; got %q", stderr)
 			}
 			// tws never deletes state it could not read.
 			if got := readFileString(t, internal.SyncStatePath(f.featurePath)); got != corrupt {
@@ -99,38 +100,120 @@ func TestSyncScoped_StateDocumentShapes(t *testing.T) {
 		t.Fatal("expected a conflict")
 	}
 
-	// Reference payload: same frozen decision, different dynamic values.
-	refDir := t.TempDir()
-	ref := internal.NewSyncRunState(f.feature, "tws-scoped-sync-0123456789abcdef0123456789abcdef.lock", "ffffffffffffffffffffffffffffffff", internal.SyncRunPolicy{
-		Fetch:       internal.SyncFetchDisabled,
-		Propagation: internal.SyncPropagationLocalOnly,
-		ScopeKind:   internal.SyncScopeOne,
-		Selector:    "child",
-	})
-	ref.Selected = []string{"child"}
-	ref.Pending = []string{}
-	ref.Completed = []string{}
-	ref.Pushed = []string{}
-	childStack, err := internal.LoadStack(f.featurePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ref.Repos = []string{internal.GetBranch(childStack, "child").Repo}
-	ref.FailedBranch = "child"
-	ref.ValidationSource = "none"
-	ref.Stage = internal.SyncStageFailed
-	if err := internal.SaveSyncRunState(refDir, ref); err != nil {
-		t.Fatal(err)
-	}
-	wantPayload := readFileString(t, internal.SyncRunStatePath(refDir))
 	gotPayload := readFileString(t, internal.SyncRunStatePath(f.featurePath))
 	gotInfo, statErr := os.Stat(internal.SyncRunStatePath(f.featurePath))
 	if statErr != nil {
 		t.Fatal(statErr)
 	}
-	compareStateSemantic(t, "payload", []byte(wantPayload), []byte(gotPayload), 0o600, gotInfo.Mode(), stateCompareSpec{
-		DynamicKeys: syncRunStateDynamicKeys,
+	if gotInfo.Mode().Perm() != 0o600 {
+		t.Fatalf("payload mode = %o, want 0600", gotInfo.Mode().Perm())
+	}
+	loaded, err := internal.LoadSyncRunState(f.featurePath)
+	if err != nil {
+		t.Fatalf("strict loader rejected generated payload: %v", err)
+	}
+	if loaded.StateVersion != internal.SyncRunStateTransactionalVersion ||
+		loaded.Route != internal.RouteNewMode || loaded.PlanGuarded ||
+		loaded.Transaction == nil {
+		t.Fatalf("transactional wrapper = %+v", loaded)
+	}
+	if loaded.FetchPolicy != internal.SyncFetchDisabled ||
+		loaded.PropagationPolicy != internal.SyncPropagationLocalOnly ||
+		loaded.ScopeKind != internal.SyncScopeOne || loaded.ScopeSelector != "child" ||
+		!slices.Equal(loaded.Selected, []string{"child"}) ||
+		loaded.FailedBranch != "child" || len(loaded.Pending) != 0 ||
+		len(loaded.Completed) != 0 || loaded.ValidationSource != "none" {
+		t.Fatalf("frozen wrapper decision/progress = %+v", loaded)
+	}
+
+	childStack, err := internal.LoadStack(f.featurePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refDir := filepath.Join(t.TempDir(), f.feature)
+	if err := os.MkdirAll(refDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stackBytes, err := os.ReadFile(internal.StackPath(f.featurePath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(internal.StackPath(refDir), stackBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	referenceTx, err := internal.CaptureSyncTransaction(internal.SyncTransactionBeginInput{
+		FeaturePath:       refDir,
+		Feature:           f.feature,
+		Mode:              internal.ModeExternal,
+		WorkspaceRepoRoot: f.repo,
+		Stack:             childStack,
+		Selected:          []string{"child"},
+		EntryRepoDirs:     map[string]string{"child": f.wt("child")},
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	actualTx := loaded.Transaction
+	if actualTx.EvidenceVersion != internal.SyncTransactionEvidenceVersion ||
+		actualTx.WorkspaceMode != string(internal.ModeExternal) ||
+		actualTx.Feature != f.feature || actualTx.Phase != internal.SyncTxnFailed ||
+		!actualTx.Ready || !slices.Equal(actualTx.Selected, referenceTx.Selected) ||
+		actualTx.Metadata.BeforeSHA256 != referenceTx.Metadata.BeforeSHA256 ||
+		len(actualTx.Repositories) != len(referenceTx.Repositories) {
+		t.Fatalf("transaction identity/preimage differs from independent capture:\nactual=%+v\nreference=%+v", actualTx, referenceTx)
+	}
+	if len(actualTx.Actions) != 1 {
+		t.Fatalf("actions = %+v, want one conflict action", actualTx.Actions)
+	}
+	action := actualTx.Actions[0]
+	if action.Entry != "child" || action.Status != internal.SyncTxnActionIntent ||
+		len(action.RefLogAnchors) == 0 || action.ContextReflogAnchor == "" {
+		t.Fatalf("conflict action lacks ownership anchors: %+v", action)
+	}
+	for _, repo := range actualTx.Repositories {
+		if len(repo.Refs) == 0 || len(repo.Holders) == 0 {
+			t.Fatalf("repository evidence is incomplete: %+v", repo)
+		}
+		for _, ref := range repo.Refs {
+			if !ref.Pinned || ref.PreimageSHA == "" || ref.ExpectedSHA == "" || ref.PinRef == "" {
+				t.Fatalf("ref evidence is incomplete: %+v", ref)
+			}
+		}
+	}
+
+	doc := decodeYAMLDoc(t, "payload", []byte(gotPayload))
+	wantWrapperKeys := []string{
+		"state_version", "feature", "started_at", "updated_at", "marker",
+		"owner_token", "stage", "fetch_policy", "propagation_policy",
+		"scope_kind", "scope_selector", "selected", "push",
+		"validation_source", "failed_branch", "pending", "completed",
+		"pushed", "repos", "route", "transaction",
+	}
+	if got := mappingKeys(doc); !slices.Equal(got, wantWrapperKeys) {
+		t.Fatalf("payload wrapper keys = %v, want %v", got, wantWrapperKeys)
+	}
+	txNode := mappingValue(doc, "transaction")
+	wantTransactionKeys := []string{
+		"evidence_version", "run_id", "created_at", "updated_at",
+		"workspace_mode", "feature", "workspace_repo_root", "phase", "ready",
+		"selected", "metadata", "repositories", "actions", "publication", "rollback",
+	}
+	if got := mappingKeys(txNode); !slices.Equal(got, wantTransactionKeys) {
+		t.Fatalf("transaction keys = %v, want %v", got, wantTransactionKeys)
+	}
+	if got := mappingKeys(mappingValue(txNode, "metadata")); !slices.Equal(got,
+		[]string{"path", "before_base64", "before_sha256", "expected_sha256"}) {
+		t.Fatalf("metadata keys = %v", got)
+	}
+	actionNode := mappingValue(txNode, "actions").Content[0]
+	wantActionKeys := []string{
+		"sequence", "kind", "entry", "repo_common_dir", "context_path",
+		"context_before", "context_ref", "allowed_refs", "before_refs", "before_holders", "ref_log_anchors",
+		"context_reflog_anchor", "status",
+	}
+	if got := mappingKeys(actionNode); !slices.Equal(got, wantActionKeys) {
+		t.Fatalf("action keys = %v, want %v", got, wantActionKeys)
+	}
 
 	// Reference guard: same shape, different dynamic values.
 	guardDir := t.TempDir()

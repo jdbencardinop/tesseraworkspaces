@@ -907,8 +907,8 @@ func TestCheckoutSyncPlan_RunCheckoutSync_GuardedFreshOverLimitRefusesBeforeAnyB
 // under limits wide enough to admit it, executes exactly like an unguarded
 // run up to the point its own StepHook fires, but — because the guard seam
 // evaluated and approved the plan before SaveCheckoutTransaction — the
-// transaction it persists carries state_version: 3, its route, and both
-// armed limits, rather than the plain v2 an unguarded dispatch would write.
+// transaction it persists carries transactional state_version 5, its route,
+// both armed limits, PlanGuarded, and rollback evidence.
 func TestCheckoutSyncPlan_RunCheckoutSync_GuardedApprovedRunPersistsGuardedVersionWithLimits(t *testing.T) {
 	dir, ws := cspFixture(t)
 	feature := "feat-approved"
@@ -929,8 +929,11 @@ func TestCheckoutSyncPlan_RunCheckoutSync_GuardedApprovedRunPersistsGuardedVersi
 	if lerr != nil {
 		t.Fatalf("expected a persisted transaction: %v", lerr)
 	}
-	if tx.StateVersion != CheckoutTransactionGuardedVersion {
-		t.Fatalf("StateVersion = %d, want the guarded %d: an approved guarded run must write its birth version", tx.StateVersion, CheckoutTransactionGuardedVersion)
+	if tx.StateVersion != CheckoutTransactionTransactionalGuardedVersion {
+		t.Fatalf("StateVersion = %d, want transactional guarded version %d", tx.StateVersion, CheckoutTransactionTransactionalGuardedVersion)
+	}
+	if !tx.PlanGuarded || tx.Transaction == nil {
+		t.Fatalf("guarded birth lacks PlanGuarded/transaction evidence: %+v", tx)
 	}
 	if tx.MaxReplayPerEntry == nil || *tx.MaxReplayPerEntry != 5 {
 		t.Fatalf("MaxReplayPerEntry = %v, want a pointer to 5: the armed limit must be persisted", tx.MaxReplayPerEntry)
@@ -1008,10 +1011,9 @@ func TestCheckoutSyncPlan_ContinueCheckoutSync_ArmedResumeUpgradesV2Transaction(
 // control: the identical fixture and policy as the approved-run test above,
 // but with opts.PlanGuard left at its zero value. Guarded()'s own
 // definition (Armed() || PersistedGuarded, and this run supplies neither)
-// keeps this dispatch off the guard seam entirely, so it must still persist
-// the plain, un-upgraded v2 transaction with no route and no limits — byte-
-// identical to every pre-existing (pre-guard-seam) unguarded assertion this
-// suite already relied on elsewhere.
+// keeps this dispatch off the guard seam entirely. New births are still
+// transactional v4; "unguarded" means no limits and PlanGuarded=false, not a
+// downgrade to the genuine legacy v2 schema.
 func TestCheckoutSyncPlan_RunCheckoutSync_UnguardedRunUnchanged(t *testing.T) {
 	dir, ws := cspFixture(t)
 	feature := "feat-unguarded-control"
@@ -1032,16 +1034,16 @@ func TestCheckoutSyncPlan_RunCheckoutSync_UnguardedRunUnchanged(t *testing.T) {
 	if lerr != nil {
 		t.Fatalf("expected a persisted transaction: %v", lerr)
 	}
-	if tx.StateVersion != CheckoutTransactionVersion {
-		t.Fatalf("StateVersion = %d, want the ordinary unguarded %d: an unguarded run must never be upgraded", tx.StateVersion, CheckoutTransactionVersion)
+	if tx.StateVersion != CheckoutTransactionTransactionalVersion {
+		t.Fatalf("StateVersion = %d, want transactional unguarded version %d", tx.StateVersion, CheckoutTransactionTransactionalVersion)
 	}
-	if tx.Route != "" {
-		t.Fatalf("Route = %q, want empty: nothing populates it on an unguarded run", tx.Route)
+	if tx.Route != RouteNewMode {
+		t.Fatalf("Route = %q, want %q", tx.Route, RouteNewMode)
 	}
 	if tx.MaxReplayPerEntry != nil || tx.MaxReplayTotal != nil {
 		t.Fatalf("MaxReplayPerEntry=%v MaxReplayTotal=%v, want both nil: an unguarded run never persists limits", tx.MaxReplayPerEntry, tx.MaxReplayTotal)
 	}
-	if checkoutRecoveryIsGuarded(tx) {
+	if tx.PlanGuarded || tx.Transaction == nil || checkoutRecoveryIsGuarded(tx) {
 		t.Fatal("an unguarded run's own persisted transaction must never itself report guarded")
 	}
 }
@@ -1142,29 +1144,22 @@ func cspFinalizePostconditionFixture(t *testing.T) (dir, feature, fp, rogueSHA s
 	return dir, feature, fp, rogueSHA
 }
 
-// TestCheckoutSyncPlan_FinalizeTransaction_WholePlanAncestryPostcondition is
-// the §22.13n finalization postcondition test: a real two-entry checkout
-// sync run, with the SHIPPED, NON-RETURNING StepHook installed at its ONE
-// shipped call site (doRebase's StageRebased transition), keyed on the LAST
-// plan index (1 of 2) — the only index at which tx.CurrentIndex equals
-// len(Plan)-1 throughout an entry's processing, since executeTransaction
-// increments CurrentIndex only AFTER processBranch returns for that entry.
-//
-// The hook force-moves the EARLIER entry's branch ("first", plan index 0)
-// onto a rogue, history-disconnected commit while the LAST entry ("second")
-// is still mid-flight, and never itself returns an error — it only mutates
-// Git. Because "second"'s own per-entry ancestry check (processBranch,
-// immediately after doRebase returns) compares its tip against "first"'s
-// ORIGINAL, plan-build-time SHA — a value resolved once into
-// CheckoutPlanEntry.NewBaseSHA and never re-resolved — that check is
-// unaffected by the move, so the run proceeds past processBranch and into
-// finalizeTransaction. There, the WHOLE-PLAN re-verification loop
-// re-resolves "first" as a LIVE ref, observes the moved tip, and is the
-// thing that actually refuses.
+// TestCheckoutSyncPlan_FinalizeTransaction_WholePlanAncestryPostcondition now
+// pins the stronger transactional boundary that runs before finalization: an
+// operator move of an unallowed ref during the second action is refused while
+// the action is still intent-only. The old whole-plan ancestry sentence is no
+// longer reachable in this fixture because adopting the foreign move would
+// destroy rollback ownership evidence.
 func TestCheckoutSyncPlan_FinalizeTransaction_WholePlanAncestryPostcondition(t *testing.T) {
 	t.Run("EarlierEntryMovedAtLastIndexRefusesAndPreservesState", func(t *testing.T) {
 		dir, feature, fp, rogueSHA := cspFinalizePostconditionFixture(t)
 		lastIndex := len(cspFinalizePostconditionStack()) - 1 // 1: "second", the last plan row
+		firstBefore := gitInTest(t, dir, "rev-parse", "first")
+		secondBefore := gitInTest(t, dir, "rev-parse", "second")
+		stackBefore, err := os.ReadFile(StackPath(fp))
+		if err != nil {
+			t.Fatal(err)
+		}
 
 		var lastIndexHits int
 		StepHook = func(stage CheckoutStage, branchIndex int) error {
@@ -1178,22 +1173,17 @@ func TestCheckoutSyncPlan_FinalizeTransaction_WholePlanAncestryPostcondition(t *
 
 		opts := cspOpts(feature, fp, dir, cspAllPolicy(SyncFetchDisabled))
 
-		var err error
+		err = nil
 		stdout, stderr := captureStdoutAndStderr(t, func() {
 			err = RunCheckoutSync(opts)
 		})
 
-		// (1) The shipped finalization sentence, matched EXACTLY: every byte
-		// of it is composed by finalizeTransaction itself —
-		// fmt.Errorf("final ancestry check failed: %s not descendant of %s",
-		// pe.Branch, pe.Base) — never Git's own wording, so an exact match is
-		// the right bar here (unlike a message that embeds raw Git output).
-		const wantErr = "final ancestry check failed: first not descendant of main"
+		const wantErr = "branch refs/heads/first moved during sync action 2 outside its attributable ref set; recovery evidence is preserved"
 		if err == nil {
-			t.Fatal("expected the whole-plan ancestry postcondition to refuse: 'first' was force-moved off main during 'second's own processing")
+			t.Fatal("expected the action ownership check to refuse the operator move")
 		}
 		if err.Error() != wantErr {
-			t.Fatalf("err = %q, want the shipped sentence %q", err.Error(), wantErr)
+			t.Fatalf("err = %q, want the ownership refusal %q", err.Error(), wantErr)
 		}
 
 		// Companion: the mutating hook fired EXACTLY once, at the last plan
@@ -1205,10 +1195,14 @@ func TestCheckoutSyncPlan_FinalizeTransaction_WholePlanAncestryPostcondition(t *
 			t.Fatalf("lastIndexHits = %d, want exactly 1: the shipped StageRebased call site must fire once for the last plan index", lastIndexHits)
 		}
 
-		// (4) "first" really is at the tip the hook moved it to: the failure
-		// is a genuine, observable Git mutation, not incidental.
 		if got := gitInTest(t, dir, "rev-parse", "first"); got != rogueSHA {
 			t.Fatalf("git rev-parse first = %s, want %s (the hook's own target)", got, rogueSHA)
+		}
+		if got := gitInTest(t, dir, "rev-parse", "second"); got != secondBefore {
+			t.Fatalf("second moved from %s to %s; the no-op second rebase must stay unchanged", secondBefore, got)
+		}
+		if rogueSHA == firstBefore {
+			t.Fatal("fixture did not create distinct operator work")
 		}
 
 		// (3) Marker-free: this test calls internal.RunCheckoutSync directly
@@ -1222,14 +1216,8 @@ func TestCheckoutSyncPlan_FinalizeTransaction_WholePlanAncestryPostcondition(t *
 			t.Fatalf("captured output = %q, want no %q marker: this run is unguarded", combined, "plan-guard: ")
 		}
 
-		// (2) The transaction is preserved, not deleted, so the operator can
-		// recover: HasCheckoutTransaction must still report true, and the
-		// reloaded transaction's stage/plan must reflect exactly the state
-		// finalizeTransaction's own ancestry loop left behind — both entries
-		// already individually completed, the loop returning before it ever
-		// reaches StageRestoring.
 		if !HasCheckoutTransaction(fp) {
-			t.Fatal("HasCheckoutTransaction = false, want true: a finalization refusal must preserve the transaction for recovery")
+			t.Fatal("the foreign-work refusal must preserve recovery evidence")
 		}
 		tx, lerr := LoadCheckoutTransaction(fp)
 		if lerr != nil {
@@ -1238,38 +1226,41 @@ func TestCheckoutSyncPlan_FinalizeTransaction_WholePlanAncestryPostcondition(t *
 		if len(tx.Plan) != 2 || tx.Plan[0].Name != "first" || tx.Plan[1].Name != "second" {
 			t.Fatalf("tx.Plan = %+v, want the two-entry [first second] plan preserved verbatim", tx.Plan)
 		}
-		if tx.CurrentIndex != len(tx.Plan) {
-			t.Fatalf("tx.CurrentIndex = %d, want %d: both entries had already completed their own processing before finalization ran", tx.CurrentIndex, len(tx.Plan))
+		if tx.CurrentIndex != 1 {
+			t.Fatalf("tx.CurrentIndex = %d, want 1: the second action was not adopted", tx.CurrentIndex)
 		}
-		if len(tx.CompletedIndices) != 2 || tx.CompletedIndices[0] != 0 || tx.CompletedIndices[1] != 1 {
-			t.Fatalf("tx.CompletedIndices = %v, want [0 1]: both entries finished before the whole-plan postcondition ran", tx.CompletedIndices)
+		if len(tx.CompletedIndices) != 1 || tx.CompletedIndices[0] != 0 {
+			t.Fatalf("tx.CompletedIndices = %v, want [0]", tx.CompletedIndices)
 		}
-		if tx.Stage != StagePlanned {
-			t.Fatalf("tx.Stage = %q, want %q: finalizeTransaction's ancestry loop returns before ever reaching StageRestoring", tx.Stage, StagePlanned)
+		if tx.Stage != StageRebased {
+			t.Fatalf("tx.Stage = %q, want %q: Git finished but ownership reconciliation refused", tx.Stage, StageRebased)
+		}
+		if tx.Transaction == nil || len(tx.Transaction.Actions) != 2 {
+			t.Fatalf("transaction actions = %+v, want two journaled actions", tx.Transaction)
+		}
+		lastAction := tx.Transaction.Actions[1]
+		if lastAction.Entry != "second" || lastAction.Status != SyncTxnActionIntent {
+			t.Fatalf("last action = %+v, want intent-only second action", lastAction)
+		}
+		expected := map[string]string{}
+		for _, repo := range tx.Transaction.Repositories {
+			for _, ref := range repo.Refs {
+				expected[ref.Ref] = ref.ExpectedSHA
+			}
+		}
+		if expected["refs/heads/first"] != firstBefore || expected["refs/heads/second"] != secondBefore {
+			t.Fatalf("expected ref image adopted foreign work: %v", expected)
 		}
 		if !HasCheckoutLock(fp) {
 			t.Fatal("HasCheckoutLock = false, want true: a preserved, recoverable transaction must still hold its lock against a concurrent run")
 		}
 
-		// (6) The LastBaseSHA update written by the SaveStack IMMEDIATELY
-		// ABOVE the ancestry loop STAYS WRITTEN: the refusing finalizer
-		// neither rolls it back nor rewrites it, so the operator's recovery
-		// resumes from the same stack.yaml the successful path would have
-		// left. This is asserted against the transaction's own plan rows, so
-		// a finalizer that silently skipped the SaveStack fails here.
-		reloaded, lerr2 := LoadStack(fp)
-		if lerr2 != nil {
-			t.Fatalf("LoadStack after the refusal: %v", lerr2)
+		stackAfter, readErr := os.ReadFile(StackPath(fp))
+		if readErr != nil {
+			t.Fatal(readErr)
 		}
-		byName := map[string]string{}
-		for _, e := range reloaded.Branches {
-			byName[e.Name] = e.LastBaseSHA
-		}
-		for _, pe := range tx.Plan {
-			if got := byName[pe.Name]; got != pe.NewBaseSHA {
-				t.Fatalf("stack.yaml LastBaseSHA[%s] = %q, want the plan's own NewBaseSHA %q: the update above the ancestry loop must stay written",
-					pe.Name, got, pe.NewBaseSHA)
-			}
+		if string(stackAfter) != string(stackBefore) {
+			t.Fatal("foreign-work refusal reached metadata finalization")
 		}
 
 		// (7) The failure is NATIVE, not a guard refusal: it is not a
@@ -1292,6 +1283,11 @@ func TestCheckoutSyncPlan_FinalizeTransaction_WholePlanAncestryPostcondition(t *
 	t.Run("GuardedRunRefusesWithTheIdenticalNativeSentence", func(t *testing.T) {
 		dir, feature, fp, rogueSHA := cspFinalizePostconditionFixture(t)
 		lastIndex := len(cspFinalizePostconditionStack()) - 1
+		secondBefore := gitInTest(t, dir, "rev-parse", "second")
+		stackBefore, err := os.ReadFile(StackPath(fp))
+		if err != nil {
+			t.Fatal(err)
+		}
 
 		StepHook = func(stage CheckoutStage, branchIndex int) error {
 			if stage == StageRebased && branchIndex == lastIndex {
@@ -1305,14 +1301,14 @@ func TestCheckoutSyncPlan_FinalizeTransaction_WholePlanAncestryPostcondition(t *
 		opts := cspOpts(feature, fp, dir, cspAllPolicy(SyncFetchDisabled))
 		opts.PlanGuard = CheckoutPlanGuard{MaxTotal: &limit}
 
-		var err error
+		err = nil
 		stdout, stderr := captureStdoutAndStderr(t, func() {
 			err = RunCheckoutSync(opts)
 		})
 
-		const wantErr = "final ancestry check failed: first not descendant of main"
+		const wantErr = "branch refs/heads/first moved during sync action 2 outside its attributable ref set; recovery evidence is preserved"
 		if err == nil || err.Error() != wantErr {
-			t.Fatalf("guarded err = %v, want the identical shipped sentence %q", err, wantErr)
+			t.Fatalf("guarded err = %v, want ownership refusal %q", err, wantErr)
 		}
 		var refusal *PlanGuardRefusalError
 		if errors.As(err, &refusal) {
@@ -1323,6 +1319,19 @@ func TestCheckoutSyncPlan_FinalizeTransaction_WholePlanAncestryPostcondition(t *
 		}
 		if !HasCheckoutTransaction(fp) || !HasCheckoutLock(fp) {
 			t.Fatal("the guarded route must preserve the same two artefacts the unguarded one does")
+		}
+		if got := gitInTest(t, dir, "rev-parse", "first"); got != rogueSHA {
+			t.Fatalf("later operator work was overwritten: got %s want %s", got, rogueSHA)
+		}
+		if got := gitInTest(t, dir, "rev-parse", "second"); got != secondBefore {
+			t.Fatalf("second moved from %s to %s", secondBefore, got)
+		}
+		stackAfter, readErr := os.ReadFile(StackPath(fp))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if string(stackAfter) != string(stackBefore) {
+			t.Fatal("guarded foreign-work refusal reached metadata finalization")
 		}
 	})
 
@@ -1485,7 +1494,7 @@ func TestCheckoutSyncPlan_Criterion22_24i_x_CheckoutUpgradeIsANoOpOnAGuardedTran
 // the four production predicates of §13.6 rule 4 — txNewMode, its exported
 // wrapper TransactionNewMode, PayloadNewMode and CheckoutTriggersNeedV2 —
 // over the full cross product of {nil, absent route, route: new-mode,
-// route: legacy, unknown route} x {no version, v1, v2, v3}, so a nil
+// route: legacy, unknown route} x {no version, v1, v2, v3, v4, v5}, so a nil
 // dereference or a version-only comparison in any of them fails here.
 func TestCheckoutSyncPlan_Criterion22_24c_RouteVersionMatrix(t *testing.T) {
 	routes := []struct {
@@ -1497,7 +1506,7 @@ func TestCheckoutSyncPlan_Criterion22_24c_RouteVersionMatrix(t *testing.T) {
 		{"route-legacy", RouteLegacy},
 		{"unknown-route", "sideways"},
 	}
-	versions := []int{0, 1, 2, 3}
+	versions := []int{0, 1, 2, 3, 4, 5}
 
 	// want answers the question the production switch answers: an explicit
 	// route decides outright, anything else falls back to the version.
@@ -1559,15 +1568,22 @@ func TestCheckoutSyncPlan_Criterion22_24c_RouteVersionMatrix(t *testing.T) {
 					t.Fatalf("CheckoutTriggersNeedV2(tx, err) = %v, want true: a load error always needs v2", got)
 				}
 
-				// A route: legacy transaction at the guarded version is still
-				// guarded — guardedness is a version fact, newness a route
-				// fact, and the two predicates must not be collapsed.
-				wantGuarded := v >= CheckoutTransactionGuardedVersion
+				// Guardedness recognizes the genuine legacy v3 and
+				// transactional v5 twins. Transactional v4 is not guarded
+				// merely because its version is numerically above 3.
+				wantGuarded := v == CheckoutTransactionGuardedVersion ||
+					v == CheckoutTransactionTransactionalGuardedVersion
 				if got := TransactionGuarded(tx); got != wantGuarded {
 					t.Fatalf("TransactionGuarded = %v, want %v", got, wantGuarded)
 				}
 			})
 		}
+	}
+	if !TransactionGuarded(&CheckoutTransaction{
+		StateVersion: CheckoutTransactionTransactionalVersion,
+		PlanGuarded:  true,
+	}) {
+		t.Fatal("PlanGuarded must remain an explicit guardedness signal")
 	}
 }
 

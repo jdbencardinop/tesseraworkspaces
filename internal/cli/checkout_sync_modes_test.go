@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
+	"gopkg.in/yaml.v3"
 )
 
 // ---------------------------------------------------------------------------
@@ -178,8 +179,8 @@ func TestCheckoutSyncModes_TransactionRecordsFrozenDecision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the interrupted transaction must be on disk: %v", err)
 	}
-	if tx.StateVersion != internal.CheckoutTransactionVersion {
-		t.Fatalf("state_version = %d, want %d", tx.StateVersion, internal.CheckoutTransactionVersion)
+	if tx.StateVersion != internal.CheckoutTransactionTransactionalVersion || tx.Transaction == nil || tx.PlanGuarded {
+		t.Fatalf("new unguarded birth lacks v4 transaction evidence: %+v", tx)
 	}
 	if tx.FetchPolicy != "no-fetch" || tx.PropagationPolicy != "full" || tx.ScopeKind != "subtree" || tx.ScopeSelector != "feat-a" {
 		t.Fatalf("the frozen decision is not persisted: %+v", tx)
@@ -197,16 +198,8 @@ func TestCheckoutSyncModes_TransactionRecordsFrozenDecision(t *testing.T) {
 	}
 }
 
-func TestCheckoutSyncModes_NoFlagTransactionStaysLegacyShape(t *testing.T) {
+func TestCheckoutSyncModes_NoFlagTransactionUsesTransactionalLegacyRoute(t *testing.T) {
 	dir, fp := checkoutModeFixture(t)
-	stack, err := internal.LoadStack(fp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	stack.Branches[1].Repo = "/legacy/ignored-repository"
-	if err := internal.SaveStack(fp, stack); err != nil {
-		t.Fatal(err)
-	}
 	clearStepHook(t)
 	internal.StepHook = func(stage internal.CheckoutStage, i int) error {
 		if stage == internal.StageRebased {
@@ -218,27 +211,37 @@ func TestCheckoutSyncModes_NoFlagTransactionStaysLegacyShape(t *testing.T) {
 		return internal.RunCheckoutSync(internal.CheckoutSyncOpts{Feature: "test-feature", FeaturePath: fp, RepoDir: dir})
 	})
 	if runErr != errStop {
-		t.Fatalf("legacy no-flag sync with Repo = %v, want frozen pause %v", runErr, errStop)
+		t.Fatalf("no-flag transactional birth = %v, want frozen pause %v", runErr, errStop)
 	}
 	data, err := os.ReadFile(internal.CheckoutTransactionPath(fp))
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := string(data)
-	if strings.Contains(body, "state_version:") {
-		t.Fatalf("a no-flag transaction omits state_version:\n%s", body)
-	}
-	for _, key := range []string{"fetch_policy:", "propagation_policy:", "scope_kind:", "scope_selector:", "selected:", "validation_source:"} {
-		if strings.Contains(body, key) {
-			t.Fatalf("a no-flag transaction must not gain %q:\n%s", key, body)
+	for _, key := range []string{
+		"state_version: 4", "route: legacy", "fetch_policy: no-fetch",
+		"propagation_policy: full", "scope_kind: all", "selected:",
+		"validation_source: none", "transaction:",
+	} {
+		if !strings.Contains(body, key) {
+			t.Fatalf("new no-flag transaction lacks %q:\n%s", key, body)
 		}
 	}
-	// C5: the additive per-plan-entry name key IS written on the frozen path.
+	tx, err := internal.LoadCheckoutTransaction(fp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tx.StateVersion != internal.CheckoutTransactionTransactionalVersion ||
+		tx.Route != internal.RouteLegacy || tx.Transaction == nil ||
+		tx.Transaction.WorkspaceMode != string(internal.ModeCheckout) ||
+		tx.PlanGuarded || internal.TransactionGuarded(tx) {
+		t.Fatalf("no-flag wrapper/transaction invariants = %+v", tx)
+	}
+	if len(tx.Selected) != 3 || len(tx.Transaction.Selected) != 3 {
+		t.Fatalf("no-flag selection was not frozen completely: outer=%v inner=%v", tx.Selected, tx.Transaction.Selected)
+	}
 	if !strings.Contains(body, "name: feat-root") {
 		t.Fatalf("the plan must carry names even on the no-flag path:\n%s", body)
-	}
-	if strings.Contains(body, "legacy/ignored-repository") {
-		t.Fatalf("the frozen legacy transaction must continue to ignore StackEntry.Repo:\n%s", body)
 	}
 }
 
@@ -254,18 +257,25 @@ func TestCheckoutSyncModes_LegacyRecoveryIgnoresRepoFields(t *testing.T) {
 			if err := internal.SaveStack(fp, stack); err != nil {
 				t.Fatal(err)
 			}
-			internal.StepHook = func(stage internal.CheckoutStage, i int) error {
-				if stage == internal.StageRebased {
-					return errStop
-				}
-				return nil
+			plan := []internal.CheckoutPlanEntry{{
+				Branch: "feat-a", Base: "feat-root",
+				NewBaseSHA: gitSHA(t, dir, "feat-root"),
+				PreSHA:     gitSHA(t, dir, "feat-a"),
+			}}
+			legacy := &internal.CheckoutTransaction{
+				Feature:        "test-feature",
+				StartedAt:      "2026-01-01T00:00:00Z",
+				OriginalBranch: "main",
+				OriginalHEAD:   gitSHA(t, dir, "main"),
+				Plan:           plan,
+				Stage:          internal.StagePlanned,
 			}
-			if err := internal.RunCheckoutSync(internal.CheckoutSyncOpts{
-				Feature: "test-feature", FeaturePath: fp, RepoDir: dir,
-			}); err != errStop {
-				t.Fatalf("legacy birth = %v, want %v", err, errStop)
+			if verb == "continue" {
+				legacy.CurrentIndex = len(plan)
+				legacy.CompletedIndices = []int{0}
+				legacy.Stage = internal.StageCompleted
 			}
-			internal.StepHook = nil
+			writeLegacyCheckoutTransaction(t, fp, legacy)
 			var recoveryErr error
 			if verb == "continue" {
 				recoveryErr = internal.ContinueCheckoutSync(internal.CheckoutSyncOpts{
@@ -283,6 +293,21 @@ func TestCheckoutSyncModes_LegacyRecoveryIgnoresRepoFields(t *testing.T) {
 				t.Fatalf("legacy %s left recovery state", verb)
 			}
 		})
+	}
+}
+
+func writeLegacyCheckoutTransaction(t *testing.T, featurePath string, tx *internal.CheckoutTransaction) {
+	t.Helper()
+	data, err := yaml.Marshal(tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := internal.CheckoutTransactionPath(featurePath)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -617,14 +642,16 @@ func TestCheckoutSyncModes_OldTransactionWithoutNamesFallsBack(t *testing.T) {
 
 func TestCheckoutSyncModes_NewerTransactionVersionRefused(t *testing.T) {
 	dir, fp := checkoutModeFixture(t)
-	_ = dir
-	tx := &internal.CheckoutTransaction{StateVersion: 99, Feature: "test-feature", Stage: internal.StagePlanned}
-	if err := internal.SaveCheckoutTransaction(fp, tx); err != nil {
+	path := internal.CheckoutTransactionPath(fp)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("state_version: 99\nfeature: test-feature\nstage: planned\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	opts := internal.CheckoutSyncOpts{Feature: "test-feature", FeaturePath: fp, RepoDir: dir, Continue: true}
 	_, err := captureRun(t, func() error { return internal.ContinueCheckoutSync(opts) })
-	if err == nil || !strings.Contains(err.Error(), "is newer than") {
+	if err == nil || !strings.Contains(err.Error(), "unsupported checkout sync transaction state version 99") {
 		t.Fatalf("forward-only protection: %v", err)
 	}
 	internal.DeleteCheckoutTransaction(fp)
@@ -678,8 +705,8 @@ func TestCheckoutSyncModes_GuardedDispatchPlanRouteNeverExecutes(t *testing.T) {
 // — since internal/checkout_sync.go's fresh-run body now calls
 // internal.EvaluatePlanGuard through the guard seam placed after the plan
 // is built and before SaveCheckoutTransaction — it persists a
-// state_version: 3 transaction carrying its route and both limit pointers,
-// rather than the plain, un-upgraded v2 an unguarded dispatch still writes.
+// transactional state_version 5 carrying its route, both limit pointers,
+// PlanGuarded, and rollback evidence.
 func TestCheckoutSyncModes_GuardedDispatchRealExecutionPersistsGuardedTransaction(t *testing.T) {
 	dir, fp := checkoutModeFixture(t)
 	clearStepHook(t)
@@ -705,9 +732,12 @@ func TestCheckoutSyncModes_GuardedDispatchRealExecutionPersistsGuardedTransactio
 	if err != nil {
 		t.Fatalf("the interrupted run must have persisted a transaction: %v", err)
 	}
-	if tx.StateVersion != internal.CheckoutTransactionGuardedVersion {
-		t.Fatalf("state_version = %d, want the guarded v3 (%d): a guarded fresh dispatch now writes its birth version",
-			tx.StateVersion, internal.CheckoutTransactionGuardedVersion)
+	if tx.StateVersion != internal.CheckoutTransactionTransactionalGuardedVersion {
+		t.Fatalf("state_version = %d, want transactional guarded v5 (%d)",
+			tx.StateVersion, internal.CheckoutTransactionTransactionalGuardedVersion)
+	}
+	if !tx.PlanGuarded || tx.Transaction == nil || !internal.TransactionGuarded(tx) {
+		t.Fatalf("guarded transaction evidence = %+v", tx)
 	}
 	if tx.Route != internal.RouteNewMode {
 		t.Fatalf("route = %q, want %q: this dispatch supplied --no-fetch, a new-mode trigger flag", tx.Route, internal.RouteNewMode)

@@ -1,10 +1,14 @@
 package cli
 
 import (
+	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
 	"github.com/spf13/cobra"
@@ -27,10 +31,24 @@ only — the whole plan on a fresh run, the remaining work on --continue — and
 never cumulative across resumes. --approve-plan takes the fingerprint printed by
 --plan and requires at least one of those limits.
 
-A guarded run — one carrying a replay limit or --approve-plan — records its limits
-in state_version 3 recovery state, so an older tws release refuses to resume it
-instead of resuming it without the guard. When the guard itself refuses, the run
-exits 1 and writes one "plan-guard: <kind>: <detail>" line on stderr, before any
+A fresh ordinary sync with stack metadata records transactional recovery state:
+state_version 4 when unguarded and state_version 5 when guarded. Older releases
+fail closed on those versions. Before publication, --abort restores run-owned
+local refs and exact stack metadata with compare-and-swap protection; rollback is
+per repository, not cross-repository atomic. Immediately before the first push
+attempt the run becomes forward-only, and neither recovery verb rewrites remote
+refs. Once forward completion is durable, --continue and --abort only finish
+cleanup and never rewind later operator work.
+
+If stack.yaml is absent, the historical compatibility path is available only
+after an interactive warning and confirmation, or with --allow-nontransactional.
+That deliberate exception has no complete rollback: earlier branches can remain
+moved after a later failure. Malformed or unreadable stack metadata always
+refuses; restore or create stack.yaml to regain transactional sync. --push
+requires stack metadata.
+
+When the guard itself refuses, the run exits 1 and writes one
+"plan-guard: <kind>: <detail>" line on stderr, before any
 branch has moved unless that line says "state-preserved:". Refusals tws already
 performs — a dirty tree, a held lock, a base that does not resolve locally, an
 incomplete previous run — keep their own wording, exit 1 without that line, and
@@ -53,6 +71,7 @@ func syncCmd() *cobra.Command {
 	var maxPerEntry int
 	var maxTotal int
 	var approvePlan string
+	var allowNontransactional bool
 
 	cmd := &cobra.Command{
 		Use:   "sync <feature>",
@@ -77,10 +96,17 @@ func syncCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if allowNontransactional && (plan || cont || abort || guardOpts.Armed() ||
+				doFetch || noFetch || full || localOnly || only != "" || from != "" || testCmd != "") {
+				return fmt.Errorf("--allow-nontransactional is only valid for a fresh unguarded full sync when stack.yaml is absent")
+			}
 
 			ws, err := internal.RequireWorkspace()
 			if err != nil {
 				return err
+			}
+			if allowNontransactional && ws.Mode != internal.ModeExternal {
+				return fmt.Errorf("--allow-nontransactional is only supported for the external-mode missing-stack compatibility path")
 			}
 
 			// Pure command-line checks (I1-I8) run before mode dispatch so both
@@ -190,7 +216,7 @@ func syncCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show full git fetch output")
 	cmd.Flags().BoolVar(&push, "push", false, "Push all branches after syncing")
 	cmd.Flags().BoolVar(&cont, "continue", false, "Resume after conflict resolution")
-	cmd.Flags().BoolVar(&abort, "abort", false, "Discard sync state and start fresh")
+	cmd.Flags().BoolVar(&abort, "abort", false, "Restore run-owned local changes before publication; legacy state has limited rollback")
 	cmd.Flags().StringVar(&testCmd, "test", "", "Validation command to run after each rebase (checkout mode)")
 	cmd.Flags().BoolVar(&doFetch, "fetch", false, "Fetch before planning (external default)")
 	cmd.Flags().BoolVar(&noFetch, "no-fetch", false, "Plan and rebase from local refs only; no automatic network input (checkout default)")
@@ -203,6 +229,7 @@ func syncCmd() *cobra.Command {
 	cmd.Flags().IntVar(&maxPerEntry, "max-replay-per-entry", 0, "Refuse before rebasing if any entry of this invocation replays more than N candidates (this invocation only; a guarded run records its limits in recovery state older tws releases refuse to resume)")
 	cmd.Flags().IntVar(&maxTotal, "max-replay-total", 0, "Refuse before rebasing if this invocation replays more than N candidates in total (this invocation only; a guarded run records its limits in recovery state older tws releases refuse to resume)")
 	cmd.Flags().StringVar(&approvePlan, "approve-plan", "", "Approve the exact plan with the fingerprint printed by --plan (requires a replay limit)")
+	cmd.Flags().BoolVar(&allowNontransactional, "allow-nontransactional", false, "Allow the missing-stack compatibility path without prompting; complete rollback is unavailable")
 
 	_ = cmd.RegisterFlagCompletionFunc("only", syncEntryCompletion)
 	_ = cmd.RegisterFlagCompletionFunc("from", syncEntryCompletion)
@@ -274,11 +301,13 @@ func dispatchOrdinarySync(cmd *cobra.Command, feature string, layout externalSyn
 		if newMode && syncTriggersNeedV2(state) {
 			return fmt.Errorf("%s", errSyncModeFlagsNeedV2)
 		}
+		recoverablePayload := state.Cell == 5 ||
+			state.Cell == 2 && state.Payload != nil && state.Payload.Transaction != nil
 		switch {
 		// Cell-5 three-arm dispatch (insertion point 8).
-		case state.Cell == 5 && externalPersistedGuarded(state.Payload):
+		case recoverablePayload && externalPersistedGuarded(state.Payload):
 			return handleGuardedScopedSyncContinue(cmd, feature, layout, ws, push, policy, changed, guardOpts, state)
-		case state.Cell == 5 && guardOpts.Armed():
+		case recoverablePayload && guardOpts.Armed():
 			// The armed v2 -> v3 upgrade is NOT performed here. §13.2a places
 			// it at step 10a — after EvaluatePlanGuard has admitted the run
 			// and after the guard reclaim — so an invocation the guard
@@ -286,7 +315,7 @@ func dispatchOrdinarySync(cmd *cobra.Command, feature string, layout externalSyn
 			// next flagless `--continue` over it is still unguarded.
 			// handleGuardedScopedSyncContinue owns that one call site.
 			return handleGuardedScopedSyncContinue(cmd, feature, layout, ws, push, policy, changed, guardOpts, state)
-		case state.Cell == 5:
+		case recoverablePayload:
 			return handleScopedSyncContinue(feature, layout, ws, push, policy, changed, state)
 		// Cell-7 two-arm dispatch (insertion point 9).
 		case state.Cell == 7 && guardOpts.Armed():
@@ -316,20 +345,8 @@ func dispatchOrdinarySync(cmd *cobra.Command, feature string, layout externalSyn
 		return runGuardedLegacySync(cmd, feature, layout, ws, policy, push, verbose, changed, guardOpts, state)
 	}
 
-	return withExternalSyncMutationGuard(feature, layout, "", false, func() error {
-		result := syncFeature(feature, layout, verbose, nil)
-		if !result.Complete {
-			return fmt.Errorf("sync incomplete")
-		}
-		fmt.Println("Sync complete.")
-		if push {
-			fmt.Println("\nPushing...")
-			if err := pushFeature(feature, layout, false); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	allowNontransactional, _ := cmd.Flags().GetBool("allow-nontransactional")
+	return runTransactionalLegacySync(cmd, feature, layout, ws, policy, push, verbose, allowNontransactional)
 }
 
 // dispatchGuardedLegacySentinel is the cell-4 guarded-sentinel interception
@@ -521,10 +538,214 @@ func scopedFreshPrelude(feature string, layout externalSyncLayout, ws internal.W
 	return stack, sel, nil
 }
 
+func fullSyncSelection(stack internal.Stack, order []internal.StackEntry, policy internal.SyncRunPolicy, feature string) (internal.SyncSelection, error) {
+	return internal.ResolveSyncSelectionFromOrder(stack, order, policy, internal.SyncSelectionOpts{
+		Mode: internal.ModeExternal, NewMode: false, Feature: feature,
+	})
+}
+
+func validateExternalFetchSafety(layout externalSyncLayout, ws internal.Workspace, stack internal.Stack, sel internal.SyncSelection) error {
+	if sel.Policy.Fetch != internal.SyncFetchEnabled {
+		return nil
+	}
+	for repo, wtPath := range internal.UniqueRepos(internal.Stack{Branches: selectedRealEntries(stack, sel)}, layout.FeaturePath) {
+		ctx := repo
+		if ctx == "" {
+			ctx = wtPath
+		}
+		if ctx == "" {
+			ctx = ws.RepoRoot
+		}
+		if err := internal.ValidateSyncFetchDoesNotWriteLocalBranches(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func fetchTransactionalExternal(layout externalSyncLayout, ws internal.Workspace, stack internal.Stack, sel internal.SyncSelection, verbose bool, payload *internal.SyncRunState) error {
+	if sel.Policy.Fetch != internal.SyncFetchEnabled {
+		return nil
+	}
+	if err := validateExternalFetchSafety(layout, ws, stack, sel); err != nil {
+		return err
+	}
+	payload.Stage = internal.SyncStageFetching
+	if err := internal.SaveSyncRunState(layout.FeaturePath, payload); err != nil {
+		return fmt.Errorf("record fetch stage: %w", err)
+	}
+	for repo, wtPath := range internal.UniqueRepos(internal.Stack{Branches: selectedRealEntries(stack, sel)}, layout.FeaturePath) {
+		fetchQuiet(repo, wtPath, verbose)
+	}
+	return nil
+}
+
+var syncNontransactionalInteractive = func(cmd *cobra.Command) bool {
+	in, ok := cmd.InOrStdin().(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := in.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0 && isTerminal()
+}
+
+var syncMissingStackPreMutationHook func(featurePath string) error
+
+func runMissingStackCompatibility(layout externalSyncLayout, token string, verbose bool) error {
+	if syncMissingStackPreMutationHook != nil {
+		if err := syncMissingStackPreMutationHook(layout.FeaturePath); err != nil {
+			return err
+		}
+	}
+	if err := verifyFreshExternalSyncAdmission(layout, token); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(internal.StackPath(layout.FeaturePath)); err == nil {
+		return errors.New("stack.yaml appeared after compatibility consent; refusing the nontransactional path so the next sync can use transactional metadata")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect stack.yaml before compatibility mutation: %w", err)
+	}
+	fetchQuiet("", "", verbose)
+	return syncFallback(layout)
+}
+
+func approveMissingStackFallback(cmd *cobra.Command, feature string) error {
+	explanation := fmt.Sprintf(
+		"Feature %q has no stack.yaml. The compatibility sync is NONTRANSACTIONAL: complete rollback is unavailable and earlier branches can remain moved if a later branch fails. Restore or create stack.yaml metadata to use transactional sync instead.",
+		feature,
+	)
+	if !syncNontransactionalInteractive(cmd) {
+		return fmt.Errorf("%s Noninteractive execution refuses by default; re-run with --allow-nontransactional only if you deliberately accept this limitation", explanation)
+	}
+	fmt.Fprintln(cmd.ErrOrStderr(), explanation)                                                   //nolint:errcheck
+	fmt.Fprint(cmd.ErrOrStderr(), "Continue with the nontransactional compatibility sync? [y/N] ") //nolint:errcheck
+	scanner := bufio.NewScanner(cmd.InOrStdin())
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return fmt.Errorf("read nontransactional confirmation: %w", err)
+		}
+		return errors.New("nontransactional compatibility sync cancelled")
+	}
+	answer := strings.ToLower(strings.TrimSpace(scanner.Text()))
+	if answer != "y" && answer != "yes" {
+		return errors.New("nontransactional compatibility sync cancelled")
+	}
+	return nil
+}
+
+func runTransactionalLegacySync(cmd *cobra.Command, feature string, layout externalSyncLayout, ws internal.Workspace, policy internal.SyncRunPolicy, push, verbose, allowNontransactional bool) error {
+	stack, err := internal.LoadStack(layout.FeaturePath)
+	if err != nil {
+		if _, statErr := os.Lstat(internal.StackPath(layout.FeaturePath)); statErr == nil {
+			return fmt.Errorf("stack.yaml exists but is unreadable or malformed: %w; repair or restore it before syncing", err)
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return fmt.Errorf("inspect stack.yaml before sync: %w", statErr)
+		}
+		if push {
+			return errors.New("sync --push requires stack.yaml; restore or create stack metadata before publishing the feature")
+		}
+		if !allowNontransactional {
+			if err := approveMissingStackFallback(cmd, feature); err != nil {
+				return err
+			}
+		} else {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+				"Warning: feature %q has no stack.yaml; --allow-nontransactional accepts a compatibility sync with no complete rollback. Earlier branches can remain moved if a later branch fails. Restore or create stack.yaml metadata to regain transactional sync.\n",
+				feature)
+		}
+		token, err := newSyncOwnerToken()
+		if err != nil {
+			return err
+		}
+		return withExternalSyncMutationGuard(feature, layout, token, false, func() error {
+			if err := verifyFreshExternalSyncAdmission(layout, token); err != nil {
+				return err
+			}
+			if _, statErr := os.Lstat(internal.StackPath(layout.FeaturePath)); statErr == nil {
+				return errors.New("stack.yaml appeared after compatibility consent; refusing the nontransactional path so the next sync can use transactional metadata")
+			} else if !errors.Is(statErr, os.ErrNotExist) {
+				return fmt.Errorf("recheck stack.yaml after claiming the mutation guard: %w", statErr)
+			}
+			if err := runMissingStackCompatibility(layout, token, verbose); err != nil {
+				return err
+			}
+			fmt.Println("Sync complete.")
+			return nil
+		})
+	}
+	sorted, err := internal.TopoSort(stack)
+	if err != nil {
+		return err
+	}
+	sel, err := fullSyncSelection(stack, sorted, policy, feature)
+	if err != nil {
+		return err
+	}
+	if err := validateExternalFetchSafety(layout, ws, stack, sel); err != nil {
+		return err
+	}
+	marker, err := syncMarkerFn()
+	if err != nil {
+		return err
+	}
+	if err := syncMarkerCollision(stack, marker); err != nil {
+		return err
+	}
+	token, err := newSyncOwnerToken()
+	if err != nil {
+		return err
+	}
+	testCommand := internal.LoadConfig().TestCommand
+	validationSource := "none"
+	if testCommand != "" {
+		validationSource = "config"
+	}
+	payload, err := setupTransactionalSyncRunState(layout, ws, feature, marker, token, stack, sel, push, testCommand, validationSource, internal.RouteLegacy, false, nil, nil)
+	if err != nil {
+		return err
+	}
+	if err := fetchTransactionalExternal(layout, ws, stack, sel, verbose, payload); err != nil {
+		return err
+	}
+	run := &syncRunContext{Route: internal.RouteLegacy, Policy: policy, Sel: sel, Payload: payload, WorkspaceRoot: ws.RepoRoot}
+	result := syncWithStackScoped(feature, layout, stack, sorted, nil, run, nil)
+	if result.Err != nil {
+		return result.Err
+	}
+	if !result.Complete {
+		return fmt.Errorf("sync incomplete")
+	}
+	fmt.Println("Sync complete.")
+	if push {
+		if err := runNewModePush(feature, layout, stack, sel, result.Completed, payload); err != nil {
+			return err
+		}
+	}
+	return finalizeScopedSyncRun(layout, payload)
+}
+
+func rollbackTransactionalFreshRefusal(layout externalSyncLayout, payload *internal.SyncRunState, refusal *internal.PlanGuardRefusalError) error {
+	if payload == nil || payload.Transaction == nil {
+		return rollbackGuardedFreshRefusal(layout.FeaturePath, filepath.Base(layout.FeaturePath), refusal)
+	}
+	if err := internal.CancelSyncTransaction(payload.Transaction, func() error {
+		return internal.SaveSyncRunState(layout.FeaturePath, payload)
+	}); err != nil {
+		preserved := *refusal
+		preserved.StatePreserved = true
+		preserved.Detail = fmt.Sprintf("%s; transactional recovery evidence is preserved: %v", refusal.Detail, err)
+		return &preserved
+	}
+	return rollbackGuardedFreshRefusal(layout.FeaturePath, payload.Feature, refusal)
+}
+
 // runScopedSync executes §3.6 steps 10-17 of a new-mode external run.
 func runScopedSync(feature string, layout externalSyncLayout, ws internal.Workspace, policy internal.SyncRunPolicy, push, verbose bool) error {
 	stack, sel, err := scopedFreshPrelude(feature, layout, ws, policy)
 	if err != nil {
+		return err
+	}
+	if err := validateExternalFetchSafety(layout, ws, stack, sel); err != nil {
 		return err
 	}
 
@@ -546,15 +767,18 @@ func runScopedSync(feature string, layout externalSyncLayout, ws internal.Worksp
 		validationSource = "config"
 	}
 
-	payload, err := setupSyncRunState(layout, feature, marker, token, sel, push, testCommand, validationSource, syncRunStateBirth{})
+	payload, err := setupTransactionalSyncRunState(layout, ws, feature, marker, token, stack, sel, push, testCommand, validationSource, internal.RouteNewMode, false, nil, nil)
 	if err != nil {
 		return err
 	}
 
 	printSyncModeHeader(policy)
 
-	run := &syncRunContext{Policy: policy, Sel: sel, Payload: payload}
+	run := &syncRunContext{Policy: policy, Sel: sel, Payload: payload, WorkspaceRoot: ws.RepoRoot}
 	result := syncFeatureScoped(feature, layout, verbose, stack, run, nil)
+	if result.Err != nil {
+		return result.Err
+	}
 	if !result.Complete {
 		return fmt.Errorf("sync incomplete")
 	}
@@ -589,6 +813,9 @@ func runGuardedScopedSync(cmd *cobra.Command, feature string, layout externalSyn
 	if err != nil {
 		return err
 	}
+	if err := validateExternalFetchSafety(layout, ws, stack, sel); err != nil {
+		return err
+	}
 
 	plan, planReq, err := buildGuardedExternalPlan(cmd.OutOrStdout(), cmd.ErrOrStderr(), args, insp)
 	if err != nil {
@@ -614,24 +841,21 @@ func runGuardedScopedSync(cmd *cobra.Command, feature string, layout externalSyn
 		validationSource = "config"
 	}
 
-	birth := syncRunStateBirth{
-		StateVersion: internal.SyncRunStateGuardedVersion,
-		Route:        internal.RouteNewMode,
-		MaxPerEntry:  opts.MaxPerEntry,
-		MaxTotal:     opts.MaxTotal,
-	}
-	payload, err := setupSyncRunState(layout, feature, marker, token, sel, push, testCommand, validationSource, birth)
+	payload, err := setupTransactionalSyncRunState(layout, ws, feature, marker, token, stack, sel, push, testCommand, validationSource, internal.RouteNewMode, true, opts.MaxPerEntry, opts.MaxTotal)
 	if err != nil {
 		return err
 	}
 
 	printSyncModeHeader(policy)
 
-	run := &syncRunContext{Policy: policy, Sel: sel, Payload: payload, Validation: validationIdentity(testCommand, validationSource)}
+	run := &syncRunContext{Policy: policy, Sel: sel, Payload: payload, Validation: validationIdentity(testCommand, validationSource), WorkspaceRoot: ws.RepoRoot}
 	result := syncFeatureScopedPlanned(feature, layout, stack, insp.Order, run, guard)
+	if result.Err != nil {
+		return result.Err
+	}
 	if result.Refusal != nil {
 		if !result.Refusal.StatePreserved {
-			return rollbackGuardedFreshRefusal(layout.FeaturePath, feature, result.Refusal)
+			return rollbackTransactionalFreshRefusal(layout, payload, result.Refusal)
 		}
 		return result.Refusal
 	}
@@ -669,6 +893,13 @@ func runGuardedLegacySync(cmd *cobra.Command, feature string, layout externalSyn
 		return insp.SortErr
 	}
 	stack, sorted := insp.Stack, insp.Order
+	sel, err := fullSyncSelection(stack, sorted, policy, feature)
+	if err != nil {
+		return err
+	}
+	if err := validateExternalFetchSafety(layout, ws, stack, sel); err != nil {
+		return err
+	}
 
 	plan, planReq, err := buildGuardedExternalPlan(cmd.OutOrStdout(), cmd.ErrOrStderr(), args, insp)
 	if err != nil {
@@ -694,29 +925,21 @@ func runGuardedLegacySync(cmd *cobra.Command, feature string, layout externalSyn
 		validationSource = "config"
 	}
 
-	universe := make([]string, 0, len(sorted))
-	for _, entry := range sorted {
-		universe = append(universe, entry.Name)
-	}
-	pending := guardedLegacySetupPending(universe, guardedLegacyCarry{})
-
-	birth := syncRunStateBirth{StateVersion: internal.SyncRunStateGuardedVersion, Route: internal.RouteLegacy, MaxPerEntry: opts.MaxPerEntry, MaxTotal: opts.MaxTotal}
-	payload, undo, err := setupGuardedLegacyRunState(layout, feature, marker, token, universe, pending, push, testCommand, validationSource, birth, guardedLegacyCarry{})
+	payload, err := setupTransactionalSyncRunState(layout, ws, feature, marker, token, stack, sel,
+		push, testCommand, validationSource, internal.RouteLegacy, true, opts.MaxPerEntry, opts.MaxTotal)
 	if err != nil {
 		return err
 	}
-
 	printSyncModeHeader(policy)
 
-	run := &syncRunContext{Route: internal.RouteLegacy, Payload: payload, Validation: validationIdentity(testCommand, validationSource)}
+	run := &syncRunContext{Route: internal.RouteLegacy, Policy: policy, Sel: sel, Payload: payload, Validation: validationIdentity(testCommand, validationSource), WorkspaceRoot: ws.RepoRoot}
 	result := syncWithStackScoped(feature, layout, stack, sorted, nil, run, guard)
+	if result.Err != nil {
+		return result.Err
+	}
 	if result.Refusal != nil {
-		// A refusal raised before this invocation moved anything owns its own
-		// cleanup: the payload, the guarded sentinel and the run guard this
-		// setup installed must not outlive it, which is what keeps
-		// StatePreserved false.
 		if !result.Refusal.StatePreserved {
-			return undo.rollback(layout.FeaturePath, feature, result.Refusal)
+			return rollbackTransactionalFreshRefusal(layout, payload, result.Refusal)
 		}
 		return result.Refusal
 	}
@@ -725,12 +948,11 @@ func runGuardedLegacySync(cmd *cobra.Command, feature string, layout externalSyn
 	}
 	fmt.Println("Sync complete.")
 	if push {
-		fmt.Println("\nPushing...")
-		if err := pushFeature(feature, layout, false); err != nil {
+		if err := runNewModePush(feature, layout, stack, sel, result.Completed, payload); err != nil {
 			return err
 		}
 	}
-	return clearSyncRunState(layout.FeaturePath, true)
+	return finalizeScopedSyncRun(layout, payload)
 }
 
 // runNewModePush is the §7.6 push half of a new-mode run. A `scope=all` run
@@ -746,7 +968,10 @@ func runNewModePush(feature string, layout externalSyncLayout, stack internal.St
 		return fmt.Errorf("record push stage: %w", err)
 	}
 	if sel.Policy.ScopeKind == internal.SyncScopeAll {
-		return pushFeature(feature, layout, false)
+		if payload.Transaction == nil {
+			return pushFeature(feature, layout, false)
+		}
+		completed = sel.SelectedNames()
 	}
 	return pushScoped(feature, layout, stack, sel, completed, payload)
 }
@@ -758,6 +983,13 @@ func finalizeScopedSyncRun(layout externalSyncLayout, payload *internal.SyncRunS
 	payload.Stage = internal.SyncStageFinalizing
 	if err := internal.SaveSyncRunState(layout.FeaturePath, payload); err != nil {
 		return fmt.Errorf("record finalizing stage: %w", err)
+	}
+	if payload.Transaction != nil {
+		if err := internal.CompleteSyncTransaction(payload.Transaction, func() error {
+			return internal.SaveSyncRunState(layout.FeaturePath, payload)
+		}); err != nil {
+			return fmt.Errorf("complete transactional sync cleanup: %w", err)
+		}
 	}
 	return clearSyncRunState(layout.FeaturePath, true)
 }
@@ -809,16 +1041,39 @@ func handleSyncAbortCell(feature string, layout externalSyncLayout, state intern
 			token = state.Payload.OwnerToken
 		}
 		return withExternalSyncMutationGuard(feature, layout, token, true, func() error {
+			if state.Payload != nil && state.Payload.Transaction != nil {
+				payload, err := loadAuthoritativeExternalRecovery(layout, state.Payload, state.Cell == 5)
+				if err != nil {
+					return err
+				}
+				if err := internal.AbortSyncTransaction(payload.Transaction, func() error {
+					return internal.SaveSyncRunState(layout.FeaturePath, payload)
+				}, os.Stdout); err != nil {
+					return err
+				}
+				if err := clearSyncRunState(layout.FeaturePath, true); err != nil {
+					return err
+				}
+				if !internal.SyncTransactionCleanupOnly(payload.Transaction) {
+					fmt.Println("Sync transaction aborted; all run-owned local refs and stack metadata were restored.")
+				}
+				return nil
+			}
 			if state.Payload != nil && state.Payload.FailedBranch != "" {
 				path := layout.WorktreePath(state.Payload.FailedBranch)
 				if isRebaseInProgress(path) {
 					_ = internal.RunSilentDir(path, "git", "rebase", "--abort")
 				}
 			}
-			internal.DeleteSyncRunState(layout.FeaturePath)
-			if state.Cell == 5 {
-				internal.DeleteSyncState(layout.FeaturePath)
+			if err := internal.RemoveSyncRunState(layout.FeaturePath); err != nil {
+				return err
 			}
+			if state.Cell == 5 {
+				if err := internal.RemoveSyncState(layout.FeaturePath); err != nil {
+					return err
+				}
+			}
+			fmt.Println("Warning: legacy sync state has no rollback snapshots; earlier branch movements and metadata cannot be fully restored.")
 			fmt.Println("Sync state cleared.")
 			return nil
 		})
@@ -828,7 +1083,10 @@ func handleSyncAbortCell(feature string, layout externalSyncLayout, state intern
 				return fmt.Errorf("scoped sync state appeared at %s while aborting; re-run: tws sync %s --abort",
 					internal.SyncRunStatePath(layout.FeaturePath), feature)
 			}
-			internal.DeleteSyncState(layout.FeaturePath)
+			if err := internal.RemoveSyncState(layout.FeaturePath); err != nil {
+				return err
+			}
+			fmt.Println("Warning: legacy sync state has no rollback snapshots; earlier branch movements and metadata cannot be fully restored.")
 			fmt.Println("Sync state cleared.")
 			return nil
 		})
@@ -911,6 +1169,7 @@ func handleLegacyGuardedAbort(feature string, layout externalSyncLayout) error {
 			}
 			return nil
 		}
+		fmt.Println("Warning: legacy sync state has no rollback snapshots; earlier branch movements and metadata cannot be fully restored.")
 		if hadGuard {
 			fmt.Printf("Sync state cleared; stale sync guard from PID %d cleared.\n", pid)
 		} else {
@@ -932,6 +1191,7 @@ func handleSyncAbort(feature string, layout externalSyncLayout) error {
 		fmt.Println("Nothing to abort — no sync in progress.")
 		return nil
 	}
+	fmt.Println("Warning: legacy sync state has no rollback snapshots; earlier branch movements and metadata cannot be fully restored.")
 	fmt.Println("Sync state cleared.")
 	return nil
 }
@@ -952,7 +1212,9 @@ func abortLegacySyncState(layout externalSyncLayout) (bool, error) {
 			_ = internal.RunSilentDir(path, "git", "rebase", "--abort")
 		}
 	}
-	internal.DeleteSyncState(layout.FeaturePath)
+	if err := internal.RemoveSyncState(layout.FeaturePath); err != nil {
+		return true, err
+	}
 	return true, nil
 }
 
@@ -1009,21 +1271,130 @@ func handleSyncContinue(feature string, layout externalSyncLayout, push bool) er
 	})
 }
 
+func finalizeObservedExternalAction(layout externalSyncLayout, payload *internal.SyncRunState, stack *internal.Stack) error {
+	if payload == nil || payload.Transaction == nil || len(payload.Transaction.Actions) == 0 {
+		return nil
+	}
+	action := payload.Transaction.Actions[len(payload.Transaction.Actions)-1]
+	if action.Kind != "rebase" || action.Status != internal.SyncTxnActionObserved || payloadCompleted(payload, action.Entry) {
+		return nil
+	}
+	entry := internal.GetBranch(*stack, action.Entry)
+	if entry.Name == "" {
+		return fmt.Errorf("transactional sync action names missing stack entry %q", action.Entry)
+	}
+	path := layout.WorktreePath(entry.Name)
+	if _, err := os.Stat(path); err == nil {
+		run := &syncRunContext{Policy: payload.Policy(), Payload: payload}
+		ok, validationErr := run.validate(layout, path, entry.Name)
+		if validationErr != nil {
+			return validationErr
+		}
+		if !ok {
+			return fmt.Errorf("validation still failing for %s", entry.Name)
+		}
+		base := resolveEntryBase(*stack, entry, syncRepoContext(layout, entry))
+		baseSHA := internal.GetBranchSHA(syncRepoContext(layout, entry), base)
+		if baseSHA != "" {
+			internal.UpdateBaseSHA(stack, entry.Name, baseSHA)
+			if err := internal.SyncWriteStackValue(layout.FeaturePath, payload.Transaction, *stack, func() error {
+				return internal.SaveSyncRunState(layout.FeaturePath, payload)
+			}); err != nil {
+				return err
+			}
+		}
+	}
+	completed := append([]string(nil), payload.Completed...)
+	completed = append(completed, entry.Name)
+	wasFailed := payload.FailedBranch == entry.Name
+	if err := persistExternalSyncProgress(layout.FeaturePath, payload, completed); err != nil {
+		return err
+	}
+	if wasFailed {
+		fmt.Println(formatSyncStatus(entry.Name, "active", "resolved"))
+	}
+	return nil
+}
+
+func finishExternalCleanupOnly(feature string, layout externalSyncLayout, state internal.SyncExternalState) (bool, error) {
+	payload := state.Payload
+	if payload == nil || !internal.SyncTransactionCleanupOnly(payload.Transaction) {
+		return false, nil
+	}
+	if state.GuardForeign() {
+		return true, fmt.Errorf("sync guard %s does not belong to the recorded scoped run; inspect it and preserve the recovery evidence", state.GuardPath)
+	}
+	if err := internal.ReclaimSyncRunGuard(layout.FeaturePath, payload.OwnerToken); err != nil {
+		return true, err
+	}
+	if err := externalSyncPostClaimRecheck(feature, layout, payload.OwnerToken); err != nil {
+		return true, err
+	}
+	payload, err := loadAuthoritativeExternalRecovery(layout, payload, state.Cell == 5)
+	if err != nil {
+		return true, err
+	}
+	if !internal.SyncTransactionCleanupOnly(payload.Transaction) {
+		return true, errors.New("sync recovery phase changed while claiming cleanup; preserve and inspect the evidence")
+	}
+	if err := internal.CompleteSyncTransaction(payload.Transaction, func() error {
+		return internal.SaveSyncRunState(layout.FeaturePath, payload)
+	}); err != nil {
+		return true, err
+	}
+	if err := clearSyncRunState(layout.FeaturePath, true); err != nil {
+		return true, err
+	}
+	internal.ReportSyncTransactionCleanup(payload.Transaction, os.Stdout)
+	return true, nil
+}
+
 // handleScopedSyncContinue resumes cell 5 — the only resumable new-mode cell.
 func handleScopedSyncContinue(feature string, layout externalSyncLayout, ws internal.Workspace, push bool, policy internal.SyncRunPolicy, changed map[string]bool, state internal.SyncExternalState) error {
 	payload := state.Payload
 	if payload == nil {
 		return fmt.Errorf("nothing to continue — no sync in progress")
 	}
+	if handled, err := finishExternalCleanupOnly(feature, layout, state); handled {
+		return err
+	}
+	if internal.SyncTransactionRollingBack(payload.Transaction) {
+		return fmt.Errorf("sync rollback has started; forward continuation is disabled — re-run: tws sync %s --abort", feature)
+	}
+	if entry, path, active := internal.SyncTransactionActiveRebase(payload.Transaction); active {
+		return fmt.Errorf("rebase still in progress in %s (%s); resolve conflicts, run git add . && git rebase --continue, then retry", entry, path)
+	}
 	if err := syncContinueMismatches(payload, policy, changed, push); err != nil {
 		return err
 	}
-
 	failedPath := layout.WorktreePath(payload.FailedBranch)
 	if payload.FailedBranch != "" && isRebaseInProgress(failedPath) {
 		return fmt.Errorf("rebase still in progress in %s; resolve conflicts, run git add . && git rebase --continue, then retry", payload.FailedBranch)
 	}
-
+	if state.GuardForeign() {
+		return fmt.Errorf("sync guard %s does not belong to the recorded scoped run; inspect it and remove it manually", state.GuardPath)
+	}
+	if err := internal.ReclaimSyncRunGuard(layout.FeaturePath, payload.OwnerToken); err != nil {
+		return err
+	}
+	if err := externalSyncPostClaimRecheck(feature, layout, payload.OwnerToken); err != nil {
+		return err
+	}
+	payload, err := loadAuthoritativeExternalRecovery(layout, payload, state.Cell == 5)
+	if err != nil {
+		return err
+	}
+	if payload.Transaction != nil {
+		if internal.SyncTransactionRollingBack(payload.Transaction) {
+			return fmt.Errorf("sync rollback has started; forward continuation is disabled — re-run: tws sync %s --abort", feature)
+		}
+		if entry, path, active := internal.SyncTransactionActiveRebase(payload.Transaction); active {
+			return fmt.Errorf("rebase still in progress in %s (%s); resolve conflicts, run git add . && git rebase --continue, then retry", entry, path)
+		}
+		if err := internal.ReconcileSyncGitAction(payload.Transaction, func() error { return internal.SaveSyncRunState(layout.FeaturePath, payload) }); err != nil {
+			return fmt.Errorf("reconcile interrupted sync action: %w", err)
+		}
+	}
 	stack, err := internal.LoadStack(layout.FeaturePath)
 	if err != nil {
 		return fmt.Errorf("load stack: %w", err)
@@ -1032,8 +1403,12 @@ func handleScopedSyncContinue(feature string, layout externalSyncLayout, ws inte
 	if err != nil {
 		return err
 	}
-
-	if payload.FailedBranch != "" && !payloadCompleted(payload, payload.FailedBranch) {
+	if payload.Transaction != nil {
+		if err := finalizeObservedExternalAction(layout, payload, &stack); err != nil {
+			return err
+		}
+	}
+	if payload.Transaction == nil && payload.FailedBranch != "" && !payloadCompleted(payload, payload.FailedBranch) {
 		failedEntry := internal.GetBranch(stack, payload.FailedBranch)
 		if failedEntry.Name == "" {
 			return fmt.Errorf("failed branch %q no longer exists in stack", payload.FailedBranch)
@@ -1044,21 +1419,11 @@ func handleScopedSyncContinue(feature string, layout externalSyncLayout, ws inte
 		fmt.Println(formatSyncStatus(payload.FailedBranch, "active", "resolved"))
 	}
 
-	if state.GuardForeign() {
-		return fmt.Errorf("sync guard %s does not belong to the recorded scoped run; inspect it and remove it manually", state.GuardPath)
-	}
-	if err := internal.ReclaimSyncRunGuard(layout.FeaturePath, payload.OwnerToken); err != nil {
-		return err
-	}
-	if err := externalSyncPostClaimRecheck(feature, layout, payload.OwnerToken); err != nil {
-		return err
-	}
-
 	done := make(map[string]bool)
 	for _, name := range payload.Completed {
 		done[name] = true
 	}
-	if payload.FailedBranch != "" {
+	if payload.Transaction == nil && payload.FailedBranch != "" {
 		done[payload.FailedBranch] = true
 	}
 	sorted, err := internal.TopoSort(stack)
@@ -1066,11 +1431,16 @@ func handleScopedSyncContinue(feature string, layout externalSyncLayout, ws inte
 		return err
 	}
 
-	printSyncModeHeader(payload.Policy())
+	if internal.PayloadNewMode(payload) {
+		printSyncModeHeader(payload.Policy())
+	}
 	fmt.Printf("Resuming sync with %d pending branch(es)\n", len(payload.Pending))
 
-	run := &syncRunContext{Policy: payload.Policy(), Sel: sel, Payload: payload}
+	run := &syncRunContext{Policy: payload.Policy(), Sel: sel, Payload: payload, Route: payload.Route, WorkspaceRoot: ws.RepoRoot}
 	result := syncWithStackScoped(feature, layout, stack, sorted, done, run, nil)
+	if result.Err != nil {
+		return result.Err
+	}
 	if !result.Complete {
 		return fmt.Errorf("sync incomplete")
 	}
@@ -1093,6 +1463,15 @@ func handleGuardedScopedSyncContinue(cmd *cobra.Command, feature string, layout 
 	if payload == nil {
 		return fmt.Errorf("nothing to continue — no sync in progress")
 	}
+	if handled, err := finishExternalCleanupOnly(feature, layout, state); handled {
+		return err
+	}
+	if internal.SyncTransactionRollingBack(payload.Transaction) {
+		return fmt.Errorf("sync rollback has started; forward continuation is disabled — re-run: tws sync %s --abort", feature)
+	}
+	if entry, path, active := internal.SyncTransactionActiveRebase(payload.Transaction); active {
+		return fmt.Errorf("rebase still in progress in %s (%s); resolve conflicts, run git add . && git rebase --continue, then retry", entry, path)
+	}
 	if err := syncContinueMismatches(payload, policy, changed, push); err != nil {
 		return err
 	}
@@ -1103,7 +1482,7 @@ func handleGuardedScopedSyncContinue(cmd *cobra.Command, feature string, layout 
 	}
 
 	args := externalPlanArgs{
-		Feature: feature, Layout: layout, Ws: ws, Policy: payload.Policy(), NewMode: true,
+		Feature: feature, Layout: layout, Ws: ws, Policy: payload.Policy(), NewMode: internal.PayloadNewMode(payload),
 		Push: push, Verbose: false, Changed: changed, Opts: opts, State: state, Continue: true,
 		PersistedGuarded: externalPersistedGuarded(payload),
 	}
@@ -1119,7 +1498,34 @@ func handleGuardedScopedSyncContinue(cmd *cobra.Command, feature string, layout 
 	}
 	stack, sel := insp.Stack, insp.Selection
 
-	if payload.FailedBranch != "" && !payloadCompleted(payload, payload.FailedBranch) {
+	plan, planReq, err := buildGuardedExternalPlan(cmd.OutOrStdout(), cmd.ErrOrStderr(), args, insp)
+	if err != nil {
+		return err
+	}
+	guard := newPlanGuardRun(planReq, plan, externalPersistedGuarded(payload))
+
+	if state.GuardForeign() {
+		return fmt.Errorf("sync guard %s does not belong to the recorded scoped run; inspect it and remove it manually", state.GuardPath)
+	}
+	if err := internal.ReclaimSyncRunGuard(layout.FeaturePath, payload.OwnerToken); err != nil {
+		return err
+	}
+	if err := externalSyncPostClaimRecheck(feature, layout, payload.OwnerToken); err != nil {
+		return err
+	}
+	payload, err = loadAuthoritativeExternalRecovery(layout, payload, state.Cell == 5)
+	if err != nil {
+		return err
+	}
+	if payload.Transaction != nil {
+		if err := internal.ReconcileSyncGitAction(payload.Transaction, func() error { return internal.SaveSyncRunState(layout.FeaturePath, payload) }); err != nil {
+			return fmt.Errorf("reconcile interrupted sync action: %w", err)
+		}
+		if err := finalizeObservedExternalAction(layout, payload, &stack); err != nil {
+			return err
+		}
+	}
+	if payload.Transaction == nil && payload.FailedBranch != "" && !payloadCompleted(payload, payload.FailedBranch) {
 		failedEntry := internal.GetBranch(stack, payload.FailedBranch)
 		if failedEntry.Name == "" {
 			return fmt.Errorf("failed branch %q no longer exists in stack", payload.FailedBranch)
@@ -1128,23 +1534,6 @@ func handleGuardedScopedSyncContinue(cmd *cobra.Command, feature string, layout 
 			return fmt.Errorf("resolved branch %s still does not contain its configured parent %s", failedEntry.Name, failedEntry.Base)
 		}
 		fmt.Println(formatSyncStatus(payload.FailedBranch, "active", "resolved"))
-	}
-
-	if state.GuardForeign() {
-		return fmt.Errorf("sync guard %s does not belong to the recorded scoped run; inspect it and remove it manually", state.GuardPath)
-	}
-
-	plan, planReq, err := buildGuardedExternalPlan(cmd.OutOrStdout(), cmd.ErrOrStderr(), args, insp)
-	if err != nil {
-		return err
-	}
-	guard := newPlanGuardRun(planReq, plan, externalPersistedGuarded(payload))
-
-	if err := internal.ReclaimSyncRunGuard(layout.FeaturePath, payload.OwnerToken); err != nil {
-		return err
-	}
-	if err := externalSyncPostClaimRecheck(feature, layout, payload.OwnerToken); err != nil {
-		return err
 	}
 
 	// §13.2a step 10a: the armed v2 -> v3 upgrade, immediately after a
@@ -1160,16 +1549,21 @@ func handleGuardedScopedSyncContinue(cmd *cobra.Command, feature string, layout 
 	for _, name := range payload.Completed {
 		done[name] = true
 	}
-	if payload.FailedBranch != "" {
+	if payload.Transaction == nil && payload.FailedBranch != "" {
 		done[payload.FailedBranch] = true
 	}
 	sorted := insp.Order
 
-	printSyncModeHeader(payload.Policy())
+	if internal.PayloadNewMode(payload) {
+		printSyncModeHeader(payload.Policy())
+	}
 	fmt.Printf("Resuming sync with %d pending branch(es)\n", len(payload.Pending))
 
-	run := &syncRunContext{Policy: payload.Policy(), Sel: sel, Payload: payload}
+	run := &syncRunContext{Policy: payload.Policy(), Sel: sel, Payload: payload, Route: payload.Route, WorkspaceRoot: ws.RepoRoot}
 	result := syncWithStackScoped(feature, layout, stack, sorted, done, run, guard)
+	if result.Err != nil {
+		return result.Err
+	}
 	if result.Refusal != nil {
 		return result.Refusal
 	}
@@ -1363,7 +1757,7 @@ func scopedSelectionFromPayloadOrder(stack internal.Stack, order []internal.Stac
 	}
 	sel, err := internal.ResolveSyncSelectionFromOrder(stack, order, payload.Policy(), internal.SyncSelectionOpts{
 		Mode:    mode,
-		NewMode: true,
+		NewMode: internal.PayloadNewMode(payload),
 		Feature: feature,
 	})
 	if err != nil {
@@ -1438,7 +1832,9 @@ func syncFeature(feature string, layout externalSyncLayout, verbose bool, guard 
 			return syncResult{Refusal: &internal.PlanGuardRefusalError{Kind: string(internal.RefusalPlanUnavailable), Detail: err.Error()}}
 		}
 		fetchQuiet("", "", verbose)
-		syncFallback(layout)
+		if err := syncFallback(layout); err != nil {
+			return syncResult{Err: err}
+		}
 		return syncResult{Complete: true}
 	}
 
@@ -1467,9 +1863,23 @@ func syncFeature(feature string, layout externalSyncLayout, verbose bool, guard 
 func syncFeatureScoped(feature string, layout externalSyncLayout, verbose bool, stack internal.Stack, run *syncRunContext, guard *planGuardRun) syncResult {
 	if run.Policy.Fetch == internal.SyncFetchEnabled && guard == nil {
 		run.Payload.Stage = internal.SyncStageFetching
-		_ = internal.SaveSyncRunState(layout.FeaturePath, run.Payload)
+		if err := internal.SaveSyncRunState(layout.FeaturePath, run.Payload); err != nil {
+			return syncResult{Err: fmt.Errorf("record fetch stage: %w", err)}
+		}
 		sub := internal.Stack{Branches: selectedRealEntries(stack, run.Sel)}
 		for repo, wtPath := range internal.UniqueRepos(sub, layout.FeaturePath) {
+			ctx := repo
+			if ctx == "" {
+				ctx = wtPath
+			}
+			if ctx == "" {
+				ctx = run.WorkspaceRoot
+			}
+			if run.transactional() {
+				if err := internal.ValidateSyncFetchDoesNotWriteLocalBranches(ctx); err != nil {
+					return syncResult{Err: err}
+				}
+			}
 			fetchQuiet(repo, wtPath, verbose)
 		}
 	}

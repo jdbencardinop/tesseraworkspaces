@@ -24,13 +24,22 @@ const SyncRunStateVersion = 2
 // route), the guarded twin of SyncRunStateVersion (§13.6 rule 1).
 const SyncRunStateGuardedVersion = 3
 
+// SyncRunStateTransactionalVersion and its guarded twin identify ordinary
+// sync payloads that carry durable rollback evidence. Older binaries reject
+// both versions instead of silently resuming without transactional guarantees.
+const SyncRunStateTransactionalVersion = 4
+const SyncRunStateTransactionalGuardedVersion = 5
+
 // CheckoutTransactionVersion is the checkout transaction state_version.
 const CheckoutTransactionVersion = 2
 
-// CheckoutTransactionGuardedVersion is the guarded checkout transaction
-// state_version (either route), the guarded twin of CheckoutTransactionVersion
-// (§13.6 rule 1).
+// CheckoutTransactionGuardedVersion is the legacy guarded checkout version.
 const CheckoutTransactionGuardedVersion = 3
+
+// CheckoutTransactionTransactionalVersion and its guarded twin carry the
+// shared rollback evidence in checkout mode.
+const CheckoutTransactionTransactionalVersion = 4
+const CheckoutTransactionTransactionalGuardedVersion = 5
 
 // SyncRunStage is the closed, exhaustive stage enum of the v2 payload.
 type SyncRunStage string
@@ -76,6 +85,9 @@ type SyncRunState struct {
 	MaxReplayPerEntry *int   `yaml:"max_replay_per_entry,omitempty"`
 	MaxReplayTotal    *int   `yaml:"max_replay_total,omitempty"`
 	Route             string `yaml:"route,omitempty"`
+	PlanGuarded       bool   `yaml:"plan_guarded,omitempty"`
+
+	Transaction *SyncTransaction `yaml:"transaction,omitempty"`
 }
 
 // Policy re-reads the frozen decision of the run.
@@ -132,18 +144,48 @@ func LoadSyncRunState(featurePath string) (*SyncRunState, error) {
 	if err := syncIOFault(SyncIOReadSyncRunState, SyncRunStatePath(featurePath)); err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(SyncRunStatePath(featurePath))
+	data, err := readSyncStateFile(SyncRunStatePath(featurePath))
 	if err != nil {
 		return nil, err
 	}
-	var s SyncRunState
-	if err := yaml.Unmarshal(data, &s); err != nil {
+	root, err := syncEnvelopeRoot(data)
+	if err != nil {
 		return nil, err
 	}
-	if s.StateVersion != SyncRunStateVersion && s.StateVersion != SyncRunStateGuardedVersion {
-		return nil, fmt.Errorf("unsupported scoped sync state version %d", s.StateVersion)
+	version, err := syncEnvelopeVersion(root)
+	if err != nil {
+		return nil, err
 	}
-	return &s, nil
+	switch version {
+	case SyncRunStateVersion, SyncRunStateGuardedVersion:
+		if err := rejectLegacyTransactionalFields(root); err != nil {
+			return nil, err
+		}
+		var s SyncRunState
+		if err := yaml.Unmarshal(data, &s); err != nil {
+			return nil, err
+		}
+		if s.Transaction != nil || s.PlanGuarded {
+			return nil, errors.New("legacy sync state carries transactional evidence")
+		}
+		return &s, nil
+	case SyncRunStateTransactionalVersion, SyncRunStateTransactionalGuardedVersion:
+		if version == ReparentCompatSyncStateVersion &&
+			syncEnvelopeString(root, "route") == ReparentCompatRoute &&
+			syncEnvelopeString(root, "reparent_marker") == ReparentCompatMarker {
+			return nil, fmt.Errorf("unsupported scoped sync state version %d (reparent compatibility envelope)", version)
+		}
+		var s SyncRunState
+		if err := decodeStrictSyncEnvelope(data, &s); err != nil {
+			return nil, err
+		}
+		if err := validateSyncRunStateEnvelope(featurePath, &s); err != nil {
+			return nil, fmt.Errorf("invalid transactional sync state: %w", err)
+		}
+		return &s, nil
+	default:
+		return nil, fmt.Errorf("unsupported scoped sync state version %d", version)
+	}
 }
 
 // SaveSyncRunState writes the payload atomically at mode 0600 and refreshes
@@ -155,20 +197,32 @@ func SaveSyncRunState(featurePath string, s *SyncRunState) error {
 	if err := syncIOFault(SyncIOWriteSyncRunState, SyncRunStatePath(featurePath)); err != nil {
 		return err
 	}
+	if s == nil {
+		return errors.New("sync run state is nil")
+	}
 	switch s.StateVersion {
 	case 0:
 		s.StateVersion = SyncRunStateVersion
 	case SyncRunStateVersion, SyncRunStateGuardedVersion:
-		// preserved as given
+		if s.Transaction != nil || s.PlanGuarded {
+			return errors.New("legacy sync state carries transactional evidence")
+		}
+	case SyncRunStateTransactionalVersion, SyncRunStateTransactionalGuardedVersion:
+		if err := validateSyncRunStateEnvelope(featurePath, s); err != nil {
+			return fmt.Errorf("invalid transactional sync state: %w", err)
+		}
 	default:
 		return fmt.Errorf("unsupported scoped sync state version %d", s.StateVersion)
 	}
 	s.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	if s.Transaction != nil {
+		s.Transaction.UpdatedAt = s.UpdatedAt
+	}
 	data, err := yaml.Marshal(s)
 	if err != nil {
 		return err
 	}
-	return atomicWriteFile(SyncRunStatePath(featurePath), data, 0600)
+	return durableWriteFile(SyncRunStatePath(featurePath), data, 0600)
 }
 
 // RemoveSyncRunState removes the payload, returning any error other than

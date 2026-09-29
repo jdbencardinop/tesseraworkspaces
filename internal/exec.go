@@ -164,7 +164,12 @@ func RunDirClean(dir string, name string, args ...string) error {
 }
 
 func runWithFilteredStderr(dir, name string, args ...string) error {
+	return runWithFilteredStderrEnv(dir, nil, name, args...)
+}
+
+func runWithFilteredStderrEnv(dir string, env []string, name string, args ...string) error {
 	cmd := exec.Command(name, args...)
+	cmd.Env = env
 	cmd.Stdout = os.Stdout
 	cmd.Dir = dir
 

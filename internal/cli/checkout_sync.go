@@ -47,15 +47,29 @@ func runCheckoutSync(cmd *cobra.Command, ws internal.Workspace, opts internal.Ch
 	}
 
 	if opts.Abort {
+		tx, err := internal.LoadCheckoutTransaction(featurePath)
+		if err != nil {
+			if internal.HasCheckoutTransaction(featurePath) {
+				return fmt.Errorf("checkout sync recovery evidence at %s is unreadable or unsupported; preserve and inspect it — do not delete it or run recovery blindly",
+					internal.CheckoutTransactionPath(featurePath))
+			}
+			return fmt.Errorf("no transaction to abort: %w", err)
+		}
 		if err := internal.AbortCheckoutSync(opts); err != nil {
 			return err
 		}
-		fmt.Println("Checkout sync aborted, original branch restored.")
+		if !internal.SyncTransactionCleanupOnly(tx.Transaction) {
+			fmt.Println("Checkout sync aborted, original branch restored.")
+		}
 		return nil
 	}
 
 	if opts.Continue {
 		tx, loadErr := internal.LoadCheckoutTransaction(featurePath)
+		if loadErr != nil && internal.HasCheckoutTransaction(featurePath) {
+			return fmt.Errorf("checkout sync recovery evidence at %s is unreadable or unsupported; preserve and inspect it — do not delete it or run recovery blindly",
+				internal.CheckoutTransactionPath(featurePath))
+		}
 		// I20 rule 0: trigger flags on --continue require v2 state. This
 		// mirrors internal.CheckoutTriggersNeedV2 exactly —
 		// route-aware, not a bare StateVersion compare — so a persisted
@@ -69,12 +83,32 @@ func runCheckoutSync(cmd *cobra.Command, ws internal.Workspace, opts internal.Ch
 		if err := internal.ContinueCheckoutSync(opts); err != nil {
 			return planGuardRefusal(cmd, err)
 		}
-		fmt.Println("Checkout sync completed.")
+		if tx == nil || !internal.SyncTransactionCleanupOnly(tx.Transaction) {
+			fmt.Println("Checkout sync completed.")
+		}
 		return nil
 	}
 
 	// Fresh sync
 	if internal.HasCheckoutTransaction(featurePath) {
+		tx, loadErr := internal.LoadCheckoutTransaction(featurePath)
+		if loadErr != nil {
+			return fmt.Errorf("checkout sync recovery evidence at %s is unreadable or unsupported; preserve and inspect it — do not delete it or run recovery blindly",
+				internal.CheckoutTransactionPath(featurePath))
+		}
+		if tx.Transaction != nil {
+			validatorEntry, validatorMutated := internal.SyncTransactionValidatorMutated(tx.Transaction)
+			switch {
+			case validatorMutated:
+				return fmt.Errorf("previous checkout sync validator changed refs or checkout state while validating %s; preserve the sync journal and working tree and recover manually", validatorEntry)
+			case internal.SyncTransactionCleanupOnly(tx.Transaction):
+				return fmt.Errorf("previous checkout sync has only cleanup remaining; run --continue or --abort (neither will roll back completed work)")
+			case internal.SyncTransactionPublished(tx.Transaction):
+				return fmt.Errorf("previous checkout sync crossed the publication boundary; local rollback is disabled — use --continue")
+			case internal.SyncTransactionRollingBack(tx.Transaction):
+				return fmt.Errorf("previous checkout sync rollback is in progress; forward continuation is disabled — use --abort")
+			}
+		}
 		return fmt.Errorf("previous checkout-sync incomplete; use --continue or --abort")
 	}
 

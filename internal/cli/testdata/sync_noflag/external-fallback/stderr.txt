@@ -1,1 +1,2 @@
-exit: 0
+exit: 1
+Feature "auth" has no stack.yaml. The compatibility sync is NONTRANSACTIONAL: complete rollback is unavailable and earlier branches can remain moved if a later branch fails. Restore or create stack.yaml metadata to use transactional sync instead. Noninteractive execution refuses by default; re-run with --allow-nontransactional only if you deliberately accept this limitation

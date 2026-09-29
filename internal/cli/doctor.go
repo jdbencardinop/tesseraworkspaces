@@ -121,17 +121,25 @@ func checkFeatureWithReparentPathE(ws internal.Workspace, cfg internal.Config, f
 	}
 
 	issues := internal.CheckFeatureHealth(featurePath)
+	validatorMutated := internal.ExternalSyncValidatorMutationPresent(featurePath)
+	if validatorMutated {
+		for i := range issues {
+			issues[i].Hint = ""
+		}
+	}
+	suppressionPath := reparentFeaturePath
+	if suppressionPath == "" {
+		suppressionPath = featurePath
+	}
+	reparentSuppressed := internal.ReparentGuidanceSuppressed(ws, feature, suppressionPath)
+	issues = append(issues, internal.ExternalSyncRecoveryHealthIssues(feature, featurePath, reparentSuppressed)...)
 
 	if stack, sErr := internal.LoadStack(featurePath); sErr == nil && len(stack.Branches) > 0 {
 		edges, res := internal.FeatureStackEdges(ws, cfg, feature, featurePath, stack)
 		// §11.10 rule 2: while a reparent artifact exists, doctor still reports
 		// every ancestry status and reason and withholds only the repair
 		// guidance, which names verbs §11.2 refuses.
-		suppressionPath := reparentFeaturePath
-		if suppressionPath == "" {
-			suppressionPath = featurePath
-		}
-		if internal.ReparentGuidanceSuppressed(ws, feature, suppressionPath) {
+		if reparentSuppressed || validatorMutated {
 			edges = internal.SuppressReparentAncestryGuidance(edges)
 		}
 		issues = append(issues, internal.AncestryHealthIssues(res, edges)...)

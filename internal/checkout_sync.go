@@ -31,6 +31,7 @@ const (
 	StageValidating CheckoutStage = "validating"
 	StageCompleted  CheckoutStage = "completed"
 	StageRestoring  CheckoutStage = "restoring"
+	StagePublishing CheckoutStage = "publishing"
 )
 
 // FailureKind describes the category of failure.
@@ -107,6 +108,9 @@ type CheckoutTransaction struct {
 	MaxReplayPerEntry *int   `yaml:"max_replay_per_entry,omitempty"`
 	MaxReplayTotal    *int   `yaml:"max_replay_total,omitempty"`
 	Route             string `yaml:"route,omitempty"`
+	PlanGuarded       bool   `yaml:"plan_guarded,omitempty"`
+
+	Transaction *SyncTransaction `yaml:"transaction,omitempty"`
 }
 
 // ---------- Paths ----------
@@ -128,26 +132,70 @@ func CheckoutLockPath(featurePath string) string {
 // ---------- Persistence ----------
 
 func LoadCheckoutTransaction(featurePath string) (*CheckoutTransaction, error) {
-	data, err := os.ReadFile(CheckoutTransactionPath(featurePath))
+	data, err := readSyncStateFile(CheckoutTransactionPath(featurePath))
 	if err != nil {
 		return nil, err
 	}
-	var tx CheckoutTransaction
-	if err := yaml.Unmarshal(data, &tx); err != nil {
+	root, err := syncEnvelopeRoot(data)
+	if err != nil {
 		return nil, err
 	}
-	return &tx, nil
+	version, err := syncEnvelopeVersion(root)
+	if err != nil {
+		return nil, err
+	}
+	switch version {
+	case 0, 1, CheckoutTransactionVersion, CheckoutTransactionGuardedVersion:
+		if err := rejectLegacyTransactionalFields(root); err != nil {
+			return nil, err
+		}
+		var tx CheckoutTransaction
+		if err := yaml.Unmarshal(data, &tx); err != nil {
+			return nil, err
+		}
+		if tx.Transaction != nil || tx.PlanGuarded {
+			return nil, errors.New("legacy checkout sync state carries transactional evidence")
+		}
+		return &tx, nil
+	case CheckoutTransactionTransactionalVersion, CheckoutTransactionTransactionalGuardedVersion:
+		var tx CheckoutTransaction
+		if err := decodeStrictSyncEnvelope(data, &tx); err != nil {
+			return nil, err
+		}
+		if err := validateCheckoutTransactionEnvelope(featurePath, &tx); err != nil {
+			return nil, fmt.Errorf("invalid transactional checkout sync state: %w", err)
+		}
+		return &tx, nil
+	default:
+		return nil, fmt.Errorf("unsupported checkout sync transaction state version %d", version)
+	}
 }
 
 func SaveCheckoutTransaction(featurePath string, tx *CheckoutTransaction) error {
 	if err := syncIOFault(SyncIOWriteTransaction, CheckoutTransactionPath(featurePath)); err != nil {
 		return err
 	}
+	if tx == nil {
+		return errors.New("checkout transaction is nil")
+	}
+	switch tx.StateVersion {
+	case 0, 1, CheckoutTransactionVersion, CheckoutTransactionGuardedVersion:
+		if tx.Transaction != nil || tx.PlanGuarded {
+			return errors.New("legacy checkout sync state carries transactional evidence")
+		}
+	case CheckoutTransactionTransactionalVersion, CheckoutTransactionTransactionalGuardedVersion:
+		if err := validateCheckoutTransactionEnvelope(featurePath, tx); err != nil {
+			return fmt.Errorf("invalid transactional checkout sync state: %w", err)
+		}
+		tx.Transaction.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	default:
+		return fmt.Errorf("unsupported checkout sync transaction state version %d", tx.StateVersion)
+	}
 	data, err := yaml.Marshal(tx)
 	if err != nil {
 		return err
 	}
-	return atomicWriteFile(CheckoutTransactionPath(featurePath), data, 0600)
+	return durableWriteFile(CheckoutTransactionPath(featurePath), data, 0600)
 }
 
 func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
@@ -178,13 +226,21 @@ func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
 	return os.Rename(tmpName, path)
 }
 
+func RemoveCheckoutTransaction(featurePath string) error {
+	path := CheckoutTransactionPath(featurePath)
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove checkout sync transaction %s: %w", path, err)
+	}
+	return nil
+}
+
 func DeleteCheckoutTransaction(featurePath string) {
-	os.Remove(CheckoutTransactionPath(featurePath)) //nolint:errcheck
+	_ = RemoveCheckoutTransaction(featurePath)
 }
 
 func HasCheckoutTransaction(featurePath string) bool {
-	_, err := os.Stat(CheckoutTransactionPath(featurePath))
-	return err == nil
+	_, err := os.Lstat(CheckoutTransactionPath(featurePath))
+	return err == nil || !errors.Is(err, os.ErrNotExist)
 }
 
 func validateCheckoutStackRepos(featurePath string) error {
@@ -238,7 +294,7 @@ func checkoutRecoveryIsNewMode(tx *CheckoutTransaction) bool { return txNewMode(
 // legacy-vs-new-mode semantics, version decides whether a guard was armed at
 // birth, and a route: legacy v3 transaction is guarded (§13.6 rule 4d).
 func checkoutRecoveryIsGuarded(tx *CheckoutTransaction) bool {
-	return tx != nil && tx.StateVersion >= CheckoutTransactionGuardedVersion
+	return tx != nil && (tx.StateVersion == CheckoutTransactionGuardedVersion || tx.StateVersion == CheckoutTransactionTransactionalGuardedVersion || tx.PlanGuarded)
 }
 
 // TransactionGuarded is the exported wrapper package cli's dispatch calls.
@@ -275,7 +331,12 @@ func upgradeGuardedCheckoutTransaction(featurePath string, tx *CheckoutTransacti
 		return nil
 	}
 	inheritedNewMode := txNewMode(tx)
-	tx.StateVersion = CheckoutTransactionGuardedVersion
+	if tx.Transaction != nil {
+		tx.StateVersion = CheckoutTransactionTransactionalGuardedVersion
+		tx.PlanGuarded = true
+	} else {
+		tx.StateVersion = CheckoutTransactionGuardedVersion
+	}
 	if inheritedNewMode {
 		tx.Route = RouteNewMode
 	} else {
@@ -890,6 +951,24 @@ func gitPush(repoDir, branch string, d ReparentPushDecision, prose io.Writer) er
 	return nil
 }
 
+func gitPushIntent(repoDir string, intent SyncTransactionPushIntent, d ReparentPushDecision, prose io.Writer) error {
+	args := []string{"push", "--force-with-lease"}
+	if d.ForceIfIncludes {
+		args = append(args, "--force-if-includes")
+	}
+	args = append(args, "origin", intent.SourceSHA+":"+intent.DestinationRef)
+	if d.Applies && d.WarnLine != "" && prose != nil {
+		fmt.Fprintln(prose, d.WarnLine) //nolint:errcheck
+	}
+	cmd := exec.Command("git", args...)
+	cmd.Dir = repoDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("push %s: %s: %w", intent.DestinationRef, string(out), err)
+	}
+	return nil
+}
+
 // RebaseConflictError indicates a rebase stopped due to conflicts.
 type RebaseConflictError struct {
 	Output string
@@ -1219,6 +1298,9 @@ func fetchCheckoutRepo(repoDir string) PlanFetchOutcome {
 
 // RunCheckoutSync executes the full checkout-sync transaction.
 func RunCheckoutSync(opts CheckoutSyncOpts) error {
+	if opts.Policy.ScopeKind == "" {
+		opts.Policy = SyncRunPolicy{Fetch: SyncFetchDisabled, Propagation: SyncPropagationFull, ScopeKind: SyncScopeAll}
+	}
 	if HasCheckoutTransaction(opts.FeaturePath) {
 		return fmt.Errorf("checkout sync transaction already exists; use --continue or --abort")
 	}
@@ -1303,6 +1385,39 @@ func RunCheckoutSync(opts CheckoutSyncOpts) error {
 		sel = insp.Selection
 	}
 
+	// Resolve the full frozen selection for legacy no-flag runs too. Every
+	// fresh ordinary sync now captures the same rollback evidence even though
+	// only explicit sync-mode runs print the mode header.
+	if !guarded && preloaded == nil {
+		stack, loadErr := LoadStack(opts.FeaturePath)
+		if loadErr != nil {
+			return fmt.Errorf("load stack: %w", loadErr)
+		}
+		preloaded = &stack
+	}
+	var legacyOrder []StackEntry
+	if sel.Names == nil {
+		stack := insp.Stack
+		if preloaded != nil {
+			stack = *preloaded
+		}
+		legacyOrder, err = TopoSort(stack)
+		if err != nil {
+			return err
+		}
+		sel, err = ResolveSyncSelectionFromOrder(stack, legacyOrder, opts.Policy, SyncSelectionOpts{
+			Mode: ModeCheckout, NewMode: opts.NewMode, Feature: opts.Feature,
+		})
+		if err != nil {
+			return err
+		}
+	}
+	if opts.Policy.Fetch == SyncFetchEnabled {
+		if err := ValidateSyncFetchDoesNotWriteLocalBranches(opts.RepoDir); err != nil {
+			return err
+		}
+	}
+
 	// Workspace-global lock first, then the feature compatibility lock. Every
 	// checkout mutator takes this order, so two features can never mutate the
 	// one physical checkout concurrently and recovery cannot deadlock.
@@ -1367,6 +1482,8 @@ func RunCheckoutSync(opts CheckoutSyncOpts) error {
 	var plan []CheckoutPlanEntry
 	if guarded {
 		plan, err = buildCheckoutPlanFrom(opts.RepoDir, stack, insp.Order, sel)
+	} else if legacyOrder != nil {
+		plan, err = buildCheckoutPlanFrom(opts.RepoDir, stack, legacyOrder, sel)
 	} else {
 		plan, err = BuildCheckoutPlan(opts.RepoDir, stack, sel)
 	}
@@ -1403,43 +1520,62 @@ func RunCheckoutSync(opts CheckoutSyncOpts) error {
 		guardRun = newCheckoutPlanGuardRun(req, guardPlan, false)
 	}
 
-	// Create transaction
+	// Create the versioned transaction and capture every rollback preimage
+	// before the first checkout or branch mutation.
 	tx := &CheckoutTransaction{
-		Feature:        opts.Feature,
-		StartedAt:      startedAt,
-		LockPID:        os.Getpid(),
-		LockCreated:    time.Now().UTC().Format(time.RFC3339),
-		Push:           opts.Push,
-		TestCommand:    opts.TestCommand,
-		OriginalBranch: originalBranch,
-		OriginalHEAD:   originalHEAD,
-		Plan:           plan,
-		CurrentIndex:   0,
-		Stage:          StagePlanned,
+		StateVersion:      CheckoutTransactionTransactionalVersion,
+		Feature:           opts.Feature,
+		StartedAt:         startedAt,
+		LockPID:           os.Getpid(),
+		LockCreated:       time.Now().UTC().Format(time.RFC3339),
+		Push:              opts.Push,
+		TestCommand:       opts.TestCommand,
+		OriginalBranch:    originalBranch,
+		OriginalHEAD:      originalHEAD,
+		Plan:              plan,
+		CurrentIndex:      0,
+		Stage:             StagePlanned,
+		Route:             checkoutEffectiveRoute(opts, nil),
+		FetchPolicy:       string(opts.Policy.Fetch),
+		PropagationPolicy: string(opts.Policy.Propagation),
+		ScopeKind:         string(opts.Policy.ScopeKind),
+		ScopeSelector:     opts.Policy.Selector,
+		Selected:          sel.SelectedNames(),
+		ValidationSource:  "none",
 	}
-	if opts.NewMode {
-		tx.StateVersion = CheckoutTransactionVersion
-		tx.FetchPolicy = string(opts.Policy.Fetch)
-		tx.PropagationPolicy = string(opts.Policy.Propagation)
-		tx.ScopeKind = string(opts.Policy.ScopeKind)
-		tx.ScopeSelector = opts.Policy.Selector
-		tx.Selected = sel.SelectedNames()
-		tx.ValidationSource = "none"
-		if opts.TestCommand != "" {
-			tx.ValidationSource = "flag"
-		}
+	if opts.TestCommand != "" {
+		tx.ValidationSource = "flag"
 	}
 	if guarded {
-		tx.StateVersion = CheckoutTransactionGuardedVersion
-		tx.Route = checkoutEffectiveRoute(opts, nil)
+		tx.StateVersion = CheckoutTransactionTransactionalGuardedVersion
+		tx.PlanGuarded = true
 		tx.MaxReplayPerEntry = opts.PlanGuard.MaxPerEntry
 		tx.MaxReplayTotal = opts.PlanGuard.MaxTotal
 	}
+	entryRepos := make(map[string]string, len(sel.Entries))
+	for _, entry := range sel.Entries {
+		entryRepos[entry.Name] = opts.RepoDir
+	}
+	tx.Transaction, err = CaptureSyncTransaction(SyncTransactionBeginInput{
+		FeaturePath: opts.FeaturePath, Feature: opts.Feature, Mode: ModeCheckout,
+		WorkspaceRepoRoot: opts.RepoDir, Stack: stack, Selected: sel.SelectedNames(), EntryRepoDirs: entryRepos,
+	})
+	if err != nil {
+		_ = releaseCheckoutSyncLocks(opts)
+		return fmt.Errorf("capture sync rollback preimage: %w", err)
+	}
+	if err := PreflightSyncTransactionBirth(tx.Transaction); err != nil {
+		_ = releaseCheckoutSyncLocks(opts)
+		return fmt.Errorf("preflight sync rollback holders: %w", err)
+	}
 
-	// Persist BEFORE switching
+	// Persist before creating pins, then persist each pin as it is installed.
 	if err := SaveCheckoutTransaction(opts.FeaturePath, tx); err != nil {
 		_ = releaseCheckoutSyncLocks(opts)
 		return fmt.Errorf("persist transaction: %w", err)
+	}
+	if err := PinSyncTransaction(tx.Transaction, func() error { return SaveCheckoutTransaction(opts.FeaturePath, tx) }); err != nil {
+		return err
 	}
 
 	opts.guard = guardRun
@@ -1489,30 +1625,30 @@ func ContinueCheckoutSync(opts CheckoutSyncOpts) error {
 	if err != nil {
 		return fmt.Errorf("no transaction to continue: %w", err)
 	}
-	if tx.StateVersion > CheckoutTransactionGuardedVersion {
-		return fmt.Errorf("checkout sync transaction state version %d is newer than %d; upgrade tws or remove %s",
-			tx.StateVersion, CheckoutTransactionGuardedVersion, CheckoutTransactionPath(opts.FeaturePath))
+	if tx.StateVersion > CheckoutTransactionTransactionalGuardedVersion {
+		return fmt.Errorf("checkout sync transaction state version %d is newer than %d; upgrade tws, preserve the evidence, and inspect %s",
+			tx.StateVersion, CheckoutTransactionTransactionalGuardedVersion, CheckoutTransactionPath(opts.FeaturePath))
 	}
-	if TransactionNewMode(tx) {
-		if err := checkoutContinueMismatches(opts, tx); err != nil {
-			return err
-		}
-		if err := checkoutSelectedStillPresent(opts, tx); err != nil {
-			return err
-		}
-	} else if opts.Push && !tx.Push {
-		return fmt.Errorf("cannot add --push to an existing transaction that was started without it; persisted push=%v wins", tx.Push)
-	}
-
-	// Guarded continuation's own inspection (§12.2d continuation arm): the
-	// same InspectCheckoutPlan the --plan route uses, called before the lock
-	// reclaim below so the guard seam it feeds reads the identical snapshot
-	// a --plan of this same invocation would have read. Its continuation
-	// arm sorts nothing and resolves no selection of its own (§13.7 rule 2).
+	cleanupOnly := SyncTransactionCleanupOnly(tx.Transaction)
 	guarded := opts.PlanGuard.Guarded()
 	var insp CheckoutPlanInspection
-	if guarded {
-		insp = InspectCheckoutPlan(CheckoutPlanInspectionRequest{Opts: opts})
+	if !cleanupOnly {
+		if SyncTransactionRollingBack(tx.Transaction) {
+			return fmt.Errorf("checkout sync rollback has started; forward continuation is disabled — re-run with --abort")
+		}
+		if TransactionNewMode(tx) {
+			if err := checkoutContinueMismatches(opts, tx); err != nil {
+				return err
+			}
+			if err := checkoutSelectedStillPresent(opts, tx); err != nil {
+				return err
+			}
+		} else if opts.Push && !tx.Push {
+			return fmt.Errorf("cannot add --push to an existing transaction that was started without it; persisted push=%v wins", tx.Push)
+		}
+		if guarded {
+			insp = InspectCheckoutPlan(CheckoutPlanInspectionRequest{Opts: opts})
+		}
 	}
 
 	// Reclaim the workspace-global lock before the feature lock, matching the
@@ -1533,7 +1669,66 @@ func ContinueCheckoutSync(opts CheckoutSyncOpts) error {
 		_ = ReleaseCheckoutMutationLock(checkoutMutationStateDir(opts), mutationToken)
 		return err
 	}
+	fresh, err := reloadAuthoritativeCheckoutTransaction(opts.FeaturePath, tx)
+	if err != nil {
+		return err
+	}
+	tx = fresh
 	tx.LockPID = os.Getpid()
+
+	if tx.Transaction != nil && SyncTransactionCleanupOnly(tx.Transaction) {
+		if err := CompleteSyncTransaction(tx.Transaction, func() error { return SaveCheckoutTransaction(opts.FeaturePath, tx) }); err != nil {
+			return err
+		}
+		if err := RemoveCheckoutTransaction(opts.FeaturePath); err != nil {
+			return err
+		}
+		if err := releaseCheckoutSyncLocks(opts); err != nil {
+			return err
+		}
+		ReportSyncTransactionCleanup(tx.Transaction, os.Stdout)
+		return nil
+	}
+	if tx.Transaction != nil {
+		if tx.Transaction.Phase == SyncTxnCleanup {
+			if err := CompleteSyncTransaction(tx.Transaction, func() error { return SaveCheckoutTransaction(opts.FeaturePath, tx) }); err != nil {
+				return err
+			}
+			if err := RemoveCheckoutTransaction(opts.FeaturePath); err != nil {
+				return err
+			}
+			return releaseCheckoutSyncLocks(opts)
+		}
+		if _, _, active := SyncTransactionActiveRebase(tx.Transaction); !active {
+			pending := len(tx.Transaction.Actions) > 0 &&
+				tx.Transaction.Actions[len(tx.Transaction.Actions)-1].Status == SyncTxnActionIntent
+			changed, probeErr := SyncTransactionPendingActionChanged(tx.Transaction)
+			if probeErr != nil {
+				return probeErr
+			}
+			if err := ReconcileSyncGitAction(tx.Transaction, func() error { return SaveCheckoutTransaction(opts.FeaturePath, tx) }); err != nil {
+				return err
+			}
+			if pending {
+				if !changed {
+					tx.Stage = StagePlanned
+					if err := SaveCheckoutTransaction(opts.FeaturePath, tx); err != nil {
+						return err
+					}
+				} else if tx.CurrentIndex < len(tx.Plan) && (tx.Stage == StageRebasing || tx.Stage == StageSwitched) {
+					post, err := gitResolveRef(opts.RepoDir, tx.Plan[tx.CurrentIndex].Branch)
+					if err != nil {
+						return err
+					}
+					tx.Plan[tx.CurrentIndex].PostSHA = post
+					tx.Stage = StageRebased
+					if err := SaveCheckoutTransaction(opts.FeaturePath, tx); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
 
 	// Guard seam (§13.2a, §13.6 rule 4d): below the lock, in its shipped
 	// continuation position. The lock is already reclaimed by this point,
@@ -1571,6 +1766,25 @@ func ContinueCheckoutSync(opts CheckoutSyncOpts) error {
 
 	opts.guard = guardRun
 	return resumeTransaction(opts, tx)
+}
+
+func reloadAuthoritativeCheckoutTransaction(featurePath string, expected *CheckoutTransaction) (*CheckoutTransaction, error) {
+	fresh, err := LoadCheckoutTransaction(featurePath)
+	if err != nil {
+		return nil, fmt.Errorf("reload authoritative checkout sync transaction: %w", err)
+	}
+	expectedRunID, freshRunID := "", ""
+	if expected.Transaction != nil {
+		expectedRunID = expected.Transaction.RunID
+	}
+	if fresh.Transaction != nil {
+		freshRunID = fresh.Transaction.RunID
+	}
+	if fresh.Feature != expected.Feature || fresh.StartedAt != expected.StartedAt ||
+		fresh.StateVersion != expected.StateVersion || freshRunID != expectedRunID {
+		return nil, errors.New("checkout sync transaction changed identity while its locks were being reclaimed; preserve the evidence and inspect it manually")
+	}
+	return fresh, nil
 }
 
 // transactionPolicy reads the frozen decision back out of a v2 transaction.
@@ -1656,20 +1870,40 @@ func AbortCheckoutSync(opts CheckoutSyncOpts) error {
 		_ = ReleaseCheckoutMutationLock(checkoutMutationStateDir(opts), mutationToken)
 		return err
 	}
+	fresh, err := reloadAuthoritativeCheckoutTransaction(opts.FeaturePath, tx)
+	if err != nil {
+		return err
+	}
+	tx = fresh
 
-	// Abort any in-progress rebase
+	if tx.Transaction != nil {
+		if err := AbortSyncTransaction(tx.Transaction, func() error {
+			return SaveCheckoutTransaction(opts.FeaturePath, tx)
+		}, os.Stdout); err != nil {
+			return err
+		}
+		if err := RemoveCheckoutTransaction(opts.FeaturePath); err != nil {
+			return err
+		}
+		return releaseCheckoutSyncLocks(opts)
+	}
+
+	// Legacy transactions have no closure snapshot. Preserve their historical
+	// best-effort behavior, but state its limitation explicitly.
 	if gitRebaseInProgress(opts.RepoDir) {
 		cmd := exec.Command("git", "rebase", "--abort")
 		cmd.Dir = opts.RepoDir
-		_ = cmd.Run()
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("abort active rebase: %w", err)
+		}
 	}
-
-	// Restore original branch
 	if err := restoreOriginal(opts, tx); err != nil {
 		return fmt.Errorf("abort restoration failed: %w; manual recovery may be needed", err)
 	}
-
-	DeleteCheckoutTransaction(opts.FeaturePath)
+	fmt.Println("Warning: legacy checkout sync state has no rollback snapshots; earlier branch movements and metadata cannot be fully restored.")
+	if err := RemoveCheckoutTransaction(opts.FeaturePath); err != nil {
+		return err
+	}
 	return releaseCheckoutSyncLocks(opts)
 }
 
@@ -1749,7 +1983,7 @@ func resumeTransaction(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 		}
 		return executeTransaction(opts, tx)
 
-	case StageCompleted:
+	case StagePublishing, StageCompleted:
 		// Already done
 		return finalizeCleanup(opts, tx)
 
@@ -1769,9 +2003,16 @@ func resumeFromSwitched(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 		return err
 	}
 
-	// Still need to rebase the current entry, then continue
-	if err := doRebase(opts, tx); err != nil {
-		return err
+	// Still need to rebase the current entry, then continue. A transactional
+	// run already has the action intent written before the original switch.
+	rebaseErr := doRebase(opts, tx)
+	if tx.Transaction != nil {
+		if err := CompleteSyncGitAction(tx.Transaction, rebaseErr, func() error { return SaveCheckoutTransaction(opts.FeaturePath, tx) }); err != nil {
+			return err
+		}
+	}
+	if rebaseErr != nil {
+		return rebaseErr
 	}
 	return resumeFromRebased(opts, tx)
 }
@@ -1801,7 +2042,7 @@ func resumeFromRebased(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 				return err
 			}
 		}
-		if err := runValidation(opts); err != nil {
+		if err := runCheckoutValidation(opts, tx, entry.Name); err != nil {
 			tx.FailureKind = FailValidation
 			tx.FailureMsg = err.Error()
 			_ = SaveCheckoutTransaction(opts.FeaturePath, tx)
@@ -1826,7 +2067,7 @@ func resumeFromRebased(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 func resumeFromValidating(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 	// Re-run validation
 	if opts.TestCommand != "" {
-		if err := runValidation(opts); err != nil {
+		if err := runCheckoutValidation(opts, tx, tx.Plan[tx.CurrentIndex].Name); err != nil {
 			tx.FailureKind = FailValidation
 			tx.FailureMsg = err.Error()
 			_ = SaveCheckoutTransaction(opts.FeaturePath, tx)
@@ -1846,11 +2087,17 @@ func resumeFromValidating(opts CheckoutSyncOpts, tx *CheckoutTransaction) error 
 }
 
 func resumeFromRestoring(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
-	if err := restoreOriginal(opts, tx); err != nil {
+	if err := restoreSyncOriginal(opts, tx); err != nil {
 		tx.FailureKind = FailRestoration
 		tx.FailureMsg = err.Error()
 		_ = SaveCheckoutTransaction(opts.FeaturePath, tx)
 		return fmt.Errorf("restoration retry failed: %w", err)
+	}
+	if opts.Push {
+		tx.Stage = StagePublishing
+		if err := SaveCheckoutTransaction(opts.FeaturePath, tx); err != nil {
+			return err
+		}
 	}
 	return finalizeCleanup(opts, tx)
 }
@@ -1876,6 +2123,14 @@ func processBranch(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 		return err
 	}
 
+	if tx.Transaction != nil {
+		if err := BeginSyncGitActionWithContextRef(tx.Transaction, opts.RepoDir, "rebase", entry.Name, opts.RepoDir,
+			"refs/heads/"+entry.Branch,
+			[]string{"refs/heads/" + entry.Branch}, func() error { return SaveCheckoutTransaction(opts.FeaturePath, tx) }); err != nil {
+			return err
+		}
+	}
+
 	// StepHook: planned
 	if StepHook != nil {
 		if err := StepHook(StagePlanned, tx.CurrentIndex); err != nil {
@@ -1890,11 +2145,17 @@ func processBranch(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 	if err := SaveCheckoutTransaction(opts.FeaturePath, tx); err != nil {
 		return err
 	}
-	if err := gitCheckout(opts.RepoDir, entry.Branch); err != nil {
+	var checkoutErr error
+	if tx.Transaction != nil {
+		checkoutErr = RunSyncContextSwitch(tx.Transaction, opts.RepoDir, entry.Branch)
+	} else {
+		checkoutErr = gitCheckout(opts.RepoDir, entry.Branch)
+	}
+	if checkoutErr != nil {
 		tx.FailureKind = FailSwitch
-		tx.FailureMsg = err.Error()
+		tx.FailureMsg = checkoutErr.Error()
 		_ = SaveCheckoutTransaction(opts.FeaturePath, tx)
-		return err
+		return checkoutErr
 	}
 
 	if StepHook != nil {
@@ -1906,8 +2167,14 @@ func processBranch(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 	}
 
 	// Rebase
-	if err := doRebase(opts, tx); err != nil {
-		return err
+	rebaseErr := doRebase(opts, tx)
+	if tx.Transaction != nil {
+		if err := CompleteSyncGitAction(tx.Transaction, rebaseErr, func() error { return SaveCheckoutTransaction(opts.FeaturePath, tx) }); err != nil {
+			return err
+		}
+	}
+	if rebaseErr != nil {
+		return rebaseErr
 	}
 
 	// Verify ancestry
@@ -1933,7 +2200,7 @@ func processBranch(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 				return err
 			}
 		}
-		if err := runValidation(opts); err != nil {
+		if err := runCheckoutValidation(opts, tx, entry.Name); err != nil {
 			tx.FailureKind = FailValidation
 			tx.FailureMsg = err.Error()
 			_ = SaveCheckoutTransaction(opts.FeaturePath, tx)
@@ -1962,7 +2229,13 @@ func doRebase(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 
 	// Amend-aware: if LastBaseSHA differs from NewBaseSHA, use --onto
 	var rebaseErr error
-	if entry.LastBaseSHA != "" && entry.LastBaseSHA != entry.NewBaseSHA {
+	if tx.Transaction != nil {
+		args := []string{"rebase", "--no-fork-point", entry.Base}
+		if entry.LastBaseSHA != "" && entry.LastBaseSHA != entry.NewBaseSHA {
+			args = []string{"rebase", "--no-fork-point", "--onto", entry.NewBaseSHA, entry.LastBaseSHA}
+		}
+		rebaseErr = RunSyncRebaseSilent(tx.Transaction, opts.RepoDir, args...)
+	} else if entry.LastBaseSHA != "" && entry.LastBaseSHA != entry.NewBaseSHA {
 		rebaseErr = gitRebaseOnto(opts.RepoDir, entry.NewBaseSHA, entry.LastBaseSHA)
 	} else {
 		rebaseErr = gitPlainRebase(opts.RepoDir, entry.Base)
@@ -2028,11 +2301,21 @@ func finalizeTransaction(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 			}
 		}
 	}
-	if err := SaveStack(opts.FeaturePath, stack); err != nil {
+	var metadataErr error
+	if tx.Transaction != nil {
+		metadataErr = SyncWriteStackValue(opts.FeaturePath, tx.Transaction, stack, func() error {
+			return SaveCheckoutTransaction(opts.FeaturePath, tx)
+		})
+	} else {
+		metadataErr = SaveStack(opts.FeaturePath, stack)
+	}
+	if metadataErr != nil {
 		tx.FailureKind = FailPersistence
-		tx.FailureMsg = "failed to update stack.yaml: " + err.Error()
-		_ = SaveCheckoutTransaction(opts.FeaturePath, tx)
-		return fmt.Errorf("update stack LastBaseSHA: %w", err)
+		tx.FailureMsg = "failed to update stack.yaml: " + metadataErr.Error()
+		if saveErr := SaveCheckoutTransaction(opts.FeaturePath, tx); saveErr != nil {
+			return errors.Join(fmt.Errorf("update stack LastBaseSHA: %w", metadataErr), saveErr)
+		}
+		return fmt.Errorf("update stack LastBaseSHA: %w", metadataErr)
 	}
 
 	// Verify final ancestry for all entries
@@ -2058,7 +2341,7 @@ func finalizeTransaction(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 		}
 	}
 
-	if err := restoreOriginal(opts, tx); err != nil {
+	if err := restoreSyncOriginal(opts, tx); err != nil {
 		tx.FailureKind = FailRestoration
 		tx.FailureMsg = err.Error()
 		_ = SaveCheckoutTransaction(opts.FeaturePath, tx)
@@ -2067,6 +2350,10 @@ func finalizeTransaction(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 
 	// Push if requested
 	if opts.Push {
+		tx.Stage = StagePublishing
+		if err := SaveCheckoutTransaction(opts.FeaturePath, tx); err != nil {
+			return fmt.Errorf("record publishing stage: %w", err)
+		}
 		// Rule R-PUSH's invocation-wide preflight runs ABOVE this loop, never
 		// per entry: pushing half a stack and only then discovering the lease
 		// cannot be strengthened is exactly the outcome it exists to prevent.
@@ -2074,17 +2361,42 @@ func finalizeTransaction(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 		if preErr != nil {
 			tx.FailureKind = FailPersistence
 			tx.FailureMsg = "push refused: " + preErr.Error()
-			tx.Stage = StageCompleted
 			_ = SaveCheckoutTransaction(opts.FeaturePath, tx)
 			return preErr
 		}
 		for _, pe := range tx.Plan {
-			if err := gitPush(opts.RepoDir, pe.Branch, env.Decision(pe.Name), opts.reparentProse()); err != nil {
+			if SyncTransactionEntryPublished(tx.Transaction, pe.Name) {
+				continue
+			}
+			var publication SyncTransactionPushIntent
+			if tx.Transaction != nil {
+				prepared, prepErr := SyncPreparePublication(tx.Transaction, opts.RepoDir, pe.Name, pe.Branch)
+				if prepErr != nil {
+					return prepErr
+				}
+				publication = prepared
+				if err := SyncBeginPublication(tx.Transaction, publication, func() error { return SaveCheckoutTransaction(opts.FeaturePath, tx) }); err != nil {
+					return err
+				}
+			}
+			var pushErr error
+			if tx.Transaction != nil {
+				pushErr = gitPushIntent(opts.RepoDir, publication, env.Decision(pe.Name), opts.reparentProse())
+			} else {
+				pushErr = gitPush(opts.RepoDir, pe.Branch, env.Decision(pe.Name), opts.reparentProse())
+			}
+			if tx.Transaction != nil {
+				if err := SyncFinishPublicationAttempt(tx.Transaction, pe.Name, pushErr, func() error { return SaveCheckoutTransaction(opts.FeaturePath, tx) }); err != nil {
+					return err
+				}
+			}
+			if pushErr != nil {
 				tx.FailureKind = FailPersistence
-				tx.FailureMsg = "push failed: " + err.Error()
-				tx.Stage = StageCompleted // branches are done, just push failed
-				_ = SaveCheckoutTransaction(opts.FeaturePath, tx)
-				return fmt.Errorf("push %s: %w; re-run --continue to retry push", pe.Branch, err)
+				tx.FailureMsg = "push failed: " + pushErr.Error()
+				if saveErr := SaveCheckoutTransaction(opts.FeaturePath, tx); saveErr != nil {
+					return errors.Join(fmt.Errorf("push %s: %w", pe.Branch, pushErr), saveErr)
+				}
+				return fmt.Errorf("push %s: %w; re-run --continue to retry push", pe.Branch, pushErr)
 			}
 		}
 		if err := env.PersistClears(nil); err != nil {
@@ -2103,7 +2415,7 @@ func finalizeTransaction(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 
 func finalizeCleanup(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 	// If push still pending on completed stage
-	if tx.Stage == StageCompleted && opts.Push {
+	if (tx.Stage == StageCompleted || tx.Stage == StagePublishing) && opts.Push {
 		// The retry loop is a second push INVOCATION point and carries its own
 		// invocation-wide preflight, for the same reason the normal loop does.
 		env, preErr := reparentCheckoutPushEnvelope(opts, tx)
@@ -2113,10 +2425,37 @@ func finalizeCleanup(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 			return preErr
 		}
 		for _, pe := range tx.Plan {
-			if err := gitPush(opts.RepoDir, pe.Branch, env.Decision(pe.Name), opts.reparentProse()); err != nil {
-				tx.FailureMsg = "push retry failed: " + err.Error()
-				_ = SaveCheckoutTransaction(opts.FeaturePath, tx)
-				return fmt.Errorf("push %s: %w", pe.Branch, err)
+			if SyncTransactionEntryPublished(tx.Transaction, pe.Name) {
+				continue
+			}
+			var publication SyncTransactionPushIntent
+			if tx.Transaction != nil {
+				prepared, prepErr := SyncPreparePublication(tx.Transaction, opts.RepoDir, pe.Name, pe.Branch)
+				if prepErr != nil {
+					return prepErr
+				}
+				publication = prepared
+				if err := SyncBeginPublication(tx.Transaction, publication, func() error { return SaveCheckoutTransaction(opts.FeaturePath, tx) }); err != nil {
+					return err
+				}
+			}
+			var pushErr error
+			if tx.Transaction != nil {
+				pushErr = gitPushIntent(opts.RepoDir, publication, env.Decision(pe.Name), opts.reparentProse())
+			} else {
+				pushErr = gitPush(opts.RepoDir, pe.Branch, env.Decision(pe.Name), opts.reparentProse())
+			}
+			if tx.Transaction != nil {
+				if err := SyncFinishPublicationAttempt(tx.Transaction, pe.Name, pushErr, func() error { return SaveCheckoutTransaction(opts.FeaturePath, tx) }); err != nil {
+					return err
+				}
+			}
+			if pushErr != nil {
+				tx.FailureMsg = "push retry failed: " + pushErr.Error()
+				if saveErr := SaveCheckoutTransaction(opts.FeaturePath, tx); saveErr != nil {
+					return errors.Join(fmt.Errorf("push %s: %w", pe.Branch, pushErr), saveErr)
+				}
+				return fmt.Errorf("push %s: %w", pe.Branch, pushErr)
 			}
 		}
 		if err := env.PersistClears(nil); err != nil {
@@ -2129,11 +2468,27 @@ func finalizeCleanup(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 	}
 
 	tx.Stage = StageCompleted
-	DeleteCheckoutTransaction(opts.FeaturePath)
+	if tx.Transaction != nil {
+		if err := CompleteSyncTransaction(tx.Transaction, func() error { return SaveCheckoutTransaction(opts.FeaturePath, tx) }); err != nil {
+			return err
+		}
+	}
+	if err := RemoveCheckoutTransaction(opts.FeaturePath); err != nil {
+		return err
+	}
 	return releaseCheckoutSyncLocks(opts)
 }
 
 // ---------- Restoration ----------
+
+func restoreSyncOriginal(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
+	if tx.Transaction == nil {
+		return restoreOriginal(opts, tx)
+	}
+	return RestoreSyncCheckoutContext(tx.Transaction, opts.RepoDir,
+		func() error { return restoreOriginal(opts, tx) },
+		func() error { return SaveCheckoutTransaction(opts.FeaturePath, tx) })
+}
 
 func restoreOriginal(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 	// Check if original branch was in the plan (legitimately rebased)
@@ -2185,6 +2540,28 @@ func runValidation(opts CheckoutSyncOpts) error {
 		return fmt.Errorf("%s: %s", opts.TestCommand, string(out))
 	}
 	return nil
+}
+
+func runCheckoutValidation(opts CheckoutSyncOpts, tx *CheckoutTransaction, entry string) error {
+	if opts.TestCommand == "" {
+		return nil
+	}
+	if tx.Transaction != nil {
+		if err := BeginSyncValidation(tx.Transaction, opts.RepoDir, entry, opts.RepoDir, func() error {
+			return SaveCheckoutTransaction(opts.FeaturePath, tx)
+		}); err != nil {
+			return err
+		}
+	}
+	commandErr := runValidation(opts)
+	if tx.Transaction != nil {
+		if err := CompleteSyncValidation(tx.Transaction, commandErr, func() error {
+			return SaveCheckoutTransaction(opts.FeaturePath, tx)
+		}); err != nil {
+			return err
+		}
+	}
+	return commandErr
 }
 
 // ---------- Helpers ----------

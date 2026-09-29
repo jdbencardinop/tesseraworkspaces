@@ -13,10 +13,24 @@ only — the whole plan on a fresh run, the remaining work on --continue — and
 never cumulative across resumes. --approve-plan takes the fingerprint printed by
 --plan and requires at least one of those limits.
 
-A guarded run — one carrying a replay limit or --approve-plan — records its limits
-in state_version 3 recovery state, so an older tws release refuses to resume it
-instead of resuming it without the guard. When the guard itself refuses, the run
-exits 1 and writes one "plan-guard: <kind>: <detail>" line on stderr, before any
+A fresh ordinary sync with stack metadata records transactional recovery state:
+state_version 4 when unguarded and state_version 5 when guarded. Older releases
+fail closed on those versions. Before publication, --abort restores run-owned
+local refs and exact stack metadata with compare-and-swap protection; rollback is
+per repository, not cross-repository atomic. Immediately before the first push
+attempt the run becomes forward-only, and neither recovery verb rewrites remote
+refs. Once forward completion is durable, --continue and --abort only finish
+cleanup and never rewind later operator work.
+
+If stack.yaml is absent, the historical compatibility path is available only
+after an interactive warning and confirmation, or with --allow-nontransactional.
+That deliberate exception has no complete rollback: earlier branches can remain
+moved after a later failure. Malformed or unreadable stack metadata always
+refuses; restore or create stack.yaml to regain transactional sync. --push
+requires stack metadata.
+
+When the guard itself refuses, the run exits 1 and writes one
+"plan-guard: <kind>: <detail>" line on stderr, before any
 branch has moved unless that line says "state-preserved:". Refusals tws already
 performs — a dirty tree, a held lock, a base that does not resolve locally, an
 incomplete previous run — keep their own wording, exit 1 without that line, and
@@ -26,7 +40,8 @@ Usage:
   tws sync <feature> [flags]
 
 Flags:
-      --abort                      Discard sync state and start fresh
+      --abort                      Restore run-owned local changes before publication; legacy state has limited rollback
+      --allow-nontransactional     Allow the missing-stack compatibility path without prompting; complete rollback is unavailable
       --approve-plan string        Approve the exact plan with the fingerprint printed by --plan (requires a replay limit)
       --continue                   Resume after conflict resolution
       --fetch                      Fetch before planning (external default)

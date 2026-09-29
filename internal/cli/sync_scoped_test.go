@@ -485,8 +485,8 @@ func TestSyncScoped_AbortTearsDownInReverseOrder(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("cell-5 abort must succeed: exit=%d\n%s\n%s", exit, stdout, stderr)
 	}
-	if !strings.Contains(stdout, "Sync state cleared.") {
-		t.Fatalf("abort must print today's string:\n%s", stdout)
+	if !strings.Contains(stdout, "Sync transaction aborted; all run-owned local refs and stack metadata were restored.") {
+		t.Fatalf("abort must describe actual transactional restoration:\n%s", stdout)
 	}
 	f.stateFilesGone(t)
 }
@@ -719,7 +719,7 @@ func TestSyncScoped_DowngradeAgainstTheSentinel(t *testing.T) {
 	if exit == 0 {
 		t.Fatal("cell 2 must refuse")
 	}
-	if !strings.Contains(stderr, "a scoped sync record survives without its state file for \"feature\": it failed on child") {
+	if !strings.Contains(stderr, "a transactional sync record survives without its compatibility marker for \"feature\"") {
 		t.Fatalf("cell-2 message missing: %q", stderr)
 	}
 	if strings.Contains(stderr, marker) {
@@ -731,8 +731,8 @@ func TestSyncScoped_DowngradeAgainstTheSentinel(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("cell-2 abort must recover: exit=%d\n%s\n%s", exit, stdout, stderr)
 	}
-	if !strings.Contains(stdout, "Sync state cleared.") {
-		t.Fatalf("missing the abort string:\n%s", stdout)
+	if !strings.Contains(stdout, "Sync transaction aborted; all run-owned local refs and stack metadata were restored.") {
+		t.Fatalf("missing the transactional abort string:\n%s", stdout)
 	}
 	f.stateFilesGone(t)
 }

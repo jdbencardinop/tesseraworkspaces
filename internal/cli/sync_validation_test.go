@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -244,10 +245,11 @@ func TestSyncScoped_PushFailureResumeSkipsResolvedAndValidation(t *testing.T) {
 	f.stateFilesGone(t)
 }
 
-// TestSyncNoFlag_ValidationStillReadsConfigEveryRun keeps the frozen path
-// frozen: a no-flag run persists nothing and re-reads the config, including on
-// --continue.
-func TestSyncNoFlag_ValidationStillReadsConfigEveryRun(t *testing.T) {
+// TestSyncNoFlag_ValidationDecisionIsFrozenAcrossContinue keeps successful
+// no-flag execution behavior while asserting that its new transactional
+// recovery state freezes the validation decision instead of rereading edited
+// host config during continuation.
+func TestSyncNoFlag_ValidationDecisionIsFrozenAcrossContinue(t *testing.T) {
 	f := newScopedFixture(t)
 	writeTestCommandConfig(t, "touch A.marker")
 	writeAndCommit(t, f.wt("root"), "conflict.txt", "from-root\n", "root change")
@@ -257,17 +259,124 @@ func TestSyncNoFlag_ValidationStillReadsConfigEveryRun(t *testing.T) {
 	if exit == 0 {
 		t.Fatalf("expected the parent conflict:\n%s", stdout)
 	}
-	if internal.HasSyncRunState(f.featurePath) {
-		t.Fatal("a no-flag run must persist no v2 payload")
+
+	payload, err := internal.LoadSyncRunState(f.featurePath)
+	if err != nil {
+		t.Fatalf("no-flag conflict must persist transactional recovery: %v", err)
+	}
+	if payload.StateVersion != internal.SyncRunStateTransactionalVersion ||
+		payload.Route != internal.RouteLegacy || payload.Transaction == nil ||
+		payload.TestCommand != "touch A.marker" || payload.ValidationSource != "config" ||
+		payload.FetchPolicy != internal.SyncFetchEnabled ||
+		payload.PropagationPolicy != internal.SyncPropagationFull ||
+		payload.ScopeKind != internal.SyncScopeAll {
+		t.Fatalf("no-flag frozen decision = %+v", payload)
 	}
 
 	writeTestCommandConfig(t, "touch B.marker")
+	f.detachGuard(t)
 	resolveRebase(t, f.wt("parent"))
 	stdout, stderr, exit := runSync(t, f.feature, "--continue")
 	if exit != 0 {
 		t.Fatalf("--continue must finish: exit=%d\n%s\n%s", exit, stdout, stderr)
 	}
-	if !strings.Contains(stdout, "validating child: touch B.marker... ok") {
-		t.Fatalf("the frozen path re-reads config on every entry:\n%s", stdout)
+	if !strings.Contains(stdout, "validating child: touch A.marker... ok") {
+		t.Fatalf("continuation did not reuse the persisted validation command:\n%s", stdout)
 	}
+	if strings.Contains(stdout, "touch B.marker") || validationMarker(t, f.wt("child"), "B.marker") {
+		t.Fatalf("continuation dynamically reread edited host config:\n%s", stdout)
+	}
+}
+
+func TestSyncValidationRefAndCheckoutMutationIsPreserved(t *testing.T) {
+	t.Run("external-detach", func(t *testing.T) {
+		f := newScopedFixture(t)
+		writeTestCommandConfig(t, "git checkout --detach HEAD")
+		f.advanceRoot(t)
+		_, stderr, exit := runSync(t, f.feature, "--no-fetch")
+		if exit == 0 || !strings.Contains(stderr, "recover manually") {
+			t.Fatalf("validator checkout mutation was accepted: exit=%d stderr=%s", exit, stderr)
+		}
+		payload := loadPayload(t, f.featurePath)
+		if got := payload.Transaction.Validations[len(payload.Transaction.Validations)-1].Status; got != internal.SyncTxnActionMutated {
+			t.Fatalf("validation status=%q", got)
+		}
+		f.detachGuard(t)
+		_, stderr, exit = runSync(t, f.feature, "--abort")
+		if exit == 0 || !strings.Contains(stderr, "recover manually") {
+			t.Fatalf("abort guessed how to undo validator checkout mutation: exit=%d stderr=%s", exit, stderr)
+		}
+	})
+
+	t.Run("checkout-commit", func(t *testing.T) {
+		dir, feature := checkoutModeFixture(t)
+		writeAndCommit(t, dir, "upstream-validation.txt", "upstream\n", "advance upstream")
+		opts := newModeOpts(dir, feature, internal.SyncRunPolicy{
+			Fetch: internal.SyncFetchDisabled, Propagation: internal.SyncPropagationFull,
+			ScopeKind: internal.SyncScopeAll,
+		})
+		opts.TestCommand = "git commit --allow-empty -m validator-mutation"
+		if err := internal.RunCheckoutSync(opts); err == nil || !strings.Contains(err.Error(), "recover manually") {
+			t.Fatalf("checkout validator ref mutation was accepted: %v", err)
+		}
+		tx, err := internal.LoadCheckoutTransaction(feature)
+		if err != nil {
+			t.Fatal(err)
+		}
+		foreign := gitSHA(t, dir, tx.Plan[tx.CurrentIndex].Branch)
+		if err := internal.AbortCheckoutSync(opts); err == nil || !strings.Contains(err.Error(), "recover manually") {
+			t.Fatalf("checkout abort guessed validator mutation: %v", err)
+		}
+		if got := gitSHA(t, dir, tx.Plan[tx.CurrentIndex].Branch); got != foreign {
+			t.Fatal("checkout validator commit was erased")
+		}
+	})
+}
+
+func TestSyncInterruptedValidationIntentIsReconciled(t *testing.T) {
+	t.Run("external", func(t *testing.T) {
+		f := newScopedFixture(t)
+		writeTestCommandConfig(t, "touch validation-resumed.marker")
+		f.advanceRoot(t)
+		internal.SyncTransactionStepHook = func(step string) error {
+			if strings.HasPrefix(step, "validation-intent:") {
+				return errors.New("stop after validation intent")
+			}
+			return nil
+		}
+		_, _, exit := runSync(t, f.feature, "--no-fetch")
+		internal.SyncTransactionStepHook = nil
+		if exit == 0 {
+			t.Fatal("validation intent crash window was not reached")
+		}
+		f.detachGuard(t)
+		stdout, stderr, exit := runSync(t, f.feature, "--continue")
+		if exit != 0 {
+			t.Fatalf("interrupted validation did not reconcile: %d\n%s\n%s", exit, stdout, stderr)
+		}
+	})
+
+	t.Run("checkout", func(t *testing.T) {
+		dir, feature := checkoutModeFixture(t)
+		writeAndCommit(t, dir, "upstream-validation-resume.txt", "upstream\n", "advance upstream")
+		opts := newModeOpts(dir, feature, internal.SyncRunPolicy{
+			Fetch: internal.SyncFetchDisabled, Propagation: internal.SyncPropagationFull,
+			ScopeKind: internal.SyncScopeAll,
+		})
+		opts.TestCommand = "true"
+		internal.SyncTransactionStepHook = func(step string) error {
+			if strings.HasPrefix(step, "validation-intent:") {
+				return errors.New("stop after validation intent")
+			}
+			return nil
+		}
+		if err := internal.RunCheckoutSync(opts); err == nil {
+			t.Fatal("checkout validation intent crash window was not reached")
+		}
+		internal.SyncTransactionStepHook = nil
+		t.Cleanup(func() { internal.SyncTransactionStepHook = nil })
+		if err := internal.ContinueCheckoutSync(opts); err != nil {
+			t.Fatalf("checkout interrupted validation did not reconcile: %v", err)
+		}
+	})
 }

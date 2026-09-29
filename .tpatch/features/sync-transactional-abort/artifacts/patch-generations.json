@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "feature": "sync-transactional-abort",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_a1db11dd19f6",
+      "kind": "record",
+      "patch_sha256": "21e2012eb3bb4ba26c467955034ee3bf6e5d0ed881821b34ea9fb0629f29206a",
+      "git_patch_id": "3b69b78cf504e8210169ecbb43b7be1e0202b437",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "35b28e6711b1f20197c04480e32953b6b77e8a54718bd06e4f7db74bf9411461",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "",
+      "base_commit": "a04a830d7c3e8df18f1b6e010f457136e23995e7",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "CHANGELOG.md",
+        "README.md",
+        "assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md",
+        "assets/skills/claude/tesseraworkspaces/SKILL.md",
+        "assets/skills/copilot/tws.prompt.md",
+        "docs/cheatsheet.md",
+        "internal/agent_status.go",
+        "internal/checkout_health.go",
+        "internal/checkout_sync.go",
+        "internal/checkout_sync_plan_test.go",
+        "internal/cli/checkout_sync.go",
+        "internal/cli/checkout_sync_modes_test.go",
+        "internal/cli/doctor.go",
+        "internal/cli/push.go",
+        "internal/cli/sync.go",
+        "internal/cli/sync_downgrade_test.go",
+        "internal/cli/sync_golden_test.go",
+        "internal/cli/sync_guarded_state_test.go",
+        "internal/cli/sync_helpers.go",
+        "internal/cli/sync_modes.go",
+        "internal/cli/sync_modes_test.go",
+        "internal/cli/sync_plan_guard.go",
+        "internal/cli/sync_plan_guard_test.go",
+        "internal/cli/sync_push_resume_test.go",
+        "internal/cli/sync_recovery_test.go",
+        "internal/cli/sync_scoped_test.go",
+        "internal/cli/sync_state_matrix_test.go",
+        "internal/cli/sync_transaction_test.go",
+        "internal/cli/sync_transaction_v2_test.go",
+        "internal/cli/sync_transaction_v3_test.go",
+        "internal/cli/sync_validation_test.go",
+        "internal/cli/testdata/rebase_plan/sync_help.txt",
+        "internal/cli/testdata/sync_noflag/external-fallback/argv.log",
+        "internal/cli/testdata/sync_noflag/external-fallback/stderr.txt",
+        "internal/cli/testdata/sync_noflag/external-fallback/stdout.txt",
+        "internal/exec.go",
+        "internal/health.go",
+        "internal/sync_run_state.go",
+        "internal/sync_transaction.go",
+        "internal/sync_transaction_holder.go",
+        "internal/sync_transaction_load.go",
+        "internal/sync_transaction_load_test.go",
+        "internal/sync_transaction_observability_test.go",
+        "internal/sync_transaction_test.go",
+        "internal/sync_transaction_v2_test.go",
+        "internal/sync_transaction_validate.go",
+        "internal/syncstate.go"
+      ],
+      "dependencies": [
+        {
+          "slug": "rebase-plan-guard",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "8455e9e9eb531205856f16430d2ba8a3672c1e1e969031ea592a1e6a8badbad1",
+          "parent_recipe_sha256": "1355413f4c100bf1479233628176af7255f2fb67c035276fe1f889655fd2e41c"
+        },
+        {
+          "slug": "sync-modes",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "1a5fc776c599ea2bca58d47cfa405f90045afabd7367b3c2379484eefd9f8999",
+          "parent_recipe_sha256": "3a59ea8344f3c47d6d18a1ef80e54f146c18a1679d5cfb9af43534432f41344c"
+        }
+      ],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}

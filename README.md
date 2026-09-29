@@ -81,8 +81,8 @@ tws sync auth --max-replay-per-entry 10 \
 **Sync modes.** Three independent axes select what a run does. `--fetch` /
 `--no-fetch` chooses the *input-ref* policy (external defaults to `fetch`,
 checkout to `no-fetch`); `--full` / `--local-only` chooses propagation; `--only`
-/ `--from` chooses scope. Running `tws sync <feature>` with no flags is
-unchanged. Notes:
+/ `--from` chooses scope. Successful `tws sync <feature>` runs retain their
+existing no-flag behavior; recovery now preserves rollback evidence. Notes:
 
 - `--no-fetch` means "no automatic network **input**" — not "offline". An
   explicit `--push` is still allowed and is the only way a `no-fetch` run
@@ -92,11 +92,11 @@ unchanged. Notes:
 - A scoped run drops `git rebase --update-refs`, so it cannot move a branch
   outside the selection.
 - Incompatible combinations are refused before any fetch, lock, or rebase.
-- A scoped (`--only`/`--from`) `--push` is strict: the run stops at the first
+- Every new ordinary-sync `--push` is strict: the run stops at the first
   rejected push, keeps its recovery state, and `tws sync <feature> --continue`
-  retries only the entries that were never pushed. A `scope=all` run, `tws push`,
-  and the no-flag `tws sync --push` push the whole feature and keep today's
-  lenient per-entry failure line.
+  retries only the entries that were never pushed. A `scope=all` run and
+  no-flag `tws sync --push` still push the whole feature, but preserve recovery
+  state on failure. Standalone `tws push` keeps its lenient per-entry behavior.
 - Every mutating external sync route, including the no-flag route, holds the
   shared feature mutation guard through rebase, metadata, optional push, and
   remote-follow-up clearing. Concurrent mutation of one feature is refused.
@@ -141,6 +141,49 @@ plain/continue/abort fails closed only after the compatibility envelope exists.
 It cannot see artifact-before-compat crash window 1, workspace-global locks,
 unrelated-feature checkout reparent, or top-level push. **Do not use an older
 tws while any reparent is active or recoverable.**
+
+**Transactional sync recovery.** Before the first selected-branch mutation, a
+new ordinary sync records the exact selected branch tips, exact pre-run
+`stack.yaml` bytes, repository identity, and checkout/worktree holders, and
+protects the branch preimages from Git GC. `--abort` restores only changes
+still attributable to that run, using compare-and-swap ref updates per
+repository; Git refs, metadata, and holder state remain separate effects, and
+a multi-repository rollback is not cross-repository atomic. If a branch gained
+later user work, abort refuses rather than overwriting it. Where native Git
+reflog evidence cannot prove that an allowed ref move came from tws's rebase,
+recovery refuses conservatively.
+
+Validation commands are ref/checkout-read-only. Builds and tests may leave
+ordinary ignored or untracked outputs, but a validator that commits, amends,
+rebases, resets, moves a ref, switches branches, or detaches `HEAD` stops the
+run with its journal and work preserved for manual recovery; tws does not adopt
+or automatically roll back those unproven changes.
+
+Immediately before the first push **attempt**, sync persists a publication
+marker bound to the recorded repository, destination ref, and source object
+ID. From that point recovery is forward-only: use `--continue`; `--abort`
+will not rewrite local or remote refs. Runs created by older tws versions have
+no complete selected-ref/metadata snapshot, so their legacy abort path warns
+that it cannot fully restore earlier branch movement. Once all forward effects
+succeed, sync durably records completion before removing GC-protection refs.
+After that decision, either recovery verb only finishes cleanup and reports
+that sync already completed; neither rewinds branches or metadata. Successful
+no-flag runs retain their established behavior and output.
+
+If external `stack.yaml` is genuinely absent, the historical compatibility
+sync is available only after an interactive warning and confirmation, or with
+`--allow-nontransactional` for automation. This deliberate exception has no
+complete rollback, so earlier branches may remain moved after a later failure.
+Noninteractive execution refuses by default, and an existing unreadable or
+malformed `stack.yaml` always refuses. Restore or create stack metadata to use
+transactional recovery. Publishing with `--push` requires stack metadata.
+The consented fallback rechecks recovery evidence under its mutation guard and
+never switches into a stack-based executor if metadata appears concurrently.
+
+A valid transactional record remains authoritative if only its compatibility
+marker is missing: recovery restores that marker without replacing any existing
+file, then follows the recorded phase. Conflicting legacy and transactional
+records must both be preserved for manual inspection; do not delete either.
 
 - **Amend-aware** — uses `--onto` to avoid ghost conflicts from amended commits
 - **Archived branch support** — syncs archived branches via `--update-refs` or optimistic rebase

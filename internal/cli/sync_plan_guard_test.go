@@ -285,16 +285,10 @@ func TestSyncPlanGuard_LimitRefusalBeforeAnyBranchMoves(t *testing.T) {
 // (SyncStageRebasing, 0) — which fires exactly once, immediately before
 // root's OWN "git rebase" but AFTER root's own guard.revalidate("root")
 // already passed — commits a new file directly onto "parent" as a side
-// effect. Root's rebase then completes normally (StatePreserved flips true),
-// and when the loop reaches "parent", its own guard.revalidate("parent")
-// re-measures parent's destination/head SHA, finds it no longer matches the
-// approved plan's RevalidationDigest, and refuses with revalidation-mismatch
-// — the ONLY JIT drift case distinct from the whole-plan, admission-time
-// approval-mismatch (which fires on a stale/non-matching TOKEN, not on
-// mid-execution drift of an entry the token never touched). Because root
-// already completed, this is the true half of the state-preserved:
-// composition pair — the marker's detail must carry the exact seventeen-byte
-// "state-preserved: " literal (spec.md §6.4).
+// effect. The transactional journal must now refuse this foreign movement
+// before root's own rebase instead of waiting for the parent's JIT guard.
+// Preserve the user commit and rollback evidence; do not falsely classify
+// this earlier ownership refusal as a replay-limit refusal.
 func TestSyncPlanGuard_JITRevalidationMismatchAfterApprovedBaseMoves(t *testing.T) {
 	f := newScopedFixture(t)
 	planOut, _, exit := runSync(t, f.feature, "--plan", "--json", "--no-fetch", "--max-replay-total", "10")
@@ -305,10 +299,13 @@ func TestSyncPlanGuard_JITRevalidationMismatchAfterApprovedBaseMoves(t *testing.
 	if len(fp) != 64 {
 		t.Fatalf("no fingerprint minted: %q", fp)
 	}
+	rootBefore := f.sha(t, "root")
+	var foreign string
 
 	withSyncStepHook(t, func(stage internal.SyncRunStage, index int) error {
 		if stage == internal.SyncStageRebasing && index == 0 {
 			writeAndCommit(t, f.wt("parent"), "drift.txt", "drift\n", "drift commit")
+			foreign = f.sha(t, "parent")
 		}
 		return nil
 	})
@@ -317,19 +314,17 @@ func TestSyncPlanGuard_JITRevalidationMismatchAfterApprovedBaseMoves(t *testing.
 	if exit2 == 0 {
 		t.Fatal("the drifted entry must refuse")
 	}
-	if stdout == "" || !strings.Contains(stdout, "[+] root (active)") {
-		t.Fatalf("root must have completed before parent's own JIT check ran: stdout=%q", stdout)
+	if strings.Contains(stdout, "[+] root (active)") || f.sha(t, "root") != rootBefore {
+		t.Fatalf("foreign movement must refuse before root rebase: stdout=%q", stdout)
 	}
-
-	matches := planGuardMarkerRe.FindAllString(stderr, -1)
-	if len(matches) != 1 {
-		t.Fatalf("expected exactly one plan-guard marker line, got %d: %v", len(matches), matches)
+	if foreign == "" || f.sha(t, "parent") != foreign {
+		t.Fatal("user commit was erased or the race was not exercised")
 	}
-	if !strings.Contains(matches[0], "revalidation-mismatch") {
-		t.Fatalf("expected a revalidation-mismatch marker, got %q", matches[0])
+	if !strings.Contains(stderr, "changed outside this sync transaction") || planGuardMarkerRe.MatchString(stderr) {
+		t.Fatalf("expected typed-by-message ownership refusal, not guard refusal: %s", stderr)
 	}
-	if !strings.Contains(matches[0], "state-preserved: ") {
-		t.Fatalf("root already completed; the marker MUST carry the state-preserved: literal, got %q", matches[0])
+	if !internal.HasSyncRunState(f.featurePath) {
+		t.Fatal("ownership refusal lost recovery evidence")
 	}
 }
 

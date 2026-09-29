@@ -328,6 +328,72 @@ func withExternalSyncMutationGuard(feature string, layout externalSyncLayout, to
 	return mutate()
 }
 
+func verifyFreshExternalSyncAdmission(layout externalSyncLayout, token string) error {
+	state := internal.ClassifyExternalSyncState(layout.FeaturePath, internal.SyncClassifyOpts{AlwaysReadGuard: true})
+	if state.GuardSymlink || state.GuardErr != nil || state.Guard == nil || state.Guard.Token != token {
+		return fmt.Errorf("sync guard changed after claim; refusing to create recovery state")
+	}
+	if state.Cell != 1 {
+		return fmt.Errorf("sync recovery evidence appeared after the mutation guard was claimed; preserve and inspect %s and %s",
+			state.LegacyPath, state.PayloadPath)
+	}
+	return nil
+}
+
+func removeOwnedSyncSentinel(featurePath, marker string) error {
+	state, err := internal.LoadSyncState(featurePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil || state == nil || state.FailedBranch != marker {
+		return fmt.Errorf("sync sentinel changed during setup; preserve and inspect %s", internal.SyncStatePath(featurePath))
+	}
+	return internal.RemoveSyncState(featurePath)
+}
+
+func loadAuthoritativeExternalRecovery(layout externalSyncLayout, expected *internal.SyncRunState, requireSentinel bool) (*internal.SyncRunState, error) {
+	if expected == nil {
+		return nil, errors.New("transactional sync recovery payload is absent")
+	}
+	fresh, err := internal.LoadSyncRunState(layout.FeaturePath)
+	if err != nil {
+		return nil, fmt.Errorf("reload authoritative sync recovery payload: %w", err)
+	}
+	if fresh.OwnerToken != expected.OwnerToken || fresh.Marker != expected.Marker ||
+		fresh.Feature != expected.Feature || fresh.StateVersion != expected.StateVersion {
+		return nil, errors.New("sync recovery payload changed identity while its guard was being reclaimed; preserve all evidence and inspect it manually")
+	}
+	expectedRunID, freshRunID := "", ""
+	if expected.Transaction != nil {
+		expectedRunID = expected.Transaction.RunID
+	}
+	if fresh.Transaction != nil {
+		freshRunID = fresh.Transaction.RunID
+	}
+	if expectedRunID != freshRunID {
+		return nil, errors.New("sync recovery transaction changed identity while its guard was being reclaimed; preserve all evidence and inspect it manually")
+	}
+	var sentinel *internal.SyncState
+	if fresh.Transaction != nil {
+		sentinel, err = internal.LoadTransactionalSyncSentinel(layout.FeaturePath)
+	} else {
+		sentinel, err = internal.LoadSyncState(layout.FeaturePath)
+	}
+	if !requireSentinel && errors.Is(err, os.ErrNotExist) {
+		if fresh.Transaction != nil && !internal.SyncTransactionCleanupOnly(fresh.Transaction) {
+			if err := internal.RestoreTransactionalSyncSentinel(layout.FeaturePath, fresh); err != nil {
+				return nil, err
+			}
+		}
+		return fresh, nil
+	}
+	if err != nil || sentinel == nil || sentinel.FailedBranch != fresh.Marker {
+		return nil, fmt.Errorf("sync recovery sentinel no longer matches payload marker %q; preserve and inspect %s and %s",
+			fresh.Marker, internal.SyncStatePath(layout.FeaturePath), internal.SyncRunStatePath(layout.FeaturePath))
+	}
+	return fresh, nil
+}
+
 // syncMarkerCollision is the mandatory I17 pre-flight: the generated marker may
 // equal neither a StackEntry.Name nor an entry.GitBranch().
 func syncMarkerCollision(stack internal.Stack, marker string) error {
@@ -399,6 +465,24 @@ func syncCellLiveGuardRefusal(feature string, st internal.SyncExternalState, ver
 	switch st.Cell {
 	case 2, 4, 5:
 		if st.GuardLive && st.Guard != nil {
+			if st.Payload != nil && st.Payload.Transaction != nil {
+				tx := st.Payload.Transaction
+				validatorEntry, validatorMutated := internal.SyncTransactionValidatorMutated(tx)
+				recovery := ""
+				switch {
+				case validatorMutated:
+					recovery = fmt.Sprintf("validator changed refs or checkout state while validating %s; preserve the sync journal and working tree and recover manually", validatorEntry)
+				case internal.SyncTransactionCleanupOnly(tx):
+					recovery = fmt.Sprintf("only cleanup remains; run: tws sync %s --continue (no completed work will be rolled back)", feature)
+				case internal.SyncTransactionPublished(tx):
+					recovery = fmt.Sprintf("publication has started and local rollback is disabled; run: tws sync %s --continue", feature)
+				case internal.SyncTransactionRollingBack(tx):
+					recovery = fmt.Sprintf("rollback has started and forward continuation is disabled; run: tws sync %s --abort", feature)
+				}
+				if recovery != "" {
+					return fmt.Errorf("a scoped sync is running for %q (pid %d); wait for it to exit; %s", feature, st.Guard.PID, recovery)
+				}
+			}
 			if verb == syncVerbAbort {
 				return fmt.Errorf("a scoped sync is running for %q (pid %d); wait for it to exit before --abort", feature, st.Guard.PID)
 			}
@@ -420,6 +504,19 @@ func syncCellRefusal(verb syncVerb, feature string, layout externalSyncLayout, s
 	case 1, 7:
 		return nil
 	case 2:
+		if st.Payload != nil && st.Payload.Transaction != nil {
+			tx := st.Payload.Transaction
+			_, mutated := internal.SyncTransactionValidatorMutated(tx)
+			if verb == syncVerbPlain || mutated ||
+				verb == syncVerbContinue && internal.SyncTransactionRollingBack(tx) ||
+				verb == syncVerbAbort && internal.SyncTransactionPublished(tx) && !internal.SyncTransactionCleanupOnly(tx) {
+				if err := transactionalSyncRecoveryRefusal(feature, tx); err != nil {
+					return err
+				}
+				return fmt.Errorf("a transactional sync record survives without its compatibility marker for %q; preserve the evidence and run: tws sync %s --continue or --abort", feature, feature)
+			}
+			return nil
+		}
 		if verb == syncVerbAbort {
 			return nil
 		}
@@ -434,11 +531,16 @@ func syncCellRefusal(verb syncVerb, feature string, layout externalSyncLayout, s
 			feature, feature)
 	case 5:
 		if verb == syncVerbPlain {
+			if st.Payload != nil && st.Payload.Transaction != nil {
+				if err := transactionalSyncRecoveryRefusal(feature, st.Payload.Transaction); err != nil {
+					return err
+				}
+			}
 			return fmt.Errorf("a scoped sync is incomplete (failed on: %s); use --continue or --abort", syncPayloadFailed(st))
 		}
 		return nil
 	case 3, 6, 9, 12:
-		return fmt.Errorf("scoped sync state at %s is unreadable or uses an unsupported version (%s); inspect it and remove it manually — tws will not guess",
+		return fmt.Errorf("scoped sync state at %s is unreadable or uses an unsupported version (%s); preserve and inspect it — do not delete it or run recovery blindly",
 			st.PayloadPath, syncErrText(st.PayloadErr))
 	case 8:
 		legacyFailed := ""
@@ -446,26 +548,39 @@ func syncCellRefusal(verb syncVerb, feature string, layout externalSyncLayout, s
 			legacyFailed = st.Legacy.FailedBranch
 		}
 		if verb == syncVerbAbort {
-			return fmt.Errorf("refusing to clear two unfinished syncs at once for %q: a legacy sync failed on %s and a scoped sync failed on %s; inspect %s and %s and remove them explicitly",
+			return fmt.Errorf("refusing to clear two unfinished syncs at once for %q: a legacy sync failed on %s and a scoped sync failed on %s; preserve and inspect %s and %s for manual recovery",
 				feature, legacyFailed, syncPayloadFailed(st), st.LegacyPath, st.PayloadPath)
 		}
-		return fmt.Errorf("two unfinished syncs are recorded for %q: a legacy sync failed on %s and a scoped sync failed on %s; resolve both before syncing (inspect %s and %s)",
+		return fmt.Errorf("two unfinished syncs are recorded for %q: a legacy sync failed on %s and a scoped sync failed on %s; preserve and inspect both before manual recovery (%s and %s)",
 			feature, legacyFailed, syncPayloadFailed(st), st.LegacyPath, st.PayloadPath)
 	case 10:
-		if verb == syncVerbAbort {
-			return fmt.Errorf("sync state at %s is unreadable: %v; inspect and remove it manually", st.LegacyPath, syncErrText(st.LegacyErr))
-		}
-		return fmt.Errorf("sync state at %s is unreadable: %v", st.LegacyPath, syncErrText(st.LegacyErr))
+		return fmt.Errorf("sync state at %s is unreadable: %v; preserve and inspect it — tws will not guess whether recovery is safe", st.LegacyPath, syncErrText(st.LegacyErr))
 	case 11:
 		failed := syncPayloadFailed(st)
 		if verb == syncVerbAbort {
-			return fmt.Errorf("refusing to clear unreadable sync state at %s while a scoped sync record beside it is still unfinished: it failed on %s (worktree %s); inspect both and remove %s explicitly",
+			return fmt.Errorf("refusing to clear unreadable sync state at %s while a scoped sync record beside it is still unfinished: it failed on %s (worktree %s); preserve and inspect both, including %s",
 				st.LegacyPath, failed, layout.WorktreePath(failed), st.PayloadPath)
 		}
-		return fmt.Errorf("sync state at %s is unreadable, and a scoped sync record beside it failed on %s (worktree %s); resolve or abort that rebase, then remove %s manually — tws will not guess",
+		return fmt.Errorf("sync state at %s is unreadable, and a scoped sync record beside it failed on %s (worktree %s); preserve and inspect both, including %s — tws will not guess",
 			st.LegacyPath, failed, layout.WorktreePath(failed), st.PayloadPath)
 	}
 	return nil
+}
+
+func transactionalSyncRecoveryRefusal(feature string, tx *internal.SyncTransaction) error {
+	validatorEntry, validatorMutated := internal.SyncTransactionValidatorMutated(tx)
+	switch {
+	case validatorMutated:
+		return fmt.Errorf("a transactional sync validator changed refs or checkout state while validating %s; preserve the sync journal and working tree and recover manually", validatorEntry)
+	case internal.SyncTransactionCleanupOnly(tx):
+		return fmt.Errorf("a transactional sync has only cleanup remaining; run: tws sync %s --continue or --abort (neither will roll back completed work)", feature)
+	case internal.SyncTransactionPublished(tx):
+		return fmt.Errorf("a transactional sync has crossed the publication boundary; local rollback is disabled — run: tws sync %s --continue", feature)
+	case internal.SyncTransactionRollingBack(tx):
+		return fmt.Errorf("a transactional sync rollback is in progress; forward continuation is disabled — run: tws sync %s --abort", feature)
+	default:
+		return nil
+	}
 }
 
 func syncPayloadFailed(st internal.SyncExternalState) string {
@@ -495,6 +610,8 @@ func syncTriggersNeedV2(state internal.SyncExternalState) bool {
 	switch state.Cell {
 	case 1, 7:
 		return true
+	case 2:
+		return state.Payload != nil && state.Payload.Transaction != nil && !internal.PayloadNewMode(state.Payload)
 	case 5:
 		return !internal.PayloadNewMode(state.Payload)
 	default:
@@ -582,6 +699,98 @@ func setupSyncRunState(layout externalSyncLayout, feature, marker, token string,
 	return payload, nil
 }
 
+func setupTransactionalSyncRunState(layout externalSyncLayout, ws internal.Workspace, feature, marker, token string, stack internal.Stack, sel internal.SyncSelection, push bool, testCommand, validationSource, route string, guarded bool, maxPerEntry, maxTotal *int) (*internal.SyncRunState, error) {
+	if err := internal.ClaimSyncRunGuard(layout.FeaturePath, token); err != nil {
+		return nil, err
+	}
+	if err := externalSyncPostClaimRecheck(feature, layout, token); err != nil {
+		return nil, err
+	}
+	if err := verifyFreshExternalSyncAdmission(layout, token); err != nil {
+		return nil, errors.Join(err, internal.ReleaseOwnedSyncRunGuard(layout.FeaturePath, token))
+	}
+	sentinelOwned := false
+	cleanupSetup := func(cause error) error {
+		var sentinelErr error
+		if sentinelOwned {
+			sentinelErr = removeOwnedSyncSentinel(layout.FeaturePath, marker)
+		}
+		return errors.Join(cause, sentinelErr, internal.ReleaseOwnedSyncRunGuard(layout.FeaturePath, token))
+	}
+	if err := syncStepHook(internal.SyncStageInitializing, 0); err != nil {
+		return nil, err
+	}
+
+	sentinel := internal.NewSyncState()
+	sentinel.FailedBranch = marker
+	sentinel.Pending = []string{}
+	sentinel.Completed = []string{}
+	sentinel.Skipped = []string{}
+	if err := internal.SaveSyncState(layout.FeaturePath, sentinel); err != nil {
+		return nil, cleanupSetup(fmt.Errorf("write sync sentinel: %w", err))
+	}
+	sentinelOwned = true
+	if err := syncStepHook(internal.SyncStageInitializing, 1); err != nil {
+		return nil, err
+	}
+
+	entryRepos := make(map[string]string, len(sel.Entries))
+	for _, selected := range sel.Entries {
+		entry := internal.GetBranch(stack, selected.Name)
+		ctx := entry.Repo
+		if ctx == "" {
+			if path := layout.WorktreePath(entry.Name); path != "" {
+				if _, statErr := os.Stat(path); statErr == nil {
+					ctx = path
+				}
+			}
+		}
+		if ctx == "" {
+			ctx = ws.RepoRoot
+		}
+		entryRepos[entry.Name] = ctx
+	}
+	tx, err := internal.CaptureSyncTransaction(internal.SyncTransactionBeginInput{
+		FeaturePath: layout.FeaturePath, Feature: feature, Mode: internal.ModeExternal,
+		WorkspaceRepoRoot: ws.RepoRoot, Stack: stack, Selected: sel.SelectedNames(), EntryRepoDirs: entryRepos,
+	})
+	if err != nil {
+		return nil, cleanupSetup(fmt.Errorf("capture sync rollback preimage: %w", err))
+	}
+	if err := internal.PreflightSyncTransactionBirth(tx); err != nil {
+		return nil, cleanupSetup(fmt.Errorf("preflight sync rollback holders: %w", err))
+	}
+
+	payload := internal.NewSyncRunState(feature, marker, token, sel.Policy)
+	payload.StateVersion = internal.SyncRunStateTransactionalVersion
+	if guarded {
+		payload.StateVersion = internal.SyncRunStateTransactionalGuardedVersion
+		payload.PlanGuarded = true
+	}
+	payload.Route = route
+	payload.MaxReplayPerEntry = maxPerEntry
+	payload.MaxReplayTotal = maxTotal
+	payload.Selected = sel.SelectedNames()
+	payload.Pending = append([]string(nil), payload.Selected...)
+	payload.Push = push
+	payload.TestCommand = testCommand
+	payload.ValidationSource = validationSource
+	payload.Repos = append([]string(nil), sel.Repos...)
+	payload.Transaction = tx
+	if err := internal.SaveSyncRunState(layout.FeaturePath, payload); err != nil {
+		return nil, cleanupSetup(fmt.Errorf("write transactional sync state: %w", err))
+	}
+	if err := syncStepHook(internal.SyncStageInitializing, 2); err != nil {
+		return nil, err
+	}
+	if err := internal.PinSyncTransaction(tx, func() error {
+		return internal.SaveSyncRunState(layout.FeaturePath, payload)
+	}); err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
 // clearSyncRunState performs §8.5 teardown in the exact reverse order:
 // payload, sentinel, guard. A no-flag run keeps today's literal sentinel-free
 // DeleteSyncState and can never fail.
@@ -593,19 +802,21 @@ func setupSyncRunState(layout externalSyncLayout, feature, marker, token string,
 // any later artifact themselves.
 func clearSyncRunState(featurePath string, newMode bool) error {
 	if !newMode {
-		internal.DeleteSyncState(featurePath)
-		return nil
+		return internal.RemoveSyncState(featurePath)
 	}
-	internal.DeleteSyncRunState(featurePath)
+	if err := internal.RemoveSyncRunState(featurePath); err != nil {
+		return err
+	}
 	if err := syncStepHook(internal.SyncStageFinalizing, 0); err != nil {
 		return err
 	}
-	internal.DeleteSyncState(featurePath)
+	if err := internal.RemoveSyncState(featurePath); err != nil {
+		return err
+	}
 	if err := syncStepHook(internal.SyncStageFinalizing, 1); err != nil {
 		return err
 	}
-	internal.ReleaseSyncRunGuard(featurePath)
-	return nil
+	return internal.RemoveSyncRunGuard(featurePath)
 }
 
 // ---------------------------------------------------------------------------
@@ -1043,8 +1254,13 @@ func rollbackGuardedFreshRefusal(featurePath, feature string, refusal *internal.
 // upgraded payload's crash-orphan recovery is unchanged from today's plain
 // cell-4 handling.
 func upgradeGuardedSyncRunState(featurePath string, payload *internal.SyncRunState, birth syncRunStateBirth) error {
-	payload.StateVersion = birth.StateVersion
-	payload.Route = internal.RouteNewMode
+	if payload.Transaction != nil {
+		payload.StateVersion = internal.SyncRunStateTransactionalGuardedVersion
+		payload.PlanGuarded = true
+	} else {
+		payload.StateVersion = birth.StateVersion
+		payload.Route = internal.RouteNewMode
+	}
 	payload.MaxReplayPerEntry = birth.MaxPerEntry
 	payload.MaxReplayTotal = birth.MaxTotal
 	return internal.SaveSyncRunState(featurePath, payload)
@@ -1053,9 +1269,9 @@ func upgradeGuardedSyncRunState(featurePath string, payload *internal.SyncRunSta
 // saveScopedSyncFailure is the new-mode failure persistence path. It writes the
 // payload only: saveIncompleteSync is never called by a new-mode run, because
 // it would overwrite the sentinel with a resolvable name.
-func saveScopedSyncFailure(featurePath string, payload *internal.SyncRunState, failed string, completed []string) {
+func saveScopedSyncFailure(featurePath string, payload *internal.SyncRunState, failed string, completed []string) error {
 	if payload == nil {
-		return
+		return nil
 	}
 	payload.Stage = internal.SyncStageFailed
 	payload.FailedBranch = failed
@@ -1071,7 +1287,10 @@ func saveScopedSyncFailure(featurePath string, payload *internal.SyncRunState, f
 		}
 	}
 	payload.Pending = pending
-	_ = internal.SaveSyncRunState(featurePath, payload)
+	if payload.Transaction != nil {
+		payload.Transaction.Phase = internal.SyncTxnFailed
+	}
+	return internal.SaveSyncRunState(featurePath, payload)
 }
 
 // saveScopedPushFailure is the new-mode push failure persistence path. Unlike
@@ -1079,13 +1298,16 @@ func saveScopedSyncFailure(featurePath string, payload *internal.SyncRunState, f
 // rebases already succeeded and only the push of `failed` is outstanding, so
 // the payload keeps everything --continue needs to retry exactly the unpushed
 // entries.
-func saveScopedPushFailure(featurePath string, payload *internal.SyncRunState, failed string) {
+func saveScopedPushFailure(featurePath string, payload *internal.SyncRunState, failed string) error {
 	if payload == nil {
-		return
+		return nil
 	}
 	payload.Stage = internal.SyncStageFailed
 	payload.FailedBranch = failed
-	_ = internal.SaveSyncRunState(featurePath, payload)
+	if payload.Transaction != nil {
+		payload.Transaction.Phase = internal.SyncTxnPublished
+	}
+	return internal.SaveSyncRunState(featurePath, payload)
 }
 
 // ---------------------------------------------------------------------------

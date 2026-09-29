@@ -1,0 +1,9 @@
+{
+  "slug": "sync-transactional-abort",
+  "completed_at": "2026-09-29T04:55:34Z",
+  "base_commit": "a04a830d7c3e8df18f1b6e010f457136e23995e7",
+  "has_patch": true,
+  "operator_notes": "Recipe 35b28e6711b1f20197c04480e32953b6b77e8a54718bd06e4f7db74bf9411461 targets exact a04a830d7c3e8df18f1b6e010f457136e23995e7 with 36 base-preimage and 11 absence guards. Approved policies: legacy limitation warning; first-push-attempt forward-only; durable forward-complete before pin cleanup; validator mutations preserved for manual recovery; missing-stack fallback only with explicit consent.",
+  "validation_status": "passed",
+  "validation_notes": "All three independent explicitly selected gpt-5.6-sol reviewers approved frozen V4 SHA256 590f5efcaa7ef80201fd319180fa6c4f376ce03f86e1c715cf3ccc8940364858. Nine sequential parent and replay-worktree gates passed, plus 15 independent policy/doctor/recovery cases. Two real execute replays reproduced all 47 payload files byte-for-byte; framework metadata was audited separately without normalization."
+}

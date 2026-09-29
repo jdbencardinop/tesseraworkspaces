@@ -205,3 +205,48 @@ func CheckFeatureHealth(featurePath string) []HealthIssue {
 
 	return issues
 }
+
+// ExternalSyncRecoveryHealthIssues projects only transactional external sync
+// recovery. Legacy/no-state doctor output remains unchanged.
+func ExternalSyncRecoveryHealthIssues(feature, featurePath string, suppressCompatibility bool) []HealthIssue {
+	state := ClassifyExternalSyncState(featurePath, SyncClassifyOpts{AlwaysReadGuard: true})
+	if state.PayloadErr != nil || state.PayloadSymlink {
+		if suppressCompatibility {
+			return nil
+		}
+		return []HealthIssue{{
+			Branch:   "sync",
+			Problem:  "sync recovery evidence is unreadable, corrupt, or unsupported",
+			Hint:     "preserve and inspect " + state.PayloadPath,
+			Severity: SeverityError,
+		}}
+	}
+	if state.Payload == nil || state.Payload.Transaction == nil {
+		return nil
+	}
+	recovery := projectTransactionalSyncRecovery(feature, state.Payload.Transaction)
+	issue := HealthIssue{
+		Branch:   "sync",
+		Problem:  recovery.message,
+		Hint:     recovery.guidance,
+		Severity: SeverityWarning,
+	}
+	if state.GuardLive {
+		if recovery.kind == "validator-mutated" {
+			issue.Severity = SeverityWarning
+		} else {
+			issue.Severity = SeverityInfo
+		}
+		issue.Hint = liveTransactionalSyncGuidance(recovery)
+	}
+	return []HealthIssue{issue}
+}
+
+func ExternalSyncValidatorMutationPresent(featurePath string) bool {
+	state := ClassifyExternalSyncState(featurePath, SyncClassifyOpts{AlwaysReadGuard: true})
+	if state.Payload == nil {
+		return false
+	}
+	_, mutated := SyncTransactionValidatorMutated(state.Payload.Transaction)
+	return mutated
+}
