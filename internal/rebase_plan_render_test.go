@@ -61,8 +61,11 @@ func renderFixtureEntryFull() PlanEntry {
 			SHA: strPtr("dddddddddddd1111222233334444555566667777"),
 		},
 		Cutoff: PlanEntryCutoff{
-			RecordedSHA: strPtr("bbbbbbbbbbbb1111222233334444555566667777"),
-			State:       strPtr("present"),
+			RecordedSHA:  strPtr("bbbbbbbbbbbb1111222233334444555566667777"),
+			State:        strPtr("present"),
+			EffectiveSHA: strPtr("bbbbbbbbbbbb1111222233334444555566667777"),
+			Source:       string(SyncCutoffSourceRecorded),
+			Validity:     strPtr(string(SyncCutoffValid)),
 		},
 		Replay: PlanEntryReplay{
 			UpstreamSHA:    strPtr("bbbbbbbbbbbb1111222233334444555566667777"),
@@ -191,7 +194,7 @@ func TestRebasePlanRender_EntryRowElevenFieldsAndLiteralArrow(t *testing.T) {
 	doc := mustFormat(t, plan)
 
 	line1, line2 := entryRowLines(t, doc, 0)
-	wantLine1 := "  - pr2 [feat/pr2] base master \u2192 master@dddddddddddd cutoff bbbbbbbbbbbb upstream bbbbbbbbbbbb strategy onto"
+	wantLine1 := "  - pr2 [feat/pr2] base master \u2192 master@dddddddddddd cutoff bbbbbbbbbbbb effective bbbbbbbbbbbb source recorded-metadata upstream bbbbbbbbbbbb strategy onto"
 	wantLine2 := `    candidates 1 range bbbbbbbbbbbb..feat/pr2 first cccccccccccc "C"`
 	if line1 != wantLine1 {
 		t.Errorf("entry row line 1 =\n%q\nwant\n%q", line1, wantLine1)

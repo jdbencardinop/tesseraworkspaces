@@ -7,3 +7,4 @@ branches:
       last_base_sha: 77f69d0867921d814ac63e94103042b7517cf8b3
     - name: child
       base: parent
+      last_base_sha: 486bac07b30ad3ac79068bef86bce885208dd18f

@@ -1,4 +1,7 @@
 exit: 0
 auth: healthy (2 active worktree(s))
+  [i] models: cutoff evidence: raw="<absent>" effective="b79744b9fd8e" source=parent-tip-ancestor validity=valid reason=missing-cutoff-parent-ancestor
+  [i] api: cutoff evidence: raw="<absent>" effective="b79744b9fd8e" source=parent-tip-ancestor validity=valid reason=missing-cutoff-parent-ancestor
+  [i] gone: cutoff evidence: raw="<absent>" effective="b79744b9fd8e" source=parent-tip-ancestor validity=valid reason=missing-cutoff-parent-ancestor
 
 All healthy.

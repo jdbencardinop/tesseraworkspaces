@@ -555,14 +555,14 @@ func assertRunReplaysTotal(t *testing.T, stderr string, total, limit int) {
 //
 // The fixture is exact and asserted, never sampled: three rows, whose
 // freshly-resolved counts are 2 (root, the only known one) + 1 (parent) +
-// 2 (child) = 5, against an approved sum of just 2. The limit is the
-// anchor + 2 = 4, which is
+// 1 (child) = 4, against an approved sum of just 2. The limit is the
+// anchor + 1 = 3, which is
 //
 //   - at or above the whole approved sum (2), so the up-front guard seam
 //     cannot refuse and a buggy approved-count accumulator — carrying 2 for
 //     the whole run — completes silently;
-//   - strictly below the run's real total (5), so a correct JIT seam refuses
-//     partway through with `limit-total` naming the total 5.
+//   - strictly below the run's real total (4), so a correct JIT seam refuses
+//     partway through with `limit-total` naming the total 4.
 //
 // Both halves are asserted, so the test is mutation-sensitive in both
 // directions rather than merely "a refusal happened".
@@ -581,10 +581,10 @@ func TestSyncPlanGuard_TotalLimitStrictlyBetweenAnchorAndRunTotal(t *testing.T) 
 			rows, anchor, approvedSum, deferred)
 	}
 
-	const wantRunTotal = 5 // 2 (root) + 1 (parent) + 2 (child), all freshly resolved
-	limit := anchor + 2
-	if limit != 4 {
-		t.Fatalf("limit = %d, want 4", limit)
+	const wantRunTotal = 4 // 2 (root) + 1 (parent) + 1 (child), all freshly resolved
+	limit := anchor + 1
+	if limit != 3 {
+		t.Fatalf("limit = %d, want 3", limit)
 	}
 	if approvedSum > limit {
 		t.Fatalf("the fixture no longer distinguishes the two carriers: an approved-count accumulator "+

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
 	"gopkg.in/yaml.v3"
@@ -43,6 +44,7 @@ func newModeOpts(dir, featurePath string, policy internal.SyncRunPolicy, changed
 	for _, k := range changed {
 		m[k] = true
 	}
+
 	return internal.CheckoutSyncOpts{
 		Feature:     "test-feature",
 		FeaturePath: featurePath,
@@ -50,6 +52,77 @@ func newModeOpts(dir, featurePath string, policy internal.SyncRunPolicy, changed
 		Policy:      policy,
 		NewMode:     true,
 		Changed:     m,
+	}
+}
+
+func saveCurrentCheckoutRecovery(t *testing.T, dir, featurePath string, tx *internal.CheckoutTransaction) {
+	t.Helper()
+	stack, err := internal.LoadStack(featurePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected := make([]string, 0, len(tx.Plan))
+	entryRepos := make(map[string]string, len(tx.Plan))
+	inputs := make([]internal.SyncCutoffFreezeInput, 0, len(tx.Plan))
+	for i := range tx.Plan {
+		row := &tx.Plan[i]
+		entry := internal.GetBranch(stack, row.Name)
+		if entry.Name == "" {
+			t.Fatalf("plan entry %q is absent from stack", row.Name)
+		}
+		if row.PreSHA == "" {
+			row.PreSHA = gitSHA(t, dir, row.Branch)
+		}
+		if row.LastBaseSHA == "" {
+			row.LastBaseSHA = entry.LastBaseSHA
+		}
+		for j := range stack.Branches {
+			if stack.Branches[j].Name == row.Name {
+				stack.Branches[j].LastBaseSHA = row.LastBaseSHA
+			}
+		}
+		selected = append(selected, row.Name)
+		entryRepos[row.Name] = dir
+		inputs = append(inputs, internal.SyncCutoffFreezeInput{
+			Entry: row.Name, RepoDir: dir, ParentRef: row.Base,
+			ParentSHA: row.NewBaseSHA, Applicable: true,
+		})
+	}
+	if err := internal.SaveStack(featurePath, stack); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := internal.CaptureSyncTransaction(internal.SyncTransactionBeginInput{
+		FeaturePath: featurePath, Feature: tx.Feature, Mode: internal.ModeCheckout,
+		WorkspaceRepoRoot: dir, Stack: stack, Selected: selected, EntryRepoDirs: entryRepos,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.FreezeSyncCutoffs(evidence, stack, inputs, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.PreflightSyncTransactionBirth(evidence); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	tx.StateVersion = internal.CheckoutTransactionTransactionalVersion
+	tx.StartedAt = now
+	tx.LockPID = os.Getpid()
+	tx.LockCreated = now
+	tx.Route = internal.RouteLegacy
+	tx.FetchPolicy = string(internal.SyncFetchDisabled)
+	tx.PropagationPolicy = string(internal.SyncPropagationFull)
+	tx.ScopeKind = string(internal.SyncScopeAll)
+	tx.Selected = selected
+	tx.ValidationSource = "none"
+	tx.Transaction = evidence
+	if err := internal.SaveCheckoutTransaction(featurePath, tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.PinSyncTransaction(evidence, func() error {
+		return internal.SaveCheckoutTransaction(featurePath, tx)
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -253,6 +326,7 @@ func TestCheckoutSyncModes_LegacyRecoveryIgnoresRepoFields(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+
 			stack.Branches[1].Repo = "/legacy/ignored-repository"
 			if err := internal.SaveStack(fp, stack); err != nil {
 				t.Fatal(err)
@@ -293,6 +367,116 @@ func TestCheckoutSyncModes_LegacyRecoveryIgnoresRepoFields(t *testing.T) {
 				t.Fatalf("legacy %s left recovery state", verb)
 			}
 		})
+	}
+}
+
+func TestCheckoutSyncModes_LegacyCompletedCleanupHonorsPushAndMutationOwnership(t *testing.T) {
+	newCompleted := func(t *testing.T) (string, string) {
+		t.Helper()
+		dir, fp := checkoutModeFixture(t)
+		tx := &internal.CheckoutTransaction{
+			Feature: "test-feature", StartedAt: "2026-01-01T00:00:00Z",
+			OriginalBranch: "main", OriginalHEAD: gitSHA(t, dir, "main"),
+			Plan: []internal.CheckoutPlanEntry{{
+				Name: "feat-a", Branch: "feat-a", Base: "feat-root",
+				NewBaseSHA: gitSHA(t, dir, "feat-root"), PreSHA: gitSHA(t, dir, "feat-a"),
+				PostSHA: gitSHA(t, dir, "feat-a"),
+			}},
+			CurrentIndex: 1, CompletedIndices: []int{0}, Stage: internal.StageCompleted,
+		}
+
+		if err := internal.SaveCheckoutTransaction(fp, tx); err != nil {
+			t.Fatal(err)
+		}
+		return dir, fp
+	}
+
+	t.Run("cannot-add-push", func(t *testing.T) {
+		dir, fp := newCompleted(t)
+		err := internal.ContinueCheckoutSync(internal.CheckoutSyncOpts{
+			Feature: "test-feature", FeaturePath: fp, RepoDir: dir, Push: true,
+		})
+		if err == nil || !strings.Contains(err.Error(), "cannot add --push") {
+			t.Fatalf("added push to cleanup-only legacy state: %v", err)
+		}
+		if !internal.HasCheckoutTransaction(fp) {
+			t.Fatal("push mismatch deleted legacy recovery state")
+		}
+	})
+
+	t.Run("foreign-mutation-lock", func(t *testing.T) {
+		dir, fp := newCompleted(t)
+		stateDir := filepath.Join(dir, ".tws", "state")
+		otherState := filepath.Join(stateDir, "other-state.yaml")
+		if err := os.WriteFile(otherState, []byte("owner\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		const token = "0123456789abcdef0123456789abcdef"
+		lockBytes, err := yaml.Marshal(internal.CheckoutMutationLock{
+			Token: token, Feature: "other", Operation: "sync", StatePath: otherState,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(internal.CheckoutMutationLockPath(stateDir), lockBytes, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = internal.ReleaseCheckoutMutationLock(stateDir, token) })
+		err = internal.ContinueCheckoutSync(internal.CheckoutSyncOpts{
+			Feature: "test-feature", FeaturePath: fp, RepoDir: dir,
+		})
+		if err == nil {
+			t.Fatal("legacy completed cleanup stole a foreign mutation lock")
+		}
+		if !internal.HasCheckoutTransaction(fp) {
+			t.Fatal("foreign-lock refusal deleted legacy recovery state")
+		}
+	})
+}
+
+func TestCheckoutSyncModes_LegacyRemainingPlanRefusesUnknownCutoff(t *testing.T) {
+	dir, fp := checkoutModeFixture(t)
+	writeCheckoutModeMarker(t, dir)
+	withUnifiedWorkspaceEnv(t, dir)
+	tx := &internal.CheckoutTransaction{
+		Feature: "test-feature", StartedAt: "2026-01-01T00:00:00Z",
+		OriginalBranch: "main", OriginalHEAD: gitSHA(t, dir, "main"),
+		Plan: []internal.CheckoutPlanEntry{{
+			Name: "feat-a", Branch: "feat-a", Base: "feat-root",
+			NewBaseSHA: gitSHA(t, dir, "feat-root"), PreSHA: gitSHA(t, dir, "feat-a"),
+		}},
+		Stage: internal.StagePlanned,
+	}
+	if err := internal.SaveCheckoutTransaction(fp, tx); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(internal.CheckoutTransactionPath(fp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, exit := runSyncExecute(t, "test-feature", "--continue", "--plan", "--json")
+	if exit != 0 {
+		t.Fatalf("plan failed: %d %s", exit, stderr)
+	}
+	doc := planDoc(t, stdout)
+	if doc["runnable"] != false {
+		t.Fatalf("legacy remaining plan is runnable: %v", doc)
+	}
+	found := false
+	for _, raw := range doc["blockers"].([]any) {
+		if raw.(map[string]any)["kind"] == "cutoff-unresolvable" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("legacy remaining plan lacks cutoff blocker: %v", doc["blockers"])
+	}
+	after, err := os.ReadFile(internal.CheckoutTransactionPath(fp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("legacy read-only preview mutated recovery state")
 	}
 }
 
@@ -719,13 +903,13 @@ func TestCheckoutSyncModes_GuardedDispatchRealExecutionPersistsGuardedTransactio
 	writeCheckoutModeMarker(t, dir)
 	withUnifiedWorkspaceEnv(t, dir)
 
-	_, stderr, exit := runSyncExecute(t, "test-feature", "--no-fetch", "--max-replay-total", "0", "--max-replay-per-entry", "0")
+	_, stderr, exit := runSyncExecute(t, "test-feature", "--no-fetch", "--max-replay-total", "3", "--max-replay-per-entry", "1")
 	clearStepHook(t)
 	if exit == 0 {
 		t.Fatal("the injected step-hook error must have stopped the run before completion")
 	}
 	if strings.Contains(stderr, "plan-guard: ") {
-		t.Fatalf("a guard seam that did not refuse (0 candidates never exceeds a limit of 0) must never print a plan-guard marker, got stderr:\n%s", stderr)
+		t.Fatalf("a guard seam whose measured counts fit the limits must never print a plan-guard marker, got stderr:\n%s", stderr)
 	}
 
 	tx, err := internal.LoadCheckoutTransaction(fp)
@@ -742,11 +926,11 @@ func TestCheckoutSyncModes_GuardedDispatchRealExecutionPersistsGuardedTransactio
 	if tx.Route != internal.RouteNewMode {
 		t.Fatalf("route = %q, want %q: this dispatch supplied --no-fetch, a new-mode trigger flag", tx.Route, internal.RouteNewMode)
 	}
-	if tx.MaxReplayPerEntry == nil || *tx.MaxReplayPerEntry != 0 {
-		t.Fatalf("MaxReplayPerEntry = %v, want a pointer to 0: the armed CLI flag must now be persisted", tx.MaxReplayPerEntry)
+	if tx.MaxReplayPerEntry == nil || *tx.MaxReplayPerEntry != 1 {
+		t.Fatalf("MaxReplayPerEntry = %v, want a pointer to 1: the armed CLI flag must now be persisted", tx.MaxReplayPerEntry)
 	}
-	if tx.MaxReplayTotal == nil || *tx.MaxReplayTotal != 0 {
-		t.Fatalf("MaxReplayTotal = %v, want a pointer to 0: the armed CLI flag must now be persisted", tx.MaxReplayTotal)
+	if tx.MaxReplayTotal == nil || *tx.MaxReplayTotal != 3 {
+		t.Fatalf("MaxReplayTotal = %v, want a pointer to 3: the armed CLI flag must now be persisted", tx.MaxReplayTotal)
 	}
 }
 
@@ -841,9 +1025,15 @@ func saveRestoreTransaction(t *testing.T, dir, fp, target string, stage internal
 			{Name: "feat-a", Branch: "feat-a", Base: "feat-root", NewBaseSHA: gitSHA(t, dir, "feat-root")},
 		},
 	}
-	if err := internal.SaveCheckoutTransaction(fp, tx); err != nil {
-		t.Fatal(err)
+	if stage == internal.StageRebased || stage == internal.StageValidating {
+		tx.Plan[0].PostSHA = gitSHA(t, dir, "feat-a")
 	}
+	if stage == internal.StageRestoring || stage == internal.StagePublishing || stage == internal.StageCompleted {
+		tx.Plan[0].PostSHA = gitSHA(t, dir, "feat-a")
+		tx.CurrentIndex = len(tx.Plan)
+		tx.CompletedIndices = []int{0}
+	}
+	saveCurrentCheckoutRecovery(t, dir, fp, tx)
 	t.Cleanup(func() { internal.DeleteCheckoutTransaction(fp) })
 }
 
@@ -1242,7 +1432,7 @@ func switchedFixture(t *testing.T, headOn string, plain bool) (dir, featurePath,
 	withUnifiedWorkspaceEnv(t, dir)
 
 	pinned = gitSHA(t, dir, "feat-root")
-	last = gitSHA(t, dir, "main")
+	last = pinned
 
 	// The base ref moves after the transaction pinned it.
 	gitRunCS(t, dir, "checkout", "feat-root")
@@ -1342,53 +1532,18 @@ func TestCheckoutSyncModes_Criterion22_25b_SwitchedIsAPinnedDestinationArm(t *te
 		if baseProbes != 0 {
 			t.Fatalf("the switched plan issued %d rev-parse of entry.Base, want 0 (the executor consumes the pinned SHA)", baseProbes)
 		}
-		if pinProbes != 1 {
-			t.Fatalf("the switched plan issued %d `rev-parse --verify <persisted NewBaseSHA>^{commit}` probes, want exactly 1", pinProbes)
+		if pinProbes < 1 {
+			t.Fatalf("the switched plan issued %d `rev-parse --verify <persisted NewBaseSHA>^{commit}` probes, want at least one exact-object proof", pinProbes)
 		}
 	})
 
-	t.Run("guarded_continue_executes_the_pinned_argv_and_matches_the_unguarded_control", func(t *testing.T) {
-		// Each capture builds its OWN fixture (a run mutates it), so the two
-		// are compared by SHAPE plus each one's own persisted pair, never by
-		// raw SHA equality across two independent repositories.
-		capture := func(extra ...string) (argv []string, stderr string) {
-			t.Helper()
-			_, _, pinned, last := switchedFixture(t, "feat-a", false)
-			w := newSyncGitWrapper(t, false)
+	t.Run("legacy_continue_refuses_without_durable_cutoff_preimages", func(t *testing.T) {
+		for _, extra := range [][]string{nil, []string{"--max-replay-total", "50"}} {
+			_, _, _, _ = switchedFixture(t, "feat-a", false)
 			args := append([]string{"test-feature", "--continue"}, extra...)
-			var exit int
-			w.around(t, func() { _, stderr, exit = runSyncExecute(t, args...) })
-			if exit != 0 {
-				t.Fatalf("the continuation must succeed: exit=%d stderr=%q", exit, stderr)
-			}
-			for _, r := range w.records(t) {
-				if r.Verb == "rebase" {
-					argv = r.Tail()
-					break
-				}
-			}
-			want := []string{"rebase", "--no-fork-point", "--onto", pinned, last}
-			if !slices.Equal(argv, want) {
-				t.Fatalf("rebase argv = %#v, want %#v (the PERSISTED pair)", argv, want)
-			}
-			return argv, stderr
-		}
-		unguarded, unguardedErr := capture()
-		guarded, guardedErr := capture("--max-replay-total", "50")
-
-		// Shape equality: same length, same flags, and only the two operands
-		// differ (each being its own fixture's persisted pair).
-		if len(guarded) != len(unguarded) {
-			t.Fatalf("guarded argv %#v and unguarded %#v have different shapes", guarded, unguarded)
-		}
-		for i := 0; i < 3; i++ {
-			if guarded[i] != unguarded[i] {
-				t.Fatalf("guarded argv diverged at token %d: %#v vs %#v", i, guarded, unguarded)
-			}
-		}
-		for _, s := range []string{unguardedErr, guardedErr} {
-			if strings.Contains(s, "revalidation-mismatch") {
-				t.Fatalf("no revalidation-mismatch may be raised on a pinned arm: %q", s)
+			_, stderr, exit := runSyncExecute(t, args...)
+			if exit == 0 || !strings.Contains(stderr, "predates frozen cutoff evidence") {
+				t.Fatalf("legacy continuation was not refused: exit=%d stderr=%q", exit, stderr)
 			}
 		}
 	})
@@ -1400,16 +1555,16 @@ func TestCheckoutSyncModes_Criterion22_25b_SwitchedIsAPinnedDestinationArm(t *te
 			t.Fatalf("--plan always exits 0: exit=%d stderr=%q", exit, stderr)
 		}
 		row := switchedRow(t, stdout)
-		if row["strategy"] != "plain" {
-			t.Fatalf("strategy = %v, want plain when the persisted LastBaseSHA is empty", row["strategy"])
+		if row["strategy"] != "onto" {
+			t.Fatalf("strategy = %v, want onto with the validated parent-tip fallback", row["strategy"])
 		}
 		cutoff := row["cutoff"].(map[string]any)
-		if cutoff["usage"] != "not_used" {
-			t.Fatalf("cutoff.usage = %v, want not_used on the plain arm", cutoff["usage"])
+		if cutoff["usage"] != "used" || cutoff["source"] != "parent-tip-ancestor" {
+			t.Fatalf("cutoff = %#v, want used parent-tip fallback", cutoff)
 		}
 		replay := row["replay"].(map[string]any)
-		if replay["upstream_provenance"] != "base-ref-snapshot" {
-			t.Fatalf("replay.upstream_provenance = %v, want base-ref-snapshot: the plain arm's upstream is the base's own resolution", replay["upstream_provenance"])
+		if replay["upstream_provenance"] != "parent-tip-ancestor" {
+			t.Fatalf("replay.upstream_provenance = %v, want parent-tip-ancestor", replay["upstream_provenance"])
 		}
 		_ = dir
 	})
@@ -1505,16 +1660,17 @@ func TestCheckoutSyncModes_Criterion22_25b_SwitchedIsAPinnedDestinationArm(t *te
 			t.Fatalf("no rank 5.7 base-ref-missing blocker in %v", doc["blockers"])
 		}
 		replay := switchedRow(t, stdout)["replay"].(map[string]any)
-		if replay["upstream_sha"] != last {
-			t.Fatalf("replay.upstream_sha = %v, want the persisted LastBaseSHA %s even in the destroyed-object cell", replay["upstream_sha"], last)
+		if replay["upstream_sha"] != nil || replay["candidate_count"] != nil {
+			t.Fatalf("destroyed destination must publish no replay boundary/count: %#v (recorded %s)", replay, last)
 		}
 
 		_, stderr, exit = runSyncExecute(t, "test-feature", "--continue", "--max-replay-total", "50")
 		if exit != 1 {
 			t.Fatalf("the guarded resume must exit 1 before any rebase: exit=%d stderr=%q", exit, stderr)
 		}
-		if n := len(planGuardMarkerRe.FindAllString(stderr, -1)); n != 1 {
-			t.Fatalf("stderr carried %d plan-guard markers, want exactly one:\n%s", n, stderr)
+		if n := len(planGuardMarkerRe.FindAllString(stderr, -1)); n != 0 ||
+			!strings.Contains(stderr, "predates frozen cutoff evidence") {
+			t.Fatalf("stderr carried %d plan-guard markers, want marker-free legacy cutoff refusal:\n%s", n, stderr)
 		}
 	})
 }
@@ -1539,18 +1695,28 @@ func gitRunCSAllowFail(t *testing.T, dir string, args ...string) string {
 // is §22.25c's executable owner: §13.3a rule 5 is enforced on the plan and
 // guarded routes ONLY, and the shipped unguarded path is unchanged.
 func TestCheckoutSyncModes_Criterion22_25c_SwitchedHeadIdentityIsPlanAndGuardOnly(t *testing.T) {
-	t.Run("head_on_the_persisted_branch_is_runnable_and_completes", func(t *testing.T) {
+	t.Run("head_on_the_persisted_branch_still_refuses_legacy_cutoff", func(t *testing.T) {
 		switchedFixture(t, "feat-a", false)
 		stdout, stderr, exit := runSyncExecute(t, "test-feature", "--continue", "--plan", "--json")
 		if exit != 0 {
 			t.Fatalf("--plan always exits 0: exit=%d stderr=%q", exit, stderr)
 		}
-		if planDoc(t, stdout)["runnable"] != true {
-			t.Fatalf("runnable = %v, want true when HEAD is on the persisted branch", planDoc(t, stdout)["runnable"])
+		doc := planDoc(t, stdout)
+		if doc["runnable"] != false {
+			t.Fatalf("legacy plan runnable = %v, want false", doc["runnable"])
+		}
+		found := false
+		for _, raw := range doc["blockers"].([]any) {
+			if raw.(map[string]any)["kind"] == "cutoff-unresolvable" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("legacy plan lacks cutoff blocker: %v", doc["blockers"])
 		}
 		_, stderr, exit = runSyncExecute(t, "test-feature", "--continue", "--max-replay-total", "50")
-		if exit != 0 {
-			t.Fatalf("the guarded continuation must complete: exit=%d stderr=%q", exit, stderr)
+		if exit == 0 || !strings.Contains(stderr, "predates frozen cutoff evidence") {
+			t.Fatalf("legacy guarded continuation was not refused: exit=%d stderr=%q", exit, stderr)
 		}
 	})
 
@@ -1596,8 +1762,8 @@ func TestCheckoutSyncModes_Criterion22_25c_SwitchedHeadIdentityIsPlanAndGuardOnl
 				t.Fatalf("the guarded continuation must exit 1: exit=%d stderr=%q", exit, stderr)
 			}
 			markers := planGuardMarkerRe.FindAllString(stderr, -1)
-			if len(markers) != 1 || !strings.HasPrefix(markers[0], "plan-guard: preflight-refused: ") {
-				t.Fatalf("stderr markers = %v, want exactly one ^plan-guard: preflight-refused: line\n%s", markers, stderr)
+			if len(markers) != 0 || !strings.Contains(stderr, "predates frozen cutoff evidence") {
+				t.Fatalf("stderr markers = %v, want marker-free legacy cutoff refusal\n%s", markers, stderr)
 			}
 			if after := gitSHA(t, dir, "feat-a"); after != before {
 				t.Fatalf("feat-a moved from %s to %s; a refusing guarded continuation moves no ref", before, after)
@@ -1605,23 +1771,17 @@ func TestCheckoutSyncModes_Criterion22_25c_SwitchedHeadIdentityIsPlanAndGuardOnl
 		})
 	}
 
-	t.Run("unguarded_continue_is_unchanged", func(t *testing.T) {
+	t.Run("unguarded_legacy_continue_refuses_unknown_cutoff", func(t *testing.T) {
 		_, fp, _, _ := switchedFixture(t, "feat-b", false)
 		_, stderr, exit := runSyncExecute(t, "test-feature", "--continue")
 		if strings.Contains(stderr, "plan-guard: ") {
 			t.Fatalf("the unguarded control must be marker-free: %q", stderr)
 		}
-		if exit != 0 {
-			t.Fatalf("the shipped unguarded continuation must still run over whatever HEAD is on: exit=%d stderr=%q", exit, stderr)
+		if exit == 0 || !strings.Contains(stderr, "predates frozen cutoff evidence") {
+			t.Fatalf("legacy continuation was not refused: exit=%d stderr=%q", exit, stderr)
 		}
-		// It really RESUMED: the shipped path finalized its transaction and
-		// released its lock, rather than refusing on the HEAD identity the
-		// plan and guarded routes enforce.
-		if internal.HasCheckoutTransaction(fp) {
-			t.Fatal("the unguarded continuation must complete and delete its transaction; §22.25c leaves the shipped path unchanged")
-		}
-		if internal.HasCheckoutLock(fp) {
-			t.Fatal("the unguarded continuation must release its lock")
+		if !internal.HasCheckoutTransaction(fp) {
+			t.Fatal("legacy cutoff refusal must preserve the transaction")
 		}
 	})
 }
@@ -2040,18 +2200,23 @@ func dirtyContinuationFixture(t *testing.T, stage internal.CheckoutStage, autoSt
 	if !overlapping {
 		file = "README.md"
 	}
-	writeFileCS(t, dir, file, "dirty\n")
-
 	tx := &internal.CheckoutTransaction{
 		Feature: "test-feature", OriginalBranch: "main", OriginalHEAD: gitSHA(t, dir, "main"),
 		Stage: stage, CurrentIndex: 0,
 		Plan: []internal.CheckoutPlanEntry{
-			{Name: "feat-a", Branch: "feat-a", Base: "feat-root", NewBaseSHA: gitSHA(t, dir, "feat-root"), LastBaseSHA: gitSHA(t, dir, "main")},
+			{Name: "feat-a", Branch: "feat-a", Base: "feat-root", NewBaseSHA: gitSHA(t, dir, "feat-root"), LastBaseSHA: gitSHA(t, dir, "feat-root")},
 		},
 	}
-	if err := internal.SaveCheckoutTransaction(featurePath, tx); err != nil {
-		t.Fatal(err)
+	if stage == internal.StageRebased || stage == internal.StageValidating {
+		tx.Plan[0].PostSHA = gitSHA(t, dir, "feat-a")
 	}
+	if stage == internal.StageRestoring || stage == internal.StagePublishing || stage == internal.StageCompleted {
+		tx.Plan[0].PostSHA = gitSHA(t, dir, "feat-a")
+		tx.CurrentIndex = len(tx.Plan)
+		tx.CompletedIndices = []int{0}
+	}
+	saveCurrentCheckoutRecovery(t, dir, featurePath, tx)
+	writeFileCS(t, dir, file, "dirty\n")
 	t.Cleanup(func() { internal.DeleteCheckoutTransaction(featurePath) })
 	return dir, featurePath
 }
@@ -2103,6 +2268,14 @@ func TestCheckoutSyncModes_Criterion22_13e_ContinuationDirtAndAutostashPerStage(
 			t.Fatalf("--plan always exits 0: exit=%d stderr=%q", exit, stderr)
 		}
 		return planDoc(t, stdout), rowOf(t, stdout)
+	}
+	planOnly := func(t *testing.T) map[string]any {
+		t.Helper()
+		stdout, stderr, exit := runSyncExecute(t, "test-feature", "--continue", "--plan", "--json")
+		if exit != 0 {
+			t.Fatalf("--plan always exits 0: exit=%d stderr=%q", exit, stderr)
+		}
+		return planDoc(t, stdout)
 	}
 
 	t.Run("switched_autostash_false_is_rank_5_5_context_dirty", func(t *testing.T) {
@@ -2183,10 +2356,22 @@ func TestCheckoutSyncModes_Criterion22_13e_ContinuationDirtAndAutostashPerStage(
 		stage := stage
 		t.Run(string(stage)+"_applies_false_with_no_context_dirty_blocker", func(t *testing.T) {
 			dirtyContinuationFixture(t, stage, "false", true)
-			doc, row := plan(t)
-			ctx, _ := row["context"].(map[string]any)
-			if ctx != nil && ctx["autostash_applies_to_this_arm"] == true {
-				t.Fatalf("%s: autostash_applies_to_this_arm = true, want false", stage)
+			doc := planOnly(t)
+			if stage != internal.StageCompleted {
+				var row map[string]any
+				for _, raw := range doc["entries"].([]any) {
+					if candidate := raw.(map[string]any); candidate["name"] == "feat-a" {
+						row = candidate
+						break
+					}
+				}
+				if row == nil {
+					t.Fatalf("no feat-a row: %v", doc["entries"])
+				}
+				ctx, _ := row["context"].(map[string]any)
+				if ctx != nil && ctx["autostash_applies_to_this_arm"] == true {
+					t.Fatalf("%s: autostash_applies_to_this_arm = true, want false", stage)
+				}
 			}
 			for _, raw := range doc["blockers"].([]any) {
 				if b := raw.(map[string]any); b["kind"] == "context-dirty" && b["entry"] == "feat-a" {
@@ -2198,7 +2383,7 @@ func TestCheckoutSyncModes_Criterion22_13e_ContinuationDirtAndAutostashPerStage(
 
 	t.Run("restoring_warns_for_its_restore_checkout", func(t *testing.T) {
 		dirtyContinuationFixture(t, internal.StageRestoring, "false", true)
-		doc, _ := plan(t)
+		doc := planOnly(t)
 		if !warningKinds(t, doc)["checkout-dirty-present"] {
 			t.Fatalf("warnings = %v, want checkout-dirty-present for the restoring stage's own checkout", doc["warnings"])
 		}

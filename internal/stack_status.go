@@ -172,10 +172,14 @@ type StackStatusHeads struct {
 // null when the record was never consulted: a verdict never formed is never
 // published.
 type StackStatusBaseRecord struct {
-	SHA    *string `json:"sha"`
-	Commit *string `json:"commit"`
-	Short  *string `json:"short"`
-	State  *string `json:"state"`
+	SHA       *string `json:"sha"`
+	Commit    *string `json:"commit"`
+	Short     *string `json:"short"`
+	State     *string `json:"state"`
+	Effective *string `json:"effective"`
+	Source    *string `json:"source"`
+	Validity  *string `json:"validity"`
+	Reason    *string `json:"reason"`
 }
 
 // StackStatusNote projects one informational evaluator note.
@@ -753,10 +757,14 @@ func stackStatusProjectEdge(se StackEntry, edge StackEdge) StackStatusEntry {
 			MergeBaseShort: stackStatusOptString(edge.MergeBaseShort),
 		},
 		BaseRecord: StackStatusBaseRecord{
-			SHA:    stackStatusOptString(edge.LastBaseSHA),
-			Commit: stackStatusOptString(edge.LastBaseCommit),
-			Short:  stackStatusOptString(edge.LastBaseShort),
-			State:  stackStatusOptString(string(edge.BaseRecord)),
+			SHA:       stackStatusOptString(edge.LastBaseSHA),
+			Commit:    stackStatusOptString(edge.LastBaseCommit),
+			Short:     stackStatusOptString(edge.LastBaseShort),
+			State:     stackStatusOptString(string(edge.BaseRecord)),
+			Effective: stackStatusOptString(edge.EffectiveCutoff),
+			Source:    stackStatusOptString(string(edge.CutoffSource)),
+			Validity:  stackStatusOptString(string(edge.CutoffValidity)),
+			Reason:    stackStatusOptString(string(edge.CutoffReason)),
 		},
 		Ancestry: StackStatusAncestry{
 			Status:   stackStatusOptString(string(edge.Status)),
@@ -1214,6 +1222,26 @@ func stackStatusFlagsCell(e StackStatusEntry) string {
 // sanitized them and re-sanitizing would double-truncate.
 func stackStatusDetailLines(e StackStatusEntry) []string {
 	var lines []string
+	if e.BaseRecord.Validity != nil {
+		recorded := "<absent>"
+		if e.BaseRecord.SHA != nil {
+			recorded = *e.BaseRecord.SHA
+		}
+		effective := "<none>"
+		if e.BaseRecord.Effective != nil {
+			effective = *e.BaseRecord.Effective
+		}
+		source := "none"
+		if e.BaseRecord.Source != nil {
+			source = *e.BaseRecord.Source
+		}
+		reason := ""
+		if e.BaseRecord.Reason != nil {
+			reason = " reason=" + *e.BaseRecord.Reason
+		}
+		lines = append(lines, fmt.Sprintf("cutoff: recorded=%s effective=%s source=%s validity=%s%s",
+			recorded, effective, source, *e.BaseRecord.Validity, reason))
+	}
 	if stackStatusDeref(e.Ancestry.Status) != string(AncestryStatusCurrent) {
 		reason := fmt.Sprintf("reason: %s", e.Ancestry.Reason)
 		if e.BaseRecord.Short != nil {

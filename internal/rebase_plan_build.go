@@ -333,6 +333,7 @@ type entryCollateralInput struct {
 	UpstreamSHA            string // "" when replay.upstream_sha is null
 	BranchSHA              string // this row's own head.sha; "" when unresolved
 	ArgvHasUpdateRefs      bool
+	ArgvDisablesUpdateRefs bool
 	RebaseUpdateRefsConfig *bool   // effective rebase.updateRefs, decoded; nil when not evaluated/invalid
 	EffectiveBackend       *string // merge | apply | nil
 	Repo                   string  // StackEntry.Repo token, for PlanCollateralRef.Repo
@@ -347,6 +348,10 @@ type entryCollateralInput struct {
 // names explicitly: rebase.updateRefs configured true but effective_backend
 // unresolvable.
 func (b *planBuilder) computeCollateral(in entryCollateralInput) ([]PlanCollateralRef, *string) {
+	if in.ArgvDisablesUpdateRefs {
+		mechanism := "none"
+		return []PlanCollateralRef{}, &mechanism
+	}
 	if in.RebaseUpdateRefsConfig != nil && *in.RebaseUpdateRefsConfig && in.EffectiveBackend == nil {
 		return nil, nil
 	}
@@ -445,6 +450,8 @@ type entryPrep struct {
 	HeadSHA        string
 	HeadState      string // present | missing | unresolvable
 	CheckoutOnto   bool
+	CutoffDecision SyncCutoffDecision
+	CutoffErr      error
 	Role           string
 	ParentName     string
 	Deferred       bool
@@ -486,15 +493,9 @@ func determineSkip(mode WorkspaceMode, entry StackEntry, oe OrderedExecution) st
 		if mode == ModeCheckout {
 			return "skipped-archived"
 		}
-		if oe.UpdatedByRef {
-			return "skipped-updated-ref"
-		}
 		return ""
 	}
 	if mode == ModeExternal && (oe.Materialization == "worktree-missing" || oe.Materialization == "prunable") {
-		if oe.UpdatedByRef {
-			return "skipped-updated-ref"
-		}
 		return ""
 	}
 	return ""
@@ -520,6 +521,9 @@ func (b *planBuilder) prepareEntry(oe OrderedExecution, sel SyncSelectedEntry, e
 	contextUsable := ctx.ExecutionErr == nil && ctx.ExecutionDir != ""
 
 	baseResult := ResolveSyncBase(*b.req.Stack, entry, ctx.ExecutionDir)
+	if b.req.Mode == ModeCheckout {
+		baseResult = ResolveCheckoutSyncBase(*b.req.Stack, entry)
+	}
 	skip := determineSkip(b.req.Mode, entry, oe)
 
 	// §13.3a: decide the pinned-destination arm FIRST, because on it
@@ -574,6 +578,27 @@ func (b *planBuilder) prepareEntry(oe OrderedExecution, sel SyncSelectedEntry, e
 		checkoutOnto = entry.LastBaseSHA != "" && entry.LastBaseSHA != currentBaseSHA
 	}
 
+	cutoffDecision, persistedCutoff := b.persistedCutoff(entry.Name)
+	var cutoffErr error
+	if persistedCutoff {
+		entry.LastBaseSHA = cutoffDecision.Recorded
+	} else if contextUsable && baseResult.Kind != "none" && currentBaseSHA != "" && headSHA != "" && skip == "" {
+		cutoffDecision, cutoffErr = ResolveSyncCutoff(SyncCutoffResolveInput{
+			RepoDir: ctx.ExecutionDir, RepoCommonDir: ctx.ExecutionIdentity.CommonDir,
+			Entry: entry.Name, GitBranch: entry.GitBranch(),
+			ParentRef: baseResult.Base, ParentSHA: currentBaseSHA,
+			ChildSHA: headSHA, Recorded: entry.LastBaseSHA, Applicable: true,
+		})
+	} else if skip != "" || baseResult.Kind == "none" {
+		cutoffDecision = SyncCutoffDecision{
+			Entry: entry.Name, GitBranch: entry.GitBranch(), ParentRef: baseResult.Base,
+			ParentSHA: currentBaseSHA, ChildRef: "refs/heads/" + entry.GitBranch(),
+			ChildSHA: headSHA, Recorded: entry.LastBaseSHA,
+			Source: SyncCutoffSourceNone, Validity: SyncCutoffNotApplicable,
+			Reason: SyncCutoffReasonNotApplicable,
+		}
+
+	}
 	// §10.4's `jit-deferred` indeterminacy policy: a deferred destination is
 	// deferred only for a row an EARLIER row of this run has not yet
 	// rewritten. At the JIT seam of the row itself, every earlier row has
@@ -594,7 +619,11 @@ func (b *planBuilder) prepareEntry(oe OrderedExecution, sel SyncSelectedEntry, e
 		Mode: b.req.Mode, Skip: skip, Pass: oe.Pass, GitBranch: entry.GitBranch(),
 		BaseResolved: baseResult.Kind != "none", Base: baseResult.Base,
 		LastBaseSHA: entry.LastBaseSHA, CurrentBaseSHA: currentBaseSHA,
-		HeadUsable: headState == "present", Scoped: b.req.Selection.Policy.Scoped(),
+		EffectiveCutoffSHA: cutoffDecision.EffectiveSHA,
+		CutoffValid:        cutoffDecision.Validity == SyncCutoffValid,
+		HeadUsable:         headState == "present",
+		Scoped: b.req.Selection.Policy.Scoped() ||
+			b.req.Selection.Policy.Propagation == SyncPropagationLocalOnly,
 		BaseMayMoveBeforeExecution:  baseResult.IsRemoteTracking && b.req.Policy.Fetch == SyncFetchEnabled,
 		ContextUsable:               contextUsable,
 		CheckoutOnto:                checkoutOnto,
@@ -613,11 +642,35 @@ func (b *planBuilder) prepareEntry(oe OrderedExecution, sel SyncSelectedEntry, e
 		Entry: entry, OE: oe, CtxResult: ctx, BaseResult: baseResult, Skip: skip,
 		ContextUsable: contextUsable, CurrentBaseSHA: currentBaseSHA, HeadSHA: headSHA,
 		HeadState: headState, CheckoutOnto: checkoutOnto, Role: string(sel.Role),
+		CutoffDecision: cutoffDecision, CutoffErr: cutoffErr,
 		ParentName: sel.ParentName, Deferred: deferred, ProbeStrategy: probe,
 		DirtEndangersThisArm: b.dirtEndangersArm(entry),
 		SwitchedPinned:       switchedPinned, PinnedObjGone: pinnedGone,
 		HeadIdentity: headIdentity, HeadIdentityBad: headIdentityBad,
 	}
+}
+
+func (b *planBuilder) persistedCutoff(name string) (SyncCutoffDecision, bool) {
+	if !b.req.Continue {
+		return SyncCutoffDecision{}, false
+	}
+	var tx *SyncTransaction
+	if b.req.Mode == ModeCheckout {
+		if checkout := b.checkoutTransaction(); checkout != nil {
+			tx = checkout.Transaction
+		}
+	} else if payload := b.req.ExternalState.Files.Payload.Payload; payload != nil {
+		tx = payload.Transaction
+	}
+	if tx == nil || !tx.CutoffsReady {
+		return SyncCutoffDecision{}, false
+	}
+	for _, decision := range tx.Cutoffs {
+		if decision.Entry == name {
+			return decision, true
+		}
+	}
+	return SyncCutoffDecision{}, false
 }
 
 // aggregateScopes turns every prepared entry's context and probed strategy
@@ -695,6 +748,15 @@ func argvHasFlag(argv []string, flag string) bool {
 	return false
 }
 
+func argvHasConfig(argv []string, config string) bool {
+	for i := 0; i+1 < len(argv); i++ {
+		if argv[i] == "-c" && argv[i+1] == config {
+			return true
+		}
+	}
+	return false
+}
+
 // boolConfigValue decodes a PlanConfigSlot's "true"/"false" string value
 // (§2.11's PlanConfigSlot.Value convention) into a *bool, nil whenever the
 // slot is not a validly-read boolean.
@@ -725,27 +787,48 @@ func (b *planBuilder) buildCutoff(p entryPrep, strategy, usage string) PlanEntry
 	if !isRealStrategy(strategy) {
 		write = "never"
 	}
-	c := PlanEntryCutoff{Provenance: "none", Usage: usage, Write: write}
+	c := PlanEntryCutoff{Provenance: "none", Source: string(SyncCutoffSourceNone), Usage: usage, Write: write}
 	if p.Entry.LastBaseSHA == "" {
 		state := "absent"
 		c.State = &state
+	} else {
+		recorded := p.Entry.LastBaseSHA
+		c.RecordedSHA = &recorded
+		c.Provenance = string(SyncCutoffSourceRecorded)
+	}
+	if !p.ContextUsable {
 		return c
 	}
-	recorded := p.Entry.LastBaseSHA
-	c.RecordedSHA = &recorded
-	c.Provenance = "recorded-by-sync"
-	if !p.ContextUsable || p.Skip == "skipped-updated-ref" {
-		return c
-	}
-	if err := VerifyGitRef(p.CtxResult.ExecutionDir, recorded); err != nil {
-		state := "unresolvable"
+	decision := p.CutoffDecision
+	if p.Entry.LastBaseSHA != "" {
+		resolved, found, err := syncCutoffResolveExact(p.CtxResult.ExecutionDir, p.Entry.LastBaseSHA)
+		if err == nil && found {
+			c.ResolvedSHA = &resolved
+			state := "present"
+			c.State = &state
+		} else {
+			state := "unresolvable"
+			c.State = &state
+		}
+	} else if decision.RecordedSHA != "" {
+		resolved := decision.RecordedSHA
+		c.ResolvedSHA = &resolved
+		state := "present"
 		c.State = &state
-		return c
 	}
-	state := "present"
-	c.State = &state
-	resolved := recorded
-	c.ResolvedSHA = &resolved
+	if decision.EffectiveSHA != "" {
+		effective := decision.EffectiveSHA
+		c.EffectiveSHA = &effective
+	}
+	c.Source = string(decision.Source)
+	if decision.Validity != "" {
+		validity := string(decision.Validity)
+		c.Validity = &validity
+	}
+	if decision.Reason != "" {
+		reason := string(decision.Reason)
+		c.Reason = &reason
+	}
 	return c
 }
 
@@ -1020,7 +1103,11 @@ func (b *planBuilder) finishEntry(p entryPrep) (PlanEntry, []PlanBlocker) {
 		Mode: b.req.Mode, Skip: p.Skip, Pass: p.OE.Pass, GitBranch: entry.GitBranch(),
 		BaseResolved: p.BaseResult.Kind != "none", Base: p.BaseResult.Base,
 		LastBaseSHA: entry.LastBaseSHA, CurrentBaseSHA: p.CurrentBaseSHA,
-		HeadUsable: p.HeadState == "present", Scoped: b.req.Selection.Policy.Scoped(),
+		EffectiveCutoffSHA: p.CutoffDecision.EffectiveSHA,
+		CutoffValid:        p.CutoffDecision.Validity == SyncCutoffValid,
+		HeadUsable:         p.HeadState == "present",
+		Scoped: b.req.Selection.Policy.Scoped() ||
+			b.req.Selection.Policy.Propagation == SyncPropagationLocalOnly,
 		BaseMayMoveBeforeExecution: p.BaseResult.IsRemoteTracking && b.req.Policy.Fetch == SyncFetchEnabled,
 		ContextUsable:              p.ContextUsable,
 		CheckoutOnto:               p.CheckoutOnto,
@@ -1065,7 +1152,9 @@ func (b *planBuilder) finishEntry(p entryPrep) (PlanEntry, []PlanBlocker) {
 		Deferred:                p.Deferred,
 		CutoffUsage:             cutoffUsage,
 		CutoffState:             derefString(cutoff.State),
-		CutoffResolvedSHA:       derefString(cutoff.ResolvedSHA),
+		CutoffResolvedSHA:       derefString(cutoff.EffectiveSHA),
+		CutoffValid:             cutoff.Validity != nil && *cutoff.Validity == string(SyncCutoffValid),
+		CutoffSource:            cutoff.Source,
 	})
 
 	// destination.sha is the commit the replay lands on. A deferred
@@ -1132,6 +1221,7 @@ func (b *planBuilder) finishEntry(p entryPrep) (PlanEntry, []PlanBlocker) {
 			UpstreamSHA:            derefString(replay.UpstreamSHA),
 			BranchSHA:              p.HeadSHA,
 			ArgvHasUpdateRefs:      argvHasFlag(strat.Argv, "--update-refs"),
+			ArgvDisablesUpdateRefs: argvHasConfig(strat.Argv, "rebase.updateRefs=false"),
 			RebaseUpdateRefsConfig: boolConfigValue(cfg.UpdateRefs),
 			EffectiveBackend:       strat.EffectiveBackend,
 			Repo:                   entry.Repo,
@@ -1211,11 +1301,25 @@ func entryBlockers(p entryPrep, entry PlanEntry, real bool) []PlanBlocker {
 		// resolvable destination.
 		add(RefusalBaseRefMissing, "the persisted destination for "+name+" no longer names a commit")
 	}
+	if entry.Cutoff.Validity != nil && *entry.Cutoff.Validity == string(SyncCutoffInvalid) {
+		detail := "cutoff evidence for " + name + " is invalid"
+		if entry.Cutoff.Reason != nil {
+			detail += ": " + *entry.Cutoff.Reason
+		}
+		add(RefusalCutoffUnresolvable, detail)
+	}
+	if p.Skip == "" && (entry.Head.State == nil || *entry.Head.State != "present") {
+		add(RefusalHeadRefMissing, "branch "+entry.GitBranch+" has no resolvable HEAD")
+	}
+	if p.Skip == "" {
+		if entry.Base.Kind == "none" {
+			add(RefusalBaseUnset, name+" has no configured base")
+		} else if !entry.Destination.Deferred && entry.Destination.SHA == nil {
+			add(RefusalBaseRefMissing, "configured base for "+name+" does not resolve")
+		}
+	}
 	if !real {
 		return out // a row that structurally cannot execute contributes no further hazard
-	}
-	if entry.Head.State == nil || *entry.Head.State != "present" {
-		add(RefusalHeadRefMissing, "branch "+entry.GitBranch+" has no resolvable HEAD")
 	}
 	if entry.Materialization == "prunable" {
 		add(RefusalPrunableWorktree, "worktree for "+name+" is prunable")
@@ -1235,17 +1339,6 @@ func entryBlockers(p entryPrep, entry PlanEntry, real bool) []PlanBlocker {
 	unreadableAutostash := entry.Context.AutostashAppliesToThisArm == nil
 	if dirty && !autostashOK && !unreadableAutostash && p.DirtEndangersThisArm {
 		add(RefusalContextDirty, "tracked changes are present in "+name+"'s execution directory and no autostash covers this arm")
-	}
-	if entry.Base.Kind == "none" {
-		add(RefusalBaseUnset, name+" has no configured base")
-	} else if !entry.Destination.Deferred && entry.Destination.SHA == nil {
-		// A deferred destination is not a missing ref: an earlier row of this
-		// same run rewrites it, and destination.sha is null by construction
-		// (§4.2). Only an undeferred row with no resolution is rank 5.7.
-		add(RefusalBaseRefMissing, "configured base for "+name+" does not resolve")
-	}
-	if entry.Cutoff.State != nil && *entry.Cutoff.State == "unresolvable" {
-		add(RefusalCutoffUnresolvable, "recorded cutoff for "+name+" does not resolve")
 	}
 	if p.SwitchedPinned && p.HeadIdentityBad {
 		// §13.3a rule 5: the `switched` arm's next command is the rebase of
@@ -3043,6 +3136,36 @@ func preflightBlocker(req RebasePlanRequest) *PlanBlocker {
 	return &PlanBlocker{Kind: RefusalPreflightRefused, Detail: req.BasePreflight.Detail}
 }
 
+func recoveryCutoffBlocker(req RebasePlanRequest) *PlanBlocker {
+	if !req.Continue || len(req.Remaining) == 0 {
+		return nil
+	}
+	if req.Mode == ModeCheckout {
+		tx := req.CheckoutState.Files.CheckoutTransaction.Transaction
+		if tx == nil || tx.Transaction == nil || !tx.Transaction.CutoffsReady {
+			return &PlanBlocker{
+				Kind:   RefusalCutoffUnresolvable,
+				Detail: "checkout recovery has remaining replay work but no frozen cutoff evidence; preserve it and use --abort or inspect it manually",
+			}
+		}
+		return nil
+	}
+	payload := req.ExternalState.Files.Payload.Payload
+	if payload == nil || payload.Transaction == nil {
+		return &PlanBlocker{
+			Kind:   RefusalCutoffUnresolvable,
+			Detail: "external recovery has remaining replay work but no frozen cutoff evidence; preserve it and use --abort or inspect it manually",
+		}
+	}
+	if !payload.Transaction.CutoffsReady && !SyncCutoffsRecoverableBeforeMutation(payload.Transaction) {
+		return &PlanBlocker{
+			Kind:   RefusalCutoffUnresolvable,
+			Detail: "external recovery has remaining replay work but no frozen cutoff evidence; preserve it and use --abort or inspect it manually",
+		}
+	}
+	return nil
+}
+
 // configIssueBlockers is rank 5.07 invalid-git-config: one document-level
 // blocker per distinct config_issues[] row this invocation actually
 // accumulated (§11.7's closed fatal-key domain already restricts issues to
@@ -3499,6 +3622,9 @@ func BuildRebasePlan(req RebasePlanRequest) (RebasePlan, error) {
 	if bl := preflightBlocker(req); bl != nil {
 		candidates = append(candidates, *bl)
 	}
+	if bl := recoveryCutoffBlocker(req); bl != nil {
+		candidates = append(candidates, *bl)
+	}
 	if bl := restoreBlocker(restoreProbe); bl != nil {
 		candidates = append(candidates, *bl)
 	}
@@ -3671,6 +3797,18 @@ func neutralizeDeferredResolution(e PlanEntry) PlanEntry {
 // input this invocation should re-read live (e.g. a freshly probed
 // GitVersion or config inventory) before calling this function.
 func RevalidatePlanEntry(req RebasePlanRequest, approved PlanEntry) (PlanEntryRevalidation, error) {
+	frozenFallback := approved.Cutoff.Source == string(SyncCutoffSourceParentTip) &&
+		approved.Cutoff.EffectiveSHA != nil
+	if frozenFallback && req.Stack != nil {
+		stackCopy := Stack{Branches: append([]StackEntry(nil), req.Stack.Branches...)}
+		for i := range stackCopy.Branches {
+			if stackCopy.Branches[i].Name == approved.Name {
+				stackCopy.Branches[i].LastBaseSHA = *approved.Cutoff.EffectiveSHA
+				break
+			}
+		}
+		req.Stack = &stackCopy
+	}
 	b := newPlanBuilder(req)
 	b.jitSeamFor = approved.Name
 
@@ -3721,6 +3859,10 @@ func RevalidatePlanEntry(req RebasePlanRequest, approved PlanEntry) (PlanEntryRe
 	for _, e := range entries {
 		if e.Name == approved.Name {
 			fresh = e
+			if frozenFallback {
+				fresh.Cutoff = approved.Cutoff
+				fresh.Replay.UpstreamProvenance = approved.Replay.UpstreamProvenance
+			}
 			found = true
 			break
 		}

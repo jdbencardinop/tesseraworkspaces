@@ -196,7 +196,8 @@ func TestSyncScoped_StateDocumentShapes(t *testing.T) {
 	wantTransactionKeys := []string{
 		"evidence_version", "run_id", "created_at", "updated_at",
 		"workspace_mode", "feature", "workspace_repo_root", "phase", "ready",
-		"selected", "metadata", "repositories", "actions", "publication", "rollback",
+		"selected", "cutoffs_ready", "cutoffs", "parent_attribution_from",
+		"metadata", "repositories", "actions", "publication", "rollback",
 	}
 	if got := mappingKeys(txNode); !slices.Equal(got, wantTransactionKeys) {
 		t.Fatalf("transaction keys = %v, want %v", got, wantTransactionKeys)
@@ -208,7 +209,8 @@ func TestSyncScoped_StateDocumentShapes(t *testing.T) {
 	actionNode := mappingValue(txNode, "actions").Content[0]
 	wantActionKeys := []string{
 		"sequence", "kind", "entry", "repo_common_dir", "context_path",
-		"context_before", "context_ref", "allowed_refs", "before_refs", "before_holders", "ref_log_anchors",
+		"context_before", "context_ref", "destination_sha", "cutoff_sha",
+		"parent_destinations_ready", "allowed_refs", "before_refs", "before_holders", "ref_log_anchors",
 		"context_reflog_anchor", "status",
 	}
 	if got := mappingKeys(actionNode); !slices.Equal(got, wantActionKeys) {

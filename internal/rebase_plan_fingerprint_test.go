@@ -526,13 +526,13 @@ func TestPlanFingerprint_TopLevelNeverNullArraysAreArrayTagEvenWhenNil(t *testin
 // Entry-row field order and the three fixed anchors (§8.2, §8.3)
 // ============================================================================
 
-func TestPlanFingerprint_EntryFieldOrderIsAscendingOneToForty(t *testing.T) {
+func TestPlanFingerprint_EntryFieldOrderIsAscendingOneToFortyFive(t *testing.T) {
 	plan := fingerprintFixturePlan()
 	fields := entryFields(t, plan)
 	got := fieldIDs(fields)
-	want := idRange(1, 40)
+	want := idRange(1, 45)
 	if !uint16SlicesEqual(got, want) {
-		t.Fatalf("entry field id sequence = %v, want ascending 1..40 = %v", got, want)
+		t.Fatalf("entry field id sequence = %v, want ascending 1..45 = %v", got, want)
 	}
 }
 
@@ -728,6 +728,15 @@ func TestPlanFingerprint_ValueChangeMovesDigest(t *testing.T) {
 		{"entries[0].strategy", func(p *RebasePlan) { p.Entries[0].Strategy = "merge" }},
 		{"entries[0].replay.determinacy", func(p *RebasePlan) { p.Entries[0].Replay.Determinacy = "unknown" }},
 		{"entries[0].destination.sha", func(p *RebasePlan) { p.Entries[0].Destination.SHA = strPtr("9999000000000000000000000000000000000000") }},
+		{"entries[0].cutoff.effective_sha", func(p *RebasePlan) {
+			p.Entries[0].Cutoff.EffectiveSHA = strPtr("9999000000000000000000000000000000000000")
+		}},
+		{"entries[0].cutoff.source", func(p *RebasePlan) { p.Entries[0].Cutoff.Source = "parent-tip-ancestor" }},
+		{"entries[0].cutoff.validity", func(p *RebasePlan) { p.Entries[0].Cutoff.Validity = strPtr("invalid") }},
+		{"entries[0].cutoff.reason", func(p *RebasePlan) { p.Entries[0].Cutoff.Reason = strPtr("recorded-cutoff-not-ancestor") }},
+		{"entries[0].cutoff.resolved_sha", func(p *RebasePlan) {
+			p.Entries[0].Cutoff.ResolvedSHA = strPtr("9999000000000000000000000000000000000000")
+		}},
 		{"entries[0].execution_context.context_id", func(p *RebasePlan) {
 			p.Entries[0].ExecutionContext.ContextID = strPtr("0000111111111111111111111111111111111111111111111111111111111111")
 		}},

@@ -692,7 +692,8 @@ func ssAssertEntryKeys(t *testing.T, entry any) {
 	ssAssertKeys(t, m["base"], "entry.base", "name", "kind", "ref")
 	ssAssertKeys(t, m["heads"], "entry.heads",
 		"local", "local_short", "parent", "parent_short", "merge_base", "merge_base_short")
-	ssAssertKeys(t, m["base_record"], "entry.base_record", "sha", "commit", "short", "state")
+	ssAssertKeys(t, m["base_record"], "entry.base_record",
+		"sha", "commit", "short", "state", "effective", "source", "validity", "reason")
 	ssAssertKeys(t, m["ancestry"], "entry.ancestry", "status", "reason", "severity", "guidance", "notes")
 	ssAssertKeys(t, m["parent_counts"], "entry.parent_counts", "ahead", "behind")
 	ssAssertKeys(t, m["materialization"], "entry.materialization",

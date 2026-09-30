@@ -1,8 +1,8 @@
-started_at: "2026-08-17T09:17:29Z"
+started_at: "2026-09-29T08:56:12Z"
 failed_branch: ""
-pending: []
-completed:
-    - child
+pending:
     - root
     - parent
+completed:
+    - child
 skipped: []

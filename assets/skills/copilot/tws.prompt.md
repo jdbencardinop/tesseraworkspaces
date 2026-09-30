@@ -54,6 +54,16 @@ tws new auth wiki-docs --repo ../wiki --base master     # base resolved in wiki 
 
 Explicit base refs are literal (`master` is local, `origin/master` is remote); tags and commit SHAs are accepted. Sync rebases in topological order. After resolving a conflict, `tws sync <feature> --continue` resumes deferred descendants and only reports completion after parent-child ancestry is current.
 
+New branches store the exact full commit used for creation. Before any sync
+branch moves, tws freezes one effective replay cutoff per selected row. A
+recorded `last_base_sha` must resolve, be an ancestor of the captured child,
+and must not predate any best merge base already shared by parent and child.
+If it is absent, the exact captured parent tip is accepted only when Git proves
+it is an ancestor of the child. tws never substitutes a merge-base, fork point,
+reflog entry, or arbitrary ancestor. Plans/status/doctor distinguish the raw
+record from the effective cutoff and its source/validity; approval cannot waive
+invalid evidence.
+
 When the recorded parent itself is wrong — squash-merged, abandoned, or never the intended base — reparent instead of syncing:
 
 ```sh
@@ -97,15 +107,34 @@ Checkout mode stores local metadata under `.tws/features/`, adds `.tws/` to the 
 
 `tws sync <feature>` is transactional in checkout mode: it requires a clean attached checkout, switches/rebases logical branches sequentially, persists recovery state under `.tws/state/`, and restores the original branch. Use `--continue` after resolving conflicts and `--abort` to recover. It must be run from the repository checkout: a cwd inside a linked worktree of the same repository is refused.
 
-Sync modes apply to both workspace modes and are three independent axes: `--fetch`/`--no-fetch` (input refs; external defaults to `fetch`, checkout to `no-fetch`), `--full`/`--local-only` (propagation), and `--only <entry>`/`--from <entry>` (scope, by logical `stack.yaml` name). Successful no-mode-flag behavior remains unchanged. `--no-fetch` forbids automatic network *input* only — an explicit `--push` is still allowed. A scoped run drops `git rebase --update-refs`, so unselected branches never move. Every new ordinary-sync `--push` is strict: it stops at the first rejected push, keeps recovery state, and `--continue` retries only entries that were never pushed. A `scope=all` run still pushes the whole feature; standalone `tws push` retains lenient failure behavior. Do not use an older tws to continue or abort a transactional sync run.
+Sync modes apply to both workspace modes and are three independent axes: `--fetch`/`--no-fetch` (input refs; external defaults to `fetch`, checkout to `no-fetch`), `--full`/`--local-only` (propagation), and `--only <entry>`/`--from <entry>` (scope, by logical `stack.yaml` name). Successful no-mode-flag behavior remains unchanged. `--no-fetch` forbids automatic network *input* only — an explicit `--push` is still allowed. Scoped/local-only, archived, and checkout rebases use `git -c rebase.updateRefs=false rebase`, so unselected branches never move even when `rebase.updateRefs=true` is configured, including on Git 2.26-2.37. Intentional full external `--update-refs` requires Git 2.38. Every new ordinary-sync `--push` is strict: it stops at the first rejected push, keeps recovery state, and `--continue` retries only entries that were never pushed. A `scope=all` run still pushes the whole feature; standalone `tws push` retains lenient failure behavior. Do not use an older tws to continue or abort a transactional sync run.
 
-New ordinary sync runs snapshot exact selected branch tips and exact pre-run
-`stack.yaml` bytes before mutation. Abort restores only run-attributable local
+New ordinary sync runs snapshot exact selected branch tips, frozen replay
+cutoffs, original checkout positions, and exact pre-run `stack.yaml` bytes
+before the first mutation. Exact executed destinations, checkout transition/
+restoration intents, and per-collateral parent identity (including local,
+remote-tracking, tag, and object parents) are measured and persisted before
+their respective effects, after any preceding row has moved. Abort restores only run-attributable local
 effects using per-repository compare-and-swap ref updates; refs, metadata, and
 checkout/worktree state remain separate effects, so multi-repository rollback
 is not one atomic operation. A later user ref move is preserved by refusing
 rollback. If native Git reflog evidence cannot prove an allowed ref move came
 from tws's rebase, recovery refuses conservatively.
+
+For collateral `--update-refs` movement, the recorded destination must describe
+the actual old-cutoff → new-cutoff replay. A fixed tag/OID parent may transition
+to the primary `--onto` destination only when its frozen cutoff exactly equals
+the primary replay cutoff and containment is proven. A cutoff inside the replay
+range needs its moving local parent's exact postimage; otherwise refuse before
+mutation. The recorded transition is still an old cutoff, not a configured
+destination override: after fixed parent C yields C→U collateral movement, an
+explicit later sync uses destination C and cutoff U, replays only U..child,
+then records C after verified success.
+
+Doctor renders sanitized raw/effective/source/validity/reason cutoff evidence
+for evaluated rows. Unevaluated rows claim no decision. Missing-record parent
+advancement requires known-history repair; do not recommend a plain rebase or
+ordinary sync that the cutoff preflight will refuse.
 
 Validators are ref/checkout-read-only. If validation commits, rebases, resets,
 moves refs, switches branches, or detaches `HEAD`, preserve the journal and
@@ -113,8 +142,9 @@ work and require manual recovery; tws must not adopt or erase those changes.
 
 The first push **attempt** is the publication boundary. Once recorded,
 recovery is forward-only with `--continue`; never recommend `--abort`. Older
-recovery state lacks the complete snapshot and warns that abort cannot fully
-restore earlier movement. Once all forward effects succeed, durable completion
+recovery with unknown remaining replay refuses continuation, while safely
+completed publication/cleanup phases still recover under their ownership
+locks. Once all forward effects succeed, durable completion
 precedes pin deletion; subsequent recovery only finishes cleanup without
 rolling back refs or metadata. Successful no-flag sync behavior remains unchanged.
 

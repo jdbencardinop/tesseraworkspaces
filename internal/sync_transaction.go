@@ -21,7 +21,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const SyncTransactionEvidenceVersion = 1
+const (
+	SyncTransactionLegacyEvidenceVersion = 1
+	SyncTransactionEvidenceVersion       = 2
+)
 
 const (
 	SyncTxnPreparing   = "preparing"
@@ -57,13 +60,16 @@ type SyncTransaction struct {
 	Ready           bool   `yaml:"ready"`
 	Completion      string `yaml:"completion,omitempty"`
 
-	Selected     []string                    `yaml:"selected"`
-	Metadata     SyncTransactionMetadata     `yaml:"metadata"`
-	Repositories []SyncTransactionRepo       `yaml:"repositories"`
-	Actions      []SyncTransactionAction     `yaml:"actions"`
-	Validations  []SyncTransactionValidation `yaml:"validations,omitempty"`
-	Publication  SyncTransactionPublish      `yaml:"publication"`
-	Rollback     SyncTransactionRollback     `yaml:"rollback"`
+	Selected              []string                    `yaml:"selected"`
+	CutoffsReady          bool                        `yaml:"cutoffs_ready,omitempty"`
+	Cutoffs               []SyncCutoffDecision        `yaml:"cutoffs,omitempty"`
+	ParentAttributionFrom int                         `yaml:"parent_attribution_from,omitempty"`
+	Metadata              SyncTransactionMetadata     `yaml:"metadata"`
+	Repositories          []SyncTransactionRepo       `yaml:"repositories"`
+	Actions               []SyncTransactionAction     `yaml:"actions"`
+	Validations           []SyncTransactionValidation `yaml:"validations,omitempty"`
+	Publication           SyncTransactionPublish      `yaml:"publication"`
+	Rollback              SyncTransactionRollback     `yaml:"rollback"`
 }
 
 type SyncTransactionMetadata struct {
@@ -129,22 +135,37 @@ type SyncTransactionHolderValue struct {
 }
 
 type SyncTransactionAction struct {
-	Sequence            int                          `yaml:"sequence"`
-	Kind                string                       `yaml:"kind"`
-	Entry               string                       `yaml:"entry,omitempty"`
-	RepoCommonDir       string                       `yaml:"repo_common_dir"`
-	ContextPath         string                       `yaml:"context_path"`
-	ContextBefore       SyncTransactionHolderValue   `yaml:"context_before"`
-	ContextRef          string                       `yaml:"context_ref,omitempty"`
-	AllowedRefs         []string                     `yaml:"allowed_refs"`
-	BeforeRefs          []SyncTransactionRefValue    `yaml:"before_refs"`
-	AfterRefs           []SyncTransactionRefValue    `yaml:"after_refs,omitempty"`
-	BeforeHolders       []SyncTransactionHolderValue `yaml:"before_holders"`
-	RefLogAnchors       map[string]string            `yaml:"ref_log_anchors"`
-	ContextReflogAnchor string                       `yaml:"context_reflog_anchor"`
-	AfterHolders        []SyncTransactionHolderValue `yaml:"after_holders,omitempty"`
-	Status              string                       `yaml:"status"`
-	Error               string                       `yaml:"error,omitempty"`
+	Sequence                int                           `yaml:"sequence"`
+	Kind                    string                        `yaml:"kind"`
+	Entry                   string                        `yaml:"entry,omitempty"`
+	RepoCommonDir           string                        `yaml:"repo_common_dir"`
+	ContextPath             string                        `yaml:"context_path"`
+	ContextBefore           SyncTransactionHolderValue    `yaml:"context_before"`
+	ContextRef              string                        `yaml:"context_ref,omitempty"`
+	DestinationSHA          string                        `yaml:"destination_sha,omitempty"`
+	CutoffSHA               string                        `yaml:"cutoff_sha,omitempty"`
+	ParentDestinationsReady bool                          `yaml:"parent_destinations_ready,omitempty"`
+	ParentDestinations      []SyncActionParentDestination `yaml:"parent_destinations,omitempty"`
+	AllowedRefs             []string                      `yaml:"allowed_refs"`
+	BeforeRefs              []SyncTransactionRefValue     `yaml:"before_refs"`
+	AfterRefs               []SyncTransactionRefValue     `yaml:"after_refs,omitempty"`
+	BeforeHolders           []SyncTransactionHolderValue  `yaml:"before_holders"`
+	RefLogAnchors           map[string]string             `yaml:"ref_log_anchors"`
+	ContextReflogAnchor     string                        `yaml:"context_reflog_anchor"`
+	AfterHolders            []SyncTransactionHolderValue  `yaml:"after_holders,omitempty"`
+	Status                  string                        `yaml:"status"`
+	Error                   string                        `yaml:"error,omitempty"`
+}
+
+type SyncActionParentDestination struct {
+	Entry           string `yaml:"entry"`
+	ParentEntry     string `yaml:"parent_entry,omitempty"`
+	ParentRef       string `yaml:"parent_ref"`
+	Kind            string `yaml:"kind"`
+	CanonicalRef    string `yaml:"canonical_ref,omitempty"`
+	MovesWithAction bool   `yaml:"moves_with_action,omitempty"`
+	ActionSHA       string `yaml:"action_sha"`
+	DestinationSHA  string `yaml:"destination_sha,omitempty"`
 }
 
 type SyncTransactionValidation struct {
@@ -365,15 +386,16 @@ func CaptureSyncTransaction(in SyncTransactionBeginInput) (*SyncTransaction, err
 	}
 
 	tx := &SyncTransaction{
-		EvidenceVersion: SyncTransactionEvidenceVersion,
-		RunID:           runID,
-		CreatedAt:       time.Now().UTC().Format(time.RFC3339),
-		WorkspaceMode:   string(in.Mode),
-		Feature:         in.Feature,
-		WorkspaceRoot:   canonicalize(in.WorkspaceRepoRoot),
-		Phase:           SyncTxnPreparing,
-		Selected:        append([]string(nil), in.Selected...),
-		Actions:         []SyncTransactionAction{},
+		EvidenceVersion:       SyncTransactionEvidenceVersion,
+		RunID:                 runID,
+		CreatedAt:             time.Now().UTC().Format(time.RFC3339),
+		WorkspaceMode:         string(in.Mode),
+		Feature:               in.Feature,
+		WorkspaceRoot:         canonicalize(in.WorkspaceRepoRoot),
+		Phase:                 SyncTxnPreparing,
+		Selected:              append([]string(nil), in.Selected...),
+		ParentAttributionFrom: 1,
+		Actions:               []SyncTransactionAction{},
 		Metadata: SyncTransactionMetadata{
 			Path:           canonicalize(stackPath),
 			BeforeBase64:   base64.StdEncoding.EncodeToString(stackBytes),
@@ -577,6 +599,13 @@ func PreflightSyncTransactionBirth(tx *SyncTransaction) error {
 // PinSyncTransaction creates and verifies every preimage pin. save must
 // durably persist the enclosing recovery document after each successful pin.
 func PinSyncTransaction(tx *SyncTransaction, save func() error) error {
+	if err := PinSyncTransactionPreimages(tx, save); err != nil {
+		return err
+	}
+	return finalizeSyncTransactionSnapshot(tx, save, false)
+}
+
+func PinSyncTransactionPreimages(tx *SyncTransaction, save func() error) error {
 	if tx == nil {
 		return errors.New("sync transaction is absent")
 	}
@@ -606,6 +635,23 @@ func PinSyncTransaction(tx *SyncTransaction, save func() error) error {
 	if err := pinSyncDetachedHeads(tx, save); err != nil {
 		return err
 	}
+	return nil
+}
+
+func FinalizeSyncTransactionSnapshot(tx *SyncTransaction, save func() error) error {
+	return finalizeSyncTransactionSnapshot(tx, save, true)
+}
+
+func finalizeSyncTransactionSnapshot(tx *SyncTransaction, save func() error, requireCutoffs bool) error {
+	if tx == nil {
+		return errors.New("sync transaction is absent")
+	}
+	if tx.Ready {
+		return nil
+	}
+	if requireCutoffs && !tx.CutoffsReady {
+		return errors.New("sync cutoff evidence is not frozen")
+	}
 	tx.Ready = true
 	tx.Phase = SyncTxnForward
 	if err := save(); err != nil {
@@ -625,7 +671,7 @@ func ValidateSyncTransaction(tx *SyncTransaction, feature string, mode Workspace
 	if tx == nil {
 		return errors.New("transactional sync evidence is absent")
 	}
-	if tx.EvidenceVersion != SyncTransactionEvidenceVersion {
+	if tx.EvidenceVersion < SyncTransactionLegacyEvidenceVersion || tx.EvidenceVersion > SyncTransactionEvidenceVersion {
 		return fmt.Errorf("unsupported sync transaction evidence version %d", tx.EvidenceVersion)
 	}
 	if !reparentRunIDShape(tx.RunID) {
@@ -768,14 +814,187 @@ func SyncAllowedRebaseRefs(tx *SyncTransaction, repoDir, branchRef, cutoff strin
 // BeginSyncGitAction verifies the last recorded repository image and durably
 // records intent before a rebase or other branch-affecting Git command.
 func BeginSyncGitAction(tx *SyncTransaction, repoDir, kind, entry, contextPath string, allowedRefs []string, save func() error) error {
-	return beginSyncGitAction(tx, repoDir, kind, entry, contextPath, "", allowedRefs, save)
+	return beginSyncGitAction(tx, repoDir, kind, entry, contextPath, "", allowedRefs, "", "", save)
 }
 
 func BeginSyncGitActionWithContextRef(tx *SyncTransaction, repoDir, kind, entry, contextPath, contextRef string, allowedRefs []string, save func() error) error {
-	return beginSyncGitAction(tx, repoDir, kind, entry, contextPath, contextRef, allowedRefs, save)
+	return beginSyncGitAction(tx, repoDir, kind, entry, contextPath, contextRef, allowedRefs, "", "", save)
 }
 
-func beginSyncGitAction(tx *SyncTransaction, repoDir, kind, entry, contextPath, contextRef string, allowedRefs []string, save func() error) error {
+func BeginSyncRebaseAction(tx *SyncTransaction, repoDir, entry, contextPath, contextRef string, allowedRefs []string,
+	destinationSHA, cutoffSHA string, save func() error) error {
+	return beginSyncGitAction(tx, repoDir, "rebase", entry, contextPath, contextRef, allowedRefs,
+		destinationSHA, cutoffSHA, save)
+}
+
+func syncActionCanonicalParent(repo *SyncTransactionRepo, decision SyncCutoffDecision, decisions map[string]SyncCutoffDecision, before map[string]string) (SyncActionParentDestination, error) {
+	evidence := SyncActionParentDestination{
+		Entry: decision.Entry, ParentEntry: decision.ParentEntry, ParentRef: decision.ParentRef,
+	}
+	if decision.ParentEntry != "" {
+		parent, ok := decisions[decision.ParentEntry]
+		if !ok || parent.RepoCommonDir != decision.RepoCommonDir {
+			return evidence, fmt.Errorf("collateral sync entry %q has no same-repository frozen parent", decision.Entry)
+		}
+		evidence.Kind = "stack-entry"
+		evidence.CanonicalRef = parent.ChildRef
+		evidence.ActionSHA = before[evidence.CanonicalRef]
+		if evidence.ActionSHA == "" {
+			return evidence, fmt.Errorf("collateral sync entry %q parent ref %s has no action preimage", decision.Entry, evidence.CanonicalRef)
+		}
+		return evidence, nil
+	}
+
+	resolved, found, err := syncTransactionResolveRef(repo.Root, decision.ParentRef)
+	if err != nil {
+		return evidence, err
+	}
+	if !found {
+		return evidence, fmt.Errorf("collateral sync entry %q parent %q no longer resolves at the action seam", decision.Entry, decision.ParentRef)
+	}
+	evidence.ActionSHA = resolved
+	stdout, stderr, code, symbolicErr := syncTransactionGit(repo.Root, nil,
+		"rev-parse", "--symbolic-full-name", "--verify", "--quiet", "--end-of-options", decision.ParentRef)
+	if symbolicErr != nil {
+		return evidence, fmt.Errorf("canonicalize collateral parent %q: %s", decision.ParentRef, syncTransactionGitError(stderr, symbolicErr))
+	}
+	canonical := strings.TrimSpace(string(stdout))
+	if code != 0 || strings.Contains(canonical, "\n") {
+		return evidence, fmt.Errorf("collateral sync entry %q parent %q has ambiguous canonical identity", decision.Entry, decision.ParentRef)
+	}
+	evidence.CanonicalRef = canonical
+	switch {
+	case canonical == "":
+		evidence.Kind = "object"
+	case strings.HasPrefix(canonical, "refs/heads/"):
+		evidence.Kind = "local-branch"
+		if before[canonical] != resolved {
+			return evidence, fmt.Errorf("collateral sync entry %q local parent %s does not match the action preimage", decision.Entry, canonical)
+		}
+	case strings.HasPrefix(canonical, "refs/remotes/"):
+		evidence.Kind = "remote-tracking"
+	case strings.HasPrefix(canonical, "refs/tags/"):
+		evidence.Kind = "tag"
+	case strings.HasPrefix(canonical, "refs/"):
+		evidence.Kind = "ref"
+	default:
+		return evidence, fmt.Errorf("collateral sync entry %q parent %q has unsupported canonical identity %q", decision.Entry, decision.ParentRef, canonical)
+	}
+	if canonical != "" {
+		canonicalSHA, canonicalFound, resolveErr := syncTransactionResolveRef(repo.Root, canonical)
+		if resolveErr != nil {
+			return evidence, resolveErr
+		}
+		if !canonicalFound || canonicalSHA != resolved {
+			return evidence, fmt.Errorf("collateral sync entry %q parent %q changed while its identity was captured", decision.Entry, decision.ParentRef)
+		}
+	}
+	return evidence, nil
+}
+
+func syncActionRefHeld(ref string, holders []SyncTransactionHolderValue) bool {
+	if !strings.HasPrefix(ref, "refs/heads/") {
+		return false
+	}
+	branch := strings.TrimPrefix(ref, "refs/heads/")
+	for _, holder := range holders {
+		if !holder.Detached && holder.Branch == branch {
+			return true
+		}
+	}
+	return false
+}
+
+func syncCollateralPreActionRefusal(tx *SyncTransaction, decision SyncCutoffDecision, detail string) error {
+	return fmt.Errorf(
+		"sync collateral cutoff refused before rebase for entry %q: %s; cutoff=%s parent=%q. "+
+			"No Git action for this entry was started; the pre-publication transaction is preserved. "+
+			"Inspect the named proof/ref, then run tws sync %s --abort before repairing stack metadata or refs",
+		decision.Entry, detail, decision.EffectiveSHA, decision.ParentRef, tx.Feature,
+	)
+}
+
+func syncRebaseParentDestinations(tx *SyncTransaction, repo *SyncTransactionRepo, primary, contextRef, destinationSHA, cutoffSHA string,
+	allowedRefs []string, refs []SyncTransactionRefValue, holders []SyncTransactionHolderValue) ([]SyncActionParentDestination, error) {
+	allowed := make(map[string]bool, len(allowedRefs))
+	for _, ref := range allowedRefs {
+		allowed[ref] = true
+	}
+	before := syncTransactionValuesMap(refs)
+	decisions := make(map[string]SyncCutoffDecision, len(tx.Cutoffs))
+	for _, decision := range tx.Cutoffs {
+		decisions[decision.Entry] = decision
+	}
+	out := make([]SyncActionParentDestination, 0)
+	for _, decision := range tx.Cutoffs {
+		if decision.Entry == primary || decision.RepoCommonDir != repo.CommonDir || !allowed[decision.ChildRef] {
+			continue
+		}
+		childSHA := before[decision.ChildRef]
+		if childSHA == "" {
+			return nil, fmt.Errorf("prospective collateral sync entry %q has no action preimage", decision.Entry)
+		}
+		evidence, err := syncActionCanonicalParent(repo, decision, decisions, before)
+		if err != nil {
+			return nil, syncCollateralPreActionRefusal(tx, decision, err.Error())
+		}
+		parentMoves := strings.HasPrefix(evidence.CanonicalRef, "refs/heads/") &&
+			allowed[evidence.CanonicalRef] &&
+			(evidence.CanonicalRef == contextRef || !syncActionRefHeld(evidence.CanonicalRef, holders))
+		evidence.MovesWithAction = parentMoves
+		if parentMoves {
+			if decision.EffectiveSHA != evidence.ActionSHA {
+				return nil, syncCollateralPreActionRefusal(tx, decision, fmt.Sprintf(
+					"frozen cutoff %s does not equal moving parent %s preimage %s; the actual rewritten parent counterpart cannot be attributed",
+					decision.EffectiveSHA, evidence.CanonicalRef, evidence.ActionSHA,
+				))
+			}
+			contains, err := syncCutoffIsAncestor(repo.Root, evidence.ActionSHA, childSHA)
+			if err != nil {
+				return nil, err
+			}
+			if !contains {
+				return nil, syncCollateralPreActionRefusal(tx, decision, fmt.Sprintf(
+					"moving local parent %s is not an ancestor of collateral child preimage %s; the actual rewritten parent counterpart cannot be attributed",
+					evidence.ActionSHA, childSHA,
+				))
+			}
+			out = append(out, evidence)
+			continue
+		}
+		if decision.EffectiveSHA != cutoffSHA {
+			return nil, syncCollateralPreActionRefusal(tx, decision, fmt.Sprintf(
+				"frozen cutoff %s does not equal primary replay cutoff %s; the actual collateral old-cutoff -> new-cutoff transition is unproven",
+				decision.EffectiveSHA, cutoffSHA,
+			))
+		}
+		switch evidence.Kind {
+		case "object", "tag":
+			contains, err := syncCutoffIsAncestor(repo.Root, evidence.ActionSHA, destinationSHA)
+			if err != nil {
+				return nil, err
+			}
+			if !contains {
+				return nil, syncCollateralPreActionRefusal(tx, decision, fmt.Sprintf(
+					"fixed %s parent %s is not contained by executed destination %s; the %s -> %s boundary transition is unproven",
+					evidence.Kind, evidence.ActionSHA, destinationSHA, cutoffSHA, destinationSHA,
+				))
+			}
+		default:
+			if evidence.ActionSHA != destinationSHA {
+				return nil, syncCollateralPreActionRefusal(tx, decision, fmt.Sprintf(
+					"nonmoving %s parent %s resolves to %s, not executed destination %s; the %s -> %s boundary transition is unproven",
+					evidence.Kind, evidence.CanonicalRef, evidence.ActionSHA, destinationSHA, cutoffSHA, destinationSHA,
+				))
+			}
+		}
+		out = append(out, evidence)
+	}
+	return out, nil
+}
+
+func beginSyncGitAction(tx *SyncTransaction, repoDir, kind, entry, contextPath, contextRef string, allowedRefs []string,
+	destinationSHA, cutoffSHA string, save func() error) error {
 	if tx == nil || !tx.Ready {
 		return errors.New("sync transaction snapshot is not ready")
 	}
@@ -831,11 +1050,25 @@ func beginSyncGitAction(tx *SyncTransaction, repoDir, kind, entry, contextPath, 
 			return fmt.Errorf("sync action context ref %s is outside its attributable ref set", contextRef)
 		}
 	}
+	var parentDestinations []SyncActionParentDestination
+	if kind == "rebase" {
+		parentDestinations, err = syncRebaseParentDestinations(tx, repo, entry, contextRef, destinationSHA, cutoffSHA, allowedRefs, refs, holders)
+		if err != nil {
+			return err
+		}
+		if tx.EvidenceVersion == SyncTransactionLegacyEvidenceVersion {
+			tx.EvidenceVersion = SyncTransactionEvidenceVersion
+			tx.ParentAttributionFrom = len(tx.Actions) + 1
+		}
+	}
 	action := SyncTransactionAction{
 		Sequence: len(tx.Actions) + 1, Kind: kind, Entry: entry,
 		RepoCommonDir: repo.CommonDir, ContextPath: contextPath,
 		ContextBefore: contextBefore, ContextRef: contextRef,
-		AllowedRefs: append([]string(nil), allowedRefs...), BeforeRefs: refs,
+		DestinationSHA: destinationSHA, CutoffSHA: cutoffSHA,
+		ParentDestinationsReady: kind == "rebase",
+		ParentDestinations:      parentDestinations,
+		AllowedRefs:             append([]string(nil), allowedRefs...), BeforeRefs: refs,
 		BeforeHolders: holders, Status: SyncTxnActionIntent,
 		RefLogAnchors: make(map[string]string, len(allowedRefs)),
 	}
@@ -953,6 +1186,18 @@ func completeSyncAction(tx *SyncTransaction, commandErr error, save func() error
 			return fmt.Errorf("sync action context %s changed without this run's native transition evidence; preserve the journal and recover the checkout manually", action.ContextPath)
 		}
 	}
+	if action.ParentDestinationsReady {
+		for i := range action.ParentDestinations {
+			parent := &action.ParentDestinations[i]
+			parent.DestinationSHA = action.DestinationSHA
+			if parent.MovesWithAction {
+				parent.DestinationSHA = afterMap[parent.CanonicalRef]
+			}
+			if parent.DestinationSHA == "" {
+				return fmt.Errorf("sync action %d has no immutable destination for collateral entry %q", action.Sequence, parent.Entry)
+			}
+		}
+	}
 	for i := range repo.Refs {
 		if now, ok := afterMap[repo.Refs[i].Ref]; ok {
 			repo.Refs[i].ExpectedSHA = now
@@ -1000,6 +1245,21 @@ func RunSyncContextSwitch(tx *SyncTransaction, dir, branch string) error {
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("checkout %s: %s: %w", branch, strings.TrimSpace(string(output)), err)
+	}
+	return nil
+}
+
+func RunSyncContextRestore(tx *SyncTransaction, value SyncTransactionHolderValue) error {
+	args := []string{"checkout", value.Branch}
+	if value.Detached {
+		args = []string{"checkout", "--detach", value.HEAD}
+	}
+	cmd := exec.Command("git", args...)
+	cmd.Dir = value.Path
+	cmd.Env = syncTransactionRebaseEnv(tx)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("restore sync context %s: %s: %w", value.Path, strings.TrimSpace(string(output)), err)
 	}
 	return nil
 }
@@ -1116,9 +1376,6 @@ func CompleteSyncGitAction(tx *SyncTransaction, commandErr error, save func() er
 // ReconcileSyncGitAction closes an intent left across a crash or a manually
 // completed conflict using current refs and worktree evidence.
 func ReconcileSyncGitAction(tx *SyncTransaction, save func() error) error {
-	if err := reconcileSyncForwardRestorations(tx, save); err != nil {
-		return err
-	}
 	if err := reconcileSyncTransactionMetadataIntent(tx, save); err != nil {
 		return err
 	}
@@ -1128,14 +1385,27 @@ func ReconcileSyncGitAction(tx *SyncTransaction, save func() error) error {
 	if _, _, active := SyncTransactionActiveRebase(tx); active {
 		return nil
 	}
+	if tx == nil || len(tx.Actions) == 0 || tx.Actions[len(tx.Actions)-1].Status != SyncTxnActionIntent {
+		return ResumeSyncForwardRestorations(tx, save)
+	}
 	changed, err := SyncTransactionPendingActionChanged(tx)
 	if err != nil {
 		return err
 	}
 	if !changed {
-		return completeSyncAction(tx, errors.New("interrupted action has no completed ref change; retry required"), save, true)
+		action := &tx.Actions[len(tx.Actions)-1]
+		started, startErr := syncTransactionHasActionStart(tx, action)
+		if startErr != nil {
+			return startErr
+		}
+		if !started {
+			return completeSyncAction(tx, errors.New("interrupted action has no completed ref change; retry required"), save, true)
+		}
 	}
-	return completeSyncAction(tx, nil, save, true)
+	if err := completeSyncAction(tx, nil, save, true); err != nil {
+		return err
+	}
+	return ResumeSyncForwardRestorations(tx, save)
 }
 
 func syncTransactionValidationRepo(tx *SyncTransaction, validation *SyncTransactionValidation) (*SyncTransactionRepo, error) {

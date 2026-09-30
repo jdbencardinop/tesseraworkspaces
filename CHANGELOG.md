@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+- **Ordinary-sync cutoff integrity** — newly created external and checkout
+  branches record the exact full creation commit, and every selected sync row
+  freezes a repository-bound parent/child preimage plus an effective replay
+  cutoff before mutation. Recorded cutoffs must resolve, be ancestors of the
+  captured child, and must not predate any best merge base already shared by
+  parent and child; absent records use the captured parent tip only when it is
+  proven to be an ancestor. Materialized, archived, checkout, resumed, and
+  actual collateral ref updates now consume the same validated `--onto`
+  boundary. Before an `--update-refs` action, each prospective selected
+  collateral row records its own action-time parent identity and commit plus
+  the proven boundary transition the action will execute: rewritten local
+  parents use their observed postimage, while nonmoving local, remote-tracking,
+  tag, and object parents use the exact `--onto` destination only after Git
+  proves their action-time commit is contained by it and the collateral row's
+  frozen old cutoff equals the primary action's replay cutoff. A different
+  cutoff inside the replay range is refused before mutation unless its moving
+  local parent provides the exact rewritten counterpart.
+  Recorded collateral transitions do not override literal configuration: after
+  a fixed tag/OID parent C produces a proven collateral C→U transition, a
+  later explicit sync publishes and executes `--onto C U`, replays only
+  U..child, and records C after success in external and checkout modes.
+  After recoverable metadata finalization, primary and actually moved selected
+  collateral completion progress now persists together in one state update,
+  preventing duplicate collateral replay after a post-progress crash. Metadata
+  and completion progress remain separate recoverable writes.
+  Collateral-disabled external and checkout routes now invoke
+  `git -c rebase.updateRefs=false rebase`, so configured
+  `rebase.updateRefs=true` cannot move unowned refs without raising the
+  minimum Git version. Intentional full external `--update-refs` retains its
+  Git 2.38 capability gate.
+  External completion records the immutable destination passed to
+  Git rather than a later moving ref. Independent roots now retain
+  `stack.yaml` declaration order, mixed archived/materialized stacks run in
+  dependency order, and archived computation checkouts carry durable
+  restoration intent across crashes. Plans/status/doctor report raw and
+  effective cutoff evidence honestly; doctor now renders sanitized source,
+  validity, and reason for evaluated rows, while missing-record guidance no
+  longer promises a refused plain rebase. Unknown legacy remaining replay refuses
+  without guessing, while publication/cleanup-only recovery retains its
+  ownership and forward-only contracts.
 - **Transactional ordinary-sync recovery** — before the first selected branch
   mutation, new external and checkout sync runs preserve exact selected branch
   tips, exact pre-run `stack.yaml` bytes, repository/holder identity, and

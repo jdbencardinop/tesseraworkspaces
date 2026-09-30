@@ -111,21 +111,85 @@ func observeSyncForwardRestoration(repo *SyncTransactionRepo, holder *SyncTransa
 	return false, nil
 }
 
-func reconcileSyncForwardRestorations(tx *SyncTransaction, save func() error) error {
+func PrepareSyncCheckoutContextRestore(tx *SyncTransaction, path string, save func() error) error {
+	repo, err := syncTransactionRepo(tx, path)
+	if err != nil {
+		return err
+	}
+	path = canonicalize(path)
+	for i := range repo.Holders {
+		holder := &repo.Holders[i]
+		if holder.Path != path {
+			continue
+		}
+		target := SyncTransactionHolderValue{
+			Path: holder.Path, Branch: holder.OriginalBranch,
+			HEAD: holder.OriginalHEAD, Detached: holder.OriginalDetached,
+		}
+		if !target.Detached {
+			expected := syncTransactionExpectedRefs(repo)
+			var ok bool
+			target.HEAD, ok = expected["refs/heads/"+target.Branch]
+			if !ok {
+				return fmt.Errorf("original checkout branch %s lacks recorded ref evidence", target.Branch)
+			}
+		}
+		if holder.ForwardRestoreTarget != nil {
+			if *holder.ForwardRestoreTarget != target {
+				return fmt.Errorf("checkout %s has a different persisted restoration target", path)
+			}
+			return nil
+		}
+		holder.ForwardRestoreTarget = &target
+		return save()
+	}
+	return fmt.Errorf("checkout %s has no recorded holder", path)
+}
+
+func ResumeSyncForwardRestorations(tx *SyncTransaction, save func() error) error {
 	if tx == nil {
 		return nil
 	}
 	for i := range tx.Repositories {
 		repo := &tx.Repositories[i]
 		for j := range repo.Holders {
-			changed, err := observeSyncForwardRestoration(repo, &repo.Holders[j])
+			holder := &repo.Holders[j]
+			if holder.ForwardRestoreTarget == nil {
+				continue
+			}
+			completed, err := observeSyncForwardRestoration(repo, holder)
 			if err != nil {
 				return err
 			}
-			if changed {
+			if completed {
 				if err := save(); err != nil {
 					return err
 				}
+				continue
+			}
+			if dirty, dirtyErr := syncTransactionHolderDirty(holder.Path); dirtyErr != nil {
+				return dirtyErr
+			} else if dirty {
+				return fmt.Errorf("checkout %s became dirty before forward restoration; preserve the journal and restore it manually", holder.Path)
+			}
+			if err := syncTransactionStep("forward-holder-restore-intent:" + holder.Path); err != nil {
+				return err
+			}
+			if err := RunSyncContextRestore(tx, *holder.ForwardRestoreTarget); err != nil {
+				return err
+			}
+			if err := syncTransactionStep("forward-holder-restore-applied:" + holder.Path); err != nil {
+				return err
+			}
+			completed, err = observeSyncForwardRestoration(repo, holder)
+			if err != nil {
+				return err
+			}
+			if !completed {
+				return fmt.Errorf("holder %s did not reach its recorded checkout restoration target", holder.Path)
+			}
+			if err := save(); err != nil {
+				return err
 			}
 		}
 	}

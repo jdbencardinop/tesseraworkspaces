@@ -58,7 +58,8 @@ const (
 )
 
 // SyncSelectedEntry is one resolved member of the selection, in the order
-// TopoSort returned (parent before child; sibling order unspecified, §3.7).
+// TopoSort returned (parent before child; sibling roots retain stack.yaml
+// declaration order).
 //
 // It deliberately carries no LastBaseSHA: no executor may reconstruct
 // StackEntry values from the selection, because that would silently drop

@@ -954,7 +954,6 @@ func checkoutBasePreflight(opts CheckoutSyncOpts, stack Stack, sel SyncSelection
 func CapabilityGates(version GitVersion, caps GitCapabilities, argvNeedsUpdateRefs bool) []PlanGateResult {
 	established := version.Probed && version.OK
 	showScope := established && caps.CapConfigShowScope
-	updateRefs := established && caps.CapRebaseUpdateRefs
 
 	var gates []PlanGateResult
 	if !showScope {
@@ -965,15 +964,21 @@ func CapabilityGates(version GitVersion, caps GitCapabilities, argvNeedsUpdateRe
 				gitVersionLabel(version),
 		})
 	}
-	if argvNeedsUpdateRefs && !updateRefs {
-		gates = append(gates, PlanGateResult{
+	gates = append(gates, RebaseUpdateRefsCapabilityGates(version, caps, argvNeedsUpdateRefs)...)
+	return gates
+}
+
+func RebaseUpdateRefsCapabilityGates(version GitVersion, caps GitCapabilities, argvNeedsUpdateRefs bool) []PlanGateResult {
+	established := version.Probed && version.OK
+	if argvNeedsUpdateRefs && (!established || !caps.CapRebaseUpdateRefs) {
+		return []PlanGateResult{{
 			ID: "capability-rebase-update-refs", Applies: true, Failed: true,
 			Kind: RefusalProbeFailed,
 			Detail: "this invocation's planned argv carries --update-refs, which requires Git 2.38 or newer; observed " +
 				gitVersionLabel(version),
-		})
+		}}
 	}
-	return gates
+	return nil
 }
 
 // gitVersionLabel renders the observed version for a capability gate's own

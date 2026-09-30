@@ -40,6 +40,15 @@ attempt the run becomes forward-only, and neither recovery verb rewrites remote
 refs. Once forward completion is durable, --continue and --abort only finish
 cleanup and never rewind later operator work.
 
+Before any branch moves, sync validates and freezes each selected row's replay
+cutoff. A recorded last_base_sha must resolve, be an ancestor of the child, and
+must not predate history already shared by the parent and child. If no cutoff is
+recorded, the current parent tip is used only when it is proven to be an ancestor
+of the child. Sync never guesses a merge-base or fork point. Plans expose the raw
+record, effective cutoff, source, validity and reason; approval cannot waive an
+invalid cutoff. Legacy recovery without durable cutoff preimages refuses forward
+continuation and preserves its state for abort or manual inspection.
+
 If stack.yaml is absent, the historical compatibility path is available only
 after an interactive warning and confirmation, or with --allow-nontransactional.
 That deliberate exception has no complete rollback: earlier branches can remain
@@ -471,6 +480,9 @@ func resumeGuardedLegacySentinel(cmd *cobra.Command, feature string, layout exte
 	}
 	run := &syncRunContext{Route: internal.RouteLegacy, Payload: payload}
 	result := syncWithStackScoped(feature, layout, insp.Stack, insp.Order, done, run, guard)
+	if result.Err != nil {
+		return result.Err
+	}
 	if result.Refusal != nil {
 		return result.Refusal
 	}
@@ -561,6 +573,21 @@ func validateExternalFetchSafety(layout externalSyncLayout, ws internal.Workspac
 		}
 	}
 	return nil
+}
+
+func validateExternalUpdateRefsCapability(layout externalSyncLayout, sel internal.SyncSelection, remaining []string) error {
+	if !externalSelectionNeedsUpdateRefs(layout, sel, remaining) {
+		return nil
+	}
+	caps, version, err := internal.ProbeGitCapabilities()
+	if err == nil && version.OK && caps.CapRebaseUpdateRefs {
+		return nil
+	}
+	observed := version.Raw
+	if observed == "" {
+		observed = "an unavailable or unparseable Git version"
+	}
+	return fmt.Errorf("this invocation's planned argv carries --update-refs, which requires Git 2.38 or newer; observed %s", observed)
 }
 
 func fetchTransactionalExternal(layout externalSyncLayout, ws internal.Workspace, stack internal.Stack, sel internal.SyncSelection, verbose bool, payload *internal.SyncRunState) error {
@@ -684,6 +711,9 @@ func runTransactionalLegacySync(cmd *cobra.Command, feature string, layout exter
 	if err := validateExternalFetchSafety(layout, ws, stack, sel); err != nil {
 		return err
 	}
+	if err := validateExternalUpdateRefsCapability(layout, sel, sel.SelectedNames()); err != nil {
+		return err
+	}
 	marker, err := syncMarkerFn()
 	if err != nil {
 		return err
@@ -708,6 +738,9 @@ func runTransactionalLegacySync(cmd *cobra.Command, feature string, layout exter
 		return err
 	}
 	run := &syncRunContext{Route: internal.RouteLegacy, Policy: policy, Sel: sel, Payload: payload, WorkspaceRoot: ws.RepoRoot}
+	if err := freezeExternalSyncCutoffs(layout, stack, run); err != nil {
+		return err
+	}
 	result := syncWithStackScoped(feature, layout, stack, sorted, nil, run, nil)
 	if result.Err != nil {
 		return result.Err
@@ -746,6 +779,9 @@ func runScopedSync(feature string, layout externalSyncLayout, ws internal.Worksp
 		return err
 	}
 	if err := validateExternalFetchSafety(layout, ws, stack, sel); err != nil {
+		return err
+	}
+	if err := validateExternalUpdateRefsCapability(layout, sel, sel.SelectedNames()); err != nil {
 		return err
 	}
 
@@ -933,6 +969,9 @@ func runGuardedLegacySync(cmd *cobra.Command, feature string, layout externalSyn
 	printSyncModeHeader(policy)
 
 	run := &syncRunContext{Route: internal.RouteLegacy, Policy: policy, Sel: sel, Payload: payload, Validation: validationIdentity(testCommand, validationSource), WorkspaceRoot: ws.RepoRoot}
+	if err := freezeExternalSyncCutoffs(layout, stack, run); err != nil {
+		return err
+	}
 	result := syncWithStackScoped(feature, layout, stack, sorted, nil, run, guard)
 	if result.Err != nil {
 		return result.Err
@@ -1223,6 +1262,10 @@ func handleSyncContinue(feature string, layout externalSyncLayout, push bool) er
 	if err != nil {
 		return fmt.Errorf("nothing to continue — no sync in progress")
 	}
+	if state != nil {
+		return fmt.Errorf("legacy sync recovery at %s predates frozen cutoff evidence; preserve it and run 'tws sync %s --abort' or inspect it manually — continuation will not guess a replay boundary",
+			internal.SyncStatePath(layout.FeaturePath), feature)
+	}
 	failedPath := layout.WorktreePath(state.FailedBranch)
 	if state.FailedBranch != "" && isRebaseInProgress(failedPath) {
 		return fmt.Errorf("rebase still in progress in %s; resolve conflicts, run git add . && git rebase --continue, then retry", state.FailedBranch)
@@ -1271,6 +1314,51 @@ func handleSyncContinue(feature string, layout externalSyncLayout, push bool) er
 	})
 }
 
+func externalRecoveryNeedsCutoffs(payload *internal.SyncRunState) bool {
+	if payload == nil || payload.Transaction == nil {
+		return false
+	}
+	if len(payload.Pending) > 0 || payload.FailedBranch != "" && !payloadCompleted(payload, payload.FailedBranch) {
+		return true
+	}
+	if len(payload.Transaction.Actions) > 0 {
+		action := payload.Transaction.Actions[len(payload.Transaction.Actions)-1]
+		return action.Status == internal.SyncTxnActionIntent ||
+			action.Status == internal.SyncTxnActionObserved && !payloadCompleted(payload, action.Entry)
+	}
+	return false
+}
+
+func recoverExternalSyncCutoffsBeforeMutation(layout externalSyncLayout, ws internal.Workspace, payload *internal.SyncRunState) error {
+	if payload == nil || payload.Transaction == nil || payload.Transaction.CutoffsReady {
+		return nil
+	}
+	if err := internal.PreflightSyncCutoffRecovery(payload.Transaction); err != nil {
+		return fmt.Errorf("preflight sync cutoff recovery: %w", err)
+	}
+	stack, err := internal.LoadStack(layout.FeaturePath)
+	if err != nil {
+		return fmt.Errorf("load stack for sync cutoff recovery: %w", err)
+	}
+	sel, err := scopedSelectionFromPayload(stack, payload, payload.Feature, ws.Mode)
+	if err != nil {
+		return err
+	}
+	run := &syncRunContext{Policy: payload.Policy(), Sel: sel, Payload: payload, WorkspaceRoot: ws.RepoRoot}
+	inputs, err := externalSyncCutoffInputs(layout, stack, run)
+	if err != nil {
+		return err
+	}
+	save := func() error { return internal.SaveSyncRunState(layout.FeaturePath, payload) }
+	if err := internal.FreezeSyncCutoffs(payload.Transaction, stack, inputs, save); err != nil {
+		return err
+	}
+	if err := internal.PinSyncTransactionPreimages(payload.Transaction, save); err != nil {
+		return err
+	}
+	return internal.FinalizeSyncTransactionSnapshot(payload.Transaction, save)
+}
+
 func finalizeObservedExternalAction(layout externalSyncLayout, payload *internal.SyncRunState, stack *internal.Stack) error {
 	if payload == nil || payload.Transaction == nil || len(payload.Transaction.Actions) == 0 {
 		return nil
@@ -1278,6 +1366,9 @@ func finalizeObservedExternalAction(layout externalSyncLayout, payload *internal
 	action := payload.Transaction.Actions[len(payload.Transaction.Actions)-1]
 	if action.Kind != "rebase" || action.Status != internal.SyncTxnActionObserved || payloadCompleted(payload, action.Entry) {
 		return nil
+	}
+	if err := internal.RevalidateSyncCutoffs(payload.Transaction); err != nil {
+		return err
 	}
 	entry := internal.GetBranch(*stack, action.Entry)
 	if entry.Name == "" {
@@ -1293,19 +1384,23 @@ func finalizeObservedExternalAction(layout externalSyncLayout, payload *internal
 		if !ok {
 			return fmt.Errorf("validation still failing for %s", entry.Name)
 		}
-		base := resolveEntryBase(*stack, entry, syncRepoContext(layout, entry))
-		baseSHA := internal.GetBranchSHA(syncRepoContext(layout, entry), base)
-		if baseSHA != "" {
-			internal.UpdateBaseSHA(stack, entry.Name, baseSHA)
-			if err := internal.SyncWriteStackValue(layout.FeaturePath, payload.Transaction, *stack, func() error {
-				return internal.SaveSyncRunState(layout.FeaturePath, payload)
-			}); err != nil {
-				return err
-			}
-		}
+	}
+	run := &syncRunContext{Policy: payload.Policy(), Payload: payload}
+	affected, err := finalizeExternalSuccessfulAction(layout, stack, run, entry.Name)
+	if err != nil {
+		return err
 	}
 	completed := append([]string(nil), payload.Completed...)
-	completed = append(completed, entry.Name)
+	done := make(map[string]bool, len(completed))
+	for _, name := range completed {
+		done[name] = true
+	}
+	for _, name := range payload.Selected {
+		if affected[name] && !done[name] {
+			completed = append(completed, name)
+			done[name] = true
+		}
+	}
 	wasFailed := payload.FailedBranch == entry.Name
 	if err := persistExternalSyncProgress(layout.FeaturePath, payload, completed); err != nil {
 		return err
@@ -1385,6 +1480,16 @@ func handleScopedSyncContinue(feature string, layout externalSyncLayout, ws inte
 		return err
 	}
 	if payload.Transaction != nil {
+		if externalRecoveryNeedsCutoffs(payload) && internal.SyncCutoffsRecoverableBeforeMutation(payload.Transaction) {
+			if err := recoverExternalSyncCutoffsBeforeMutation(layout, ws, payload); err != nil {
+				return err
+			}
+		}
+		if externalRecoveryNeedsCutoffs(payload) {
+			if err := internal.RevalidateSyncCutoffs(payload.Transaction); err != nil {
+				return err
+			}
+		}
 		if internal.SyncTransactionRollingBack(payload.Transaction) {
 			return fmt.Errorf("sync rollback has started; forward continuation is disabled — re-run: tws sync %s --abort", feature)
 		}
@@ -1428,6 +1533,15 @@ func handleScopedSyncContinue(feature string, layout externalSyncLayout, ws inte
 	}
 	sorted, err := internal.TopoSort(stack)
 	if err != nil {
+		return err
+	}
+	remaining := make([]string, 0, len(sel.Entries))
+	for _, entry := range sel.Entries {
+		if !done[entry.Name] {
+			remaining = append(remaining, entry.Name)
+		}
+	}
+	if err := validateExternalUpdateRefsCapability(layout, sel, remaining); err != nil {
 		return err
 	}
 
@@ -1518,6 +1632,16 @@ func handleGuardedScopedSyncContinue(cmd *cobra.Command, feature string, layout 
 		return err
 	}
 	if payload.Transaction != nil {
+		if externalRecoveryNeedsCutoffs(payload) && internal.SyncCutoffsRecoverableBeforeMutation(payload.Transaction) {
+			if err := recoverExternalSyncCutoffsBeforeMutation(layout, ws, payload); err != nil {
+				return err
+			}
+		}
+		if externalRecoveryNeedsCutoffs(payload) {
+			if err := internal.RevalidateSyncCutoffs(payload.Transaction); err != nil {
+				return err
+			}
+		}
 		if err := internal.ReconcileSyncGitAction(payload.Transaction, func() error { return internal.SaveSyncRunState(layout.FeaturePath, payload) }); err != nil {
 			return fmt.Errorf("reconcile interrupted sync action: %w", err)
 		}
@@ -1594,6 +1718,10 @@ func handleGuardedLegacySyncContinue(cmd *cobra.Command, feature string, layout 
 	legacy, err := internal.LoadSyncState(layout.FeaturePath)
 	if err != nil {
 		return fmt.Errorf("nothing to continue — no sync in progress")
+	}
+	if legacy != nil {
+		return fmt.Errorf("legacy sync recovery at %s predates frozen cutoff evidence; preserve it and run 'tws sync %s --abort' or inspect it manually — guarded continuation cannot authorize an unknown replay boundary",
+			internal.SyncStatePath(layout.FeaturePath), feature)
 	}
 	failedPath := layout.WorktreePath(legacy.FailedBranch)
 	if legacy.FailedBranch != "" && isRebaseInProgress(failedPath) {
@@ -1675,6 +1803,9 @@ func handleGuardedLegacySyncContinue(cmd *cobra.Command, feature string, layout 
 
 	run := &syncRunContext{Route: internal.RouteLegacy, Payload: payload, Validation: validationIdentity(testCommand, validationSource)}
 	result := syncWithStackScoped(feature, layout, stack, sorted, done, run, guard)
+	if result.Err != nil {
+		return result.Err
+	}
 	if result.Refusal != nil {
 		// Same pre-mutation rule as the guarded fresh route: an upgrade that
 		// refuses without moving anything undoes exactly what it created —
@@ -1818,41 +1949,6 @@ func isRebaseInProgress(worktreePath string) bool {
 	return err == nil
 }
 
-// syncFeature performs a legacy (non-scoped) sync run. guard is nil on the
-// shipped path (unguarded fresh legacy) and non-nil only from
-// runGuardedLegacySync, which has already performed this run's own
-// admission fetch — so this function's own fetch loop is skipped whenever
-// guard != nil, and a guarded LoadStack failure is reported as a
-// plan-unavailable refusal rather than silently degrading to syncFallback:
-// syncFallback is unreachable from a guarded route.
-func syncFeature(feature string, layout externalSyncLayout, verbose bool, guard *planGuardRun) syncResult {
-	stack, err := internal.LoadStack(layout.FeaturePath)
-	if err != nil {
-		if guard != nil {
-			return syncResult{Refusal: &internal.PlanGuardRefusalError{Kind: string(internal.RefusalPlanUnavailable), Detail: err.Error()}}
-		}
-		fetchQuiet("", "", verbose)
-		if err := syncFallback(layout); err != nil {
-			return syncResult{Err: err}
-		}
-		return syncResult{Complete: true}
-	}
-
-	if guard == nil {
-		repos := internal.UniqueRepos(stack, layout.FeaturePath)
-		for repo, wtPath := range repos {
-			fetchQuiet(repo, wtPath, verbose)
-		}
-	}
-
-	sorted, err := internal.TopoSort(stack)
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return syncResult{}
-	}
-	return syncWithStack(feature, layout, stack, sorted, guard)
-}
-
 // syncFeatureScoped is syncFeature for a new-mode run: the stack is already
 // loaded and validated, and the fetch loop is restricted to the repos the
 // selection actually touches. guard is nil on the shipped path; a guarded
@@ -1898,6 +1994,9 @@ func syncFeatureScoped(feature string, layout externalSyncLayout, verbose bool, 
 // what keeps the guarded new-mode fresh route at exactly ONE sort and
 // exactly one fetch (§9.1a rule 3, §10.1).
 func syncFeatureScopedPlanned(feature string, layout externalSyncLayout, stack internal.Stack, sorted []internal.StackEntry, run *syncRunContext, guard *planGuardRun) syncResult {
+	if err := freezeExternalSyncCutoffs(layout, stack, run); err != nil {
+		return syncResult{Err: err}
+	}
 	return syncWithStackScoped(feature, layout, stack, sorted, nil, run, guard)
 }
 
@@ -1948,6 +2047,65 @@ func selectedRealEntries(stack internal.Stack, sel internal.SyncSelection) []int
 		out = append(out, real)
 	}
 	return out
+}
+
+func freezeExternalSyncCutoffs(layout externalSyncLayout, stack internal.Stack, run *syncRunContext) error {
+	if run == nil || run.Payload == nil || run.Payload.Transaction == nil {
+		return errors.New("sync recovery predates frozen cutoff evidence; preserve the state and use --abort or inspect it manually — continuation will not guess a replay boundary")
+	}
+	if run.Payload.Transaction.CutoffsReady {
+		return internal.RevalidateSyncCutoffs(run.Payload.Transaction)
+	}
+	inputs, err := externalSyncCutoffInputs(layout, stack, run)
+	if err != nil {
+		return err
+	}
+	err = internal.FreezeSyncCutoffs(run.Payload.Transaction, stack, inputs, func() error {
+		return internal.SaveSyncRunState(layout.FeaturePath, run.Payload)
+	})
+	if err == nil {
+		if err := internal.PinSyncTransactionPreimages(run.Payload.Transaction, func() error {
+			return internal.SaveSyncRunState(layout.FeaturePath, run.Payload)
+		}); err != nil {
+			return err
+		}
+		return internal.FinalizeSyncTransactionSnapshot(run.Payload.Transaction, func() error {
+			return internal.SaveSyncRunState(layout.FeaturePath, run.Payload)
+		})
+	}
+	var refusal *internal.SyncCutoffRefusalError
+	if !errors.As(err, &refusal) {
+		return err
+	}
+	if cancelErr := internal.CancelSyncTransaction(run.Payload.Transaction, func() error {
+		return internal.SaveSyncRunState(layout.FeaturePath, run.Payload)
+	}); cancelErr != nil {
+		return errors.Join(err, fmt.Errorf("cutoff refusal left recovery evidence at %s: %w",
+			internal.SyncRunStatePath(layout.FeaturePath), cancelErr))
+	}
+	if clearErr := clearSyncRunState(layout.FeaturePath, true); clearErr != nil {
+		return errors.Join(err, fmt.Errorf("cutoff refusal cleanup failed: %w", clearErr))
+	}
+	return err
+}
+
+func externalSyncCutoffInputs(layout externalSyncLayout, stack internal.Stack, run *syncRunContext) ([]internal.SyncCutoffFreezeInput, error) {
+	inputs := make([]internal.SyncCutoffFreezeInput, 0, len(run.Sel.Entries))
+	for _, selected := range run.Sel.Entries {
+		entry := internal.GetBranch(stack, selected.Name)
+		if entry.Name == "" {
+			return nil, fmt.Errorf("selected stack entry %q disappeared before cutoff preflight", selected.Name)
+		}
+		repoDir := run.repoDir(layout, entry)
+		input := internal.SyncCutoffFreezeInput{Entry: entry.Name, RepoDir: repoDir}
+		if entry.Base != "" && !run.skipsAnchor(entry.Name) {
+			input.Applicable = true
+			input.ParentRef = resolveEntryBase(stack, entry, repoDir)
+			input.ParentSHA = internal.GetBranchSHA(repoDir, input.ParentRef)
+		}
+		inputs = append(inputs, input)
+	}
+	return inputs, nil
 }
 
 // syncRepoContext is the §13.4 rule 3 repo context: the entry's Repo when set,

@@ -65,13 +65,33 @@ tws sync <feature> --no-fetch         # input refs: no automatic network input (
 tws sync <feature> --plan --json --max-replay-per-entry <n>   # preview: old base, new base, candidates per entry
 ```
 
-Selectors are logical `stack.yaml` names, never Git branches. A scoped run drops
-`--update-refs`, so it never moves a branch outside the selection. Incompatible
+Selectors are logical `stack.yaml` names, never Git branches. Scoped/local-only,
+archived, and checkout rebases use `git -c rebase.updateRefs=false rebase`, so
+repository or inherited `rebase.updateRefs=true` never moves a branch outside
+the selection and Git 2.26-2.37 remains supported. Intentional full external
+`--update-refs` still requires Git 2.38. Incompatible
 combinations are refused before any fetch, lock, or rebase. Every new ordinary
 sync `--push` is strict: it stops at the first rejected push and `--continue`
 retries only entries that were never pushed. A `scope=all` run still pushes the
 whole feature; standalone `tws push` retains lenient failure behavior.
 The shared feature mutation guard rejects concurrent syncs of one feature.
+Before mutation, sync freezes a validated effective cutoff for every selected
+row. Read `entries[].cutoff.recorded_sha`, `effective_sha`, `source`,
+`validity`, and `reason`; do not approve an invalid cutoff. Missing records use
+the exact current parent tip only when Git proves it is an ancestor of the
+child. tws never guesses a merge-base or fork point. Legacy remaining replay
+without safely reconstructible cutoff evidence refuses continuation.
+Safe pre-mutation recovery and publication/cleanup-only recovery remain
+supported under their ownership and phase restrictions; never recommend abort
+after publication starts.
+A proven collateral C→U transition records U as the next old cutoff but never
+overrides explicitly configured tag/OID destination C: a later explicit sync
+must plan and execute `--onto C U`, replay only U..child, and record C after
+success. If the collateral transition cannot be proven, sync refuses before
+that rebase and preserves phase-correct recovery evidence.
+Doctor renders sanitized raw/effective/source/validity/reason cutoff evidence
+for evaluated rows. Missing-record parent advancement requires known-history
+repair rather than a plain rebase or an ordinary sync that preflight refuses.
 
 **Recover ordinary sync transactionally.** New runs preserve exact selected
 branch tips and exact pre-run `stack.yaml` bytes before mutation. `--abort`

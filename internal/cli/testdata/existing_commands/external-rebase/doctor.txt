@@ -4,7 +4,11 @@ auth: 3 issue(s)
       run: cd <WORKTREES>/api && git checkout api
   [!] api: has uncommitted changes
       commit or stash changes before syncing
+  [i] models: cutoff evidence: raw="<absent>" effective="b79744b9fd8e" source=parent-tip-ancestor validity=valid reason=missing-cutoff-parent-ancestor
   [!] api: ancestry stale: parent-advanced-no-base-record
-      parent `refs/heads/models` advanced to 0e0c8ce; no recorded base commit for this branch, so sync uses a plain rebase — verify the parent history was not rewritten; run: tws sync auth
+      parent `refs/heads/models` advanced to 0e0c8ce, but no recorded cutoff exists and sync will refuse rather than guess the child-owned range; inspect known creation or last-sync history, then repair last_base_sha from a proven commit before retrying feature auth
+  [i] api: cutoff evidence: raw="<absent>" effective="<none>" source=none validity=invalid reason=missing-cutoff-parent-not-ancestor
+  [i] api: ancestry note: cutoff-invalid
+      sync cutoff is invalid (missing-cutoff-parent-not-ancestor; recorded <absent>); inspect stack.yaml and known parent history before syncing — tws will not infer a replacement boundary
 
 3 issue(s) found.

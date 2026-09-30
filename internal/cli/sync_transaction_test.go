@@ -242,6 +242,217 @@ func TestSyncTransactionArchivedEntryRollsBack(t *testing.T) {
 	testSyncTransactionArchivedEntryRollsBackAfterLoad(t, f, stack)
 }
 
+func TestSyncArchivedEntryRefreshesCutoffAfterParentAmend(t *testing.T) {
+	f := newScopedFixture(t)
+	oldParent := gitOutput(t, f.repo, "rev-parse", "parent")
+	if err := os.WriteFile(filepath.Join(f.wt("parent"), "parent-amended.txt"), []byte("amended\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, f.wt("parent"), "add", "parent-amended.txt")
+	gitRun(t, f.wt("parent"), "commit", "--amend", "--no-edit")
+	newParent := gitOutput(t, f.repo, "rev-parse", "parent")
+	if oldParent == newParent {
+		t.Fatal("parent amend did not rewrite the commit")
+	}
+	if err := archiveExternal(f.feature, "child"); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, exit := runSync(t, f.feature, "--local-only", "--no-fetch")
+	if exit != 0 {
+		t.Fatalf("archived sync failed: %d\n%s\n%s", exit, stdout, stderr)
+	}
+	stack, err := internal.LoadStack(f.featurePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := internal.GetBranch(stack, "child")
+	if child.LastBaseSHA != newParent {
+		t.Fatalf("child last_base_sha = %s, want amended parent %s", child.LastBaseSHA, newParent)
+	}
+	if internal.RunSilentDir(f.repo, "git", "merge-base", "--is-ancestor", newParent, child.GitBranch()) != nil {
+		t.Fatal("rewritten archived child does not contain amended parent")
+	}
+	if got := gitOutput(t, f.repo, "symbolic-ref", "--short", "HEAD"); got != "master" {
+		t.Fatalf("archived sync left computation checkout on %s", got)
+	}
+
+	if err := createWorktree(f.feature, "child", "parent", f.repo, false); err != nil {
+		t.Fatalf("restore archived child: %v", err)
+	}
+	stack, err = internal.LoadStack(f.featurePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child = internal.GetBranch(stack, "child")
+	if child.Archived || child.LastBaseSHA != newParent {
+		t.Fatalf("restored child metadata = %+v, want active with cutoff %s", child, newParent)
+	}
+	stdout, stderr, exit = runSync(t, f.feature, "--local-only", "--no-fetch")
+	if exit != 0 {
+		t.Fatalf("materialized resync failed: %d\n%s\n%s", exit, stdout, stderr)
+	}
+	stack, err = internal.LoadStack(f.featurePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := internal.GetBranch(stack, "child").LastBaseSHA; got != newParent {
+		t.Fatalf("materialized resync cutoff = %s, want %s", got, newParent)
+	}
+}
+
+func TestSyncStaleCutoffRefusesBeforeAnyBranchMoves(t *testing.T) {
+	t.Run("external", func(t *testing.T) {
+		f := newScopedFixture(t)
+		stack, err := internal.LoadStack(f.featurePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stale := gitOutput(t, f.repo, "rev-parse", "master")
+		for i := range stack.Branches {
+			if stack.Branches[i].Name == "child" {
+				stack.Branches[i].LastBaseSHA = stale
+			}
+		}
+		if err := internal.SaveStack(f.featurePath, stack); err != nil {
+			t.Fatal(err)
+		}
+		beforeRefs := gitOutput(t, f.repo, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads")
+		beforeStack, err := os.ReadFile(internal.StackPath(f.featurePath))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		stdout, stderr, exit := runSync(t, f.feature, "--local-only", "--no-fetch")
+		if exit == 0 || !strings.Contains(stdout+stderr, "strictly predates shared parent/child history") {
+			t.Fatalf("stale cutoff was not refused: %d\n%s\n%s", exit, stdout, stderr)
+		}
+		if after := gitOutput(t, f.repo, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads"); after != beforeRefs {
+			t.Fatalf("refs moved before cutoff refusal:\n%s\n---\n%s", beforeRefs, after)
+		}
+		afterStack, err := os.ReadFile(internal.StackPath(f.featurePath))
+		if err != nil || string(afterStack) != string(beforeStack) {
+			t.Fatalf("metadata changed before cutoff refusal: %v", err)
+		}
+		_, guardErr := os.Lstat(internal.SyncRunGuardPath(f.featurePath))
+		if internal.HasSyncRunState(f.featurePath) || guardErr == nil {
+			t.Fatal("fresh cutoff refusal left sync recovery state")
+		}
+	})
+
+	t.Run("checkout", func(t *testing.T) {
+		dir := setupCheckoutSyncRepo(t)
+		featurePath := setupFeaturePath(t, dir)
+		rootBase := gitSHA(t, dir, "main")
+		createStackBranch(t, dir, "parent", "main", "parent.txt", "parent\n")
+		parentTip := gitSHA(t, dir, "parent")
+		createStackBranch(t, dir, "child", "parent", "child.txt", "child\n")
+		saveTestStack(t, featurePath, []internal.StackEntry{
+			{Name: "parent", Base: "main", LastBaseSHA: rootBase},
+			{Name: "child", Base: "parent", LastBaseSHA: rootBase},
+		})
+		beforeRefs := gitOutput(t, dir, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads")
+		opts := newModeOpts(dir, featurePath, internal.SyncRunPolicy{
+			Fetch: internal.SyncFetchDisabled, Propagation: internal.SyncPropagationFull,
+			ScopeKind: internal.SyncScopeAll,
+		})
+		err := internal.RunCheckoutSync(opts)
+		if err == nil || !strings.Contains(err.Error(), "strictly predates shared parent/child history") {
+			t.Fatalf("stale checkout cutoff was not refused: %v (parent=%s)", err, parentTip)
+		}
+		if after := gitOutput(t, dir, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads"); after != beforeRefs {
+			t.Fatalf("checkout refs moved before refusal:\n%s\n---\n%s", beforeRefs, after)
+		}
+		if internal.HasCheckoutTransaction(featurePath) || internal.HasCheckoutLock(featurePath) {
+			t.Fatal("checkout cutoff refusal left transaction or lock state")
+		}
+	})
+}
+
+func TestSyncMissingCutoffFreezesAncestorParentBeforeEarlierRewrite(t *testing.T) {
+	t.Run("external", func(t *testing.T) {
+		f := newScopedFixture(t)
+		stack, err := internal.LoadStack(f.featurePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		oldParent := gitOutput(t, f.repo, "rev-parse", "parent")
+		for i := range stack.Branches {
+			if stack.Branches[i].Name == "child" {
+				stack.Branches[i].LastBaseSHA = ""
+			}
+		}
+		if err := internal.SaveStack(f.featurePath, stack); err != nil {
+			t.Fatal(err)
+		}
+		f.advanceRoot(t)
+
+		stdout, stderr, exit := runSync(t, f.feature, "--full", "--no-fetch")
+		if exit != 0 {
+			t.Fatalf("missing-cutoff external sync failed: %d\n%s\n%s", exit, stdout, stderr)
+		}
+		newParent := gitOutput(t, f.repo, "rev-parse", "parent")
+		if newParent == oldParent {
+			t.Fatal("fixture did not rewrite the parent before the child row")
+		}
+		if internal.RunSilentDir(f.repo, "git", "merge-base", "--is-ancestor", newParent, "child") != nil {
+			t.Fatal("child does not contain rewritten parent")
+		}
+		stack, err = internal.LoadStack(f.featurePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := internal.GetBranch(stack, "child").LastBaseSHA; got != newParent {
+			t.Fatalf("child last_base_sha = %s, want %s", got, newParent)
+		}
+	})
+
+	t.Run("checkout", func(t *testing.T) {
+		dir := setupCheckoutSyncRepo(t)
+		featurePath := setupFeaturePath(t, dir)
+		rootBase := gitSHA(t, dir, "main")
+		createStackBranch(t, dir, "root", "main", "root.txt", "root\n")
+		rootTip := gitSHA(t, dir, "root")
+		createStackBranch(t, dir, "parent", "root", "parent.txt", "parent\n")
+		oldParent := gitSHA(t, dir, "parent")
+		createStackBranch(t, dir, "child", "parent", "child.txt", "child\n")
+		if err := internal.SaveStack(featurePath, internal.Stack{Branches: []internal.StackEntry{
+			{Name: "root", Base: "main", LastBaseSHA: rootBase},
+			{Name: "parent", Base: "root", LastBaseSHA: rootTip},
+			{Name: "child", Base: "parent"},
+		}}); err != nil {
+			t.Fatal(err)
+		}
+		gitRunCS(t, dir, "checkout", "root")
+		writeFileCS(t, dir, "root-v2.txt", "root-v2\n")
+		gitRunCS(t, dir, "add", "root-v2.txt")
+		gitRunCS(t, dir, "commit", "-m", "root v2")
+		gitRunCS(t, dir, "checkout", "main")
+
+		opts := newModeOpts(dir, featurePath, internal.SyncRunPolicy{
+			Fetch: internal.SyncFetchDisabled, Propagation: internal.SyncPropagationFull,
+			ScopeKind: internal.SyncScopeAll,
+		})
+		if err := internal.RunCheckoutSync(opts); err != nil {
+			t.Fatalf("missing-cutoff checkout sync failed: %v", err)
+		}
+		newParent := gitSHA(t, dir, "parent")
+		if newParent == oldParent {
+			t.Fatal("fixture did not rewrite checkout parent")
+		}
+		if internal.RunSilentDir(dir, "git", "merge-base", "--is-ancestor", newParent, "child") != nil {
+			t.Fatal("checkout child does not contain rewritten parent")
+		}
+		stack, err := internal.LoadStack(featurePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := internal.GetBranch(stack, "child").LastBaseSHA; got != newParent {
+			t.Fatalf("checkout child last_base_sha = %s, want %s", got, newParent)
+		}
+	})
+}
+
 func TestSyncTransactionSixBranchConflictAfterAnchorRestoresEverything(t *testing.T) {
 	t.Run("external", func(t *testing.T) {
 		repo := setupGitRepo(t, "master")

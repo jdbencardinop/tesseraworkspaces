@@ -760,6 +760,16 @@ func setupTransactionalSyncRunState(layout externalSyncLayout, ws internal.Works
 	if err := internal.PreflightSyncTransactionBirth(tx); err != nil {
 		return nil, cleanupSetup(fmt.Errorf("preflight sync rollback holders: %w", err))
 	}
+	if sel.Policy.Fetch == internal.SyncFetchDisabled || guarded {
+		cutoffRun := &syncRunContext{Policy: sel.Policy, Sel: sel, WorkspaceRoot: ws.RepoRoot}
+		inputs, inputErr := externalSyncCutoffInputs(layout, stack, cutoffRun)
+		if inputErr != nil {
+			return nil, cleanupSetup(inputErr)
+		}
+		if freezeErr := internal.FreezeSyncCutoffs(tx, stack, inputs, nil); freezeErr != nil {
+			return nil, cleanupSetup(freezeErr)
+		}
+	}
 
 	payload := internal.NewSyncRunState(feature, marker, token, sel.Policy)
 	payload.StateVersion = internal.SyncRunStateTransactionalVersion
@@ -783,10 +793,16 @@ func setupTransactionalSyncRunState(layout externalSyncLayout, ws internal.Works
 	if err := syncStepHook(internal.SyncStageInitializing, 2); err != nil {
 		return nil, err
 	}
-	if err := internal.PinSyncTransaction(tx, func() error {
+	savePayload := func() error {
 		return internal.SaveSyncRunState(layout.FeaturePath, payload)
-	}); err != nil {
+	}
+	if err := internal.PinSyncTransactionPreimages(tx, savePayload); err != nil {
 		return nil, err
+	}
+	if tx.CutoffsReady {
+		if err := internal.FinalizeSyncTransactionSnapshot(tx, savePayload); err != nil {
+			return nil, err
+		}
 	}
 	return payload, nil
 }

@@ -2,13 +2,17 @@
   "id": "sync-cutoff-integrity",
   "slug": "sync-cutoff-integrity",
   "title": "Fix GitHub issue #4 defect 2: make every sync row use and validate the correct old-parent cutoff so restacking replays only commits unique to that entry and never replays already-present master history. Audit LastBaseSHA attribution and absence semantics, require cutoff existence and ancestry before --onto, prevent broad plain-rebase fallback in stale-parent cases, expose the chosen cutoff and provenance in plans/status, and cover full/local-only external and checkout stacks with amended parents.",
-  "state": "analyzed",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-09-12T15:42:23Z",
-  "updated_at": "2026-09-27T09:34:15Z",
-  "last_command": "analyze",
-  "notes": "Phase advanced manually (--manual); artifact authored at analysis.md",
-  "apply": {},
+  "updated_at": "2026-09-30T20:41:09Z",
+  "last_command": "record",
+  "notes": "landed at 2026-09-30T20:41:09Z",
+  "apply": {
+    "completed_at": "2026-09-30T20:38:37Z",
+    "base_commit": "18135cbdc1cc593d02ef2d909d04b299f19c3838",
+    "has_patch": true
+  },
   "reconcile": {},
   "depends_on": [
     {
@@ -21,6 +25,10 @@
     },
     {
       "slug": "rebase-plan-guard",
+      "kind": "hard"
+    },
+    {
+      "slug": "sync-transactional-abort",
       "kind": "hard"
     }
   ]

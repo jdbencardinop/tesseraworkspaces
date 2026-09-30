@@ -7,6 +7,7 @@ Workspace: <META> (mode: checkout)
 
 Features:
   [ok] auth/models base=main ancestry=current head=b79744b parent=b79744b
+      cutoff evidence: raw="<absent>" effective="b79744b9fd8e" source=parent-tip-ancestor validity=valid reason=missing-cutoff-parent-ancestor
   [!] auth/api base=models ancestry=missing [ref-missing]
       reason: child-ref-missing
       git branch `api` does not exist while stack entry "api" of feature auth is still configured; restore the branch from its remote or from a known commit, for example `git branch api <known-commit>`, or deliberately remove and recreate the stack entry if no work must be preserved

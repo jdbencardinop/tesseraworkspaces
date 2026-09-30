@@ -108,6 +108,7 @@ type goldenStackEntry struct {
 	base     string
 	repo     string
 	archived bool
+	lastBase string
 }
 
 func goldenStackYAML(entries []goldenStackEntry) string {
@@ -124,6 +125,9 @@ func goldenStackYAML(entries []goldenStackEntry) string {
 		}
 		if e.archived {
 			b.WriteString("    archived: true\n")
+		}
+		if e.lastBase != "" {
+			fmt.Fprintf(&b, "    last_base_sha: %s\n", e.lastBase)
 		}
 	}
 	return b.String()

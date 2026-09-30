@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -996,8 +997,11 @@ func syncExternalLinear(b *goldenBuilder, feature string, conflict bool) *golden
 		b.git(path, "commit", "-m", name)
 		return path
 	}
+	rootBase := b.git(repo, "rev-parse", "main")
 	add("root", "main", "root.txt")
+	parentBase := b.git(repo, "rev-parse", "root")
 	parentPath := add("parent", "root", "parent.txt")
+	childBase := b.git(repo, "rev-parse", "parent")
 	childPath := add("child", "parent", "child.txt")
 
 	if conflict {
@@ -1018,9 +1022,9 @@ func syncExternalLinear(b *goldenBuilder, feature string, conflict bool) *golden
 		featurePath:   featurePath,
 		worktreesRoot: worktreesRoot,
 		entries: []goldenStackEntry{
-			{name: "root", base: "main"},
-			{name: "parent", base: "root"},
-			{name: "child", base: "parent"},
+			{name: "root", base: "main", lastBase: rootBase},
+			{name: "parent", base: "root", lastBase: parentBase},
+			{name: "child", base: "parent", lastBase: childBase},
 		},
 	}
 	fx.addExtra(remote, "<REMOTE>")
@@ -1047,8 +1051,11 @@ func syncCheckoutLinear(b *goldenBuilder, feature string, conflict bool) *golden
 		b.git(repo, "add", file)
 		b.git(repo, "commit", "-m", name)
 	}
+	rootBase := b.git(repo, "rev-parse", "main")
 	add("root", "main", "root.txt")
+	parentBase := b.git(repo, "rev-parse", "root")
 	add("parent", "root", "parent.txt")
+	childBase := b.git(repo, "rev-parse", "parent")
 	add("child", "parent", "child.txt")
 
 	if conflict {
@@ -1078,9 +1085,9 @@ func syncCheckoutLinear(b *goldenBuilder, feature string, conflict bool) *golden
 		metaRoot:    metaRoot,
 		featurePath: featurePath,
 		entries: []goldenStackEntry{
-			{name: "root", base: "main"},
-			{name: "parent", base: "root"},
-			{name: "child", base: "parent"},
+			{name: "root", base: "main", lastBase: rootBase},
+			{name: "parent", base: "root", lastBase: parentBase},
+			{name: "child", base: "parent", lastBase: childBase},
 		},
 	}
 	fx.addExtra(remote, "<REMOTE>")
@@ -1532,6 +1539,9 @@ func syncFreezeTransactional(t *testing.T, fixture string, fx *goldenFixture, ws
 	if abort {
 		return // rollback mutation sequence is covered by exact preimage tests.
 	}
+	if os.Getenv(syncGoldenRegenEnv) == "1" {
+		return
+	}
 	want := parseRenderedRecords(t, fixture, syncReadEvidence(t, fixture, "argv.log"))
 	got := normalizeRecords(res.records, reps, ws.StableID)
 	mutations := func(records []normRecord) []normRecord {
@@ -1549,6 +1559,41 @@ func syncFreezeTransactional(t *testing.T, fixture string, fx *goldenFixture, ws
 		t.Fatalf("ordinary mutation count changed:\nwant %s\ngot %s", describeRecords(want), describeRecords(got))
 	}
 	for i := range want {
+		if want[i].Verb() == "rebase" && got[i].Verb() == "rebase" &&
+			want[i].Cwd == got[i].Cwd && want[i].ExitClass == got[i].ExitClass {
+			wantTail := want[i].Tail()
+			gotTail := got[i].Tail()
+			onto := slices.Index(gotTail, "--onto")
+			wantUpdateRefs := slices.Contains(wantTail, "--update-refs")
+			gotUpdateRefs := slices.Contains(gotTail, "--update-refs")
+			gotDisablesUpdateRefs := false
+			for j := 0; j+1 < len(got[i].Argv); j++ {
+				if got[i].Argv[j] == "-c" && got[i].Argv[j+1] == "rebase.updateRefs=false" {
+					gotDisablesUpdateRefs = true
+				}
+			}
+			wantNoForkPoint := slices.Contains(wantTail, "--no-fork-point")
+			gotNoForkPoint := slices.Contains(gotTail, "--no-fork-point")
+			var wantPositionals []string
+			for _, token := range wantTail[1:] {
+				if !strings.HasPrefix(token, "-") {
+					wantPositionals = append(wantPositionals, token)
+				}
+			}
+			wantExplicitBranch := len(wantPositionals) >= 2
+			gotHasExplicitBranch := onto >= 0 && onto+3 < len(gotTail)
+			branchMatches := !wantExplicitBranch && !gotHasExplicitBranch ||
+				wantExplicitBranch && gotHasExplicitBranch &&
+					wantPositionals[len(wantPositionals)-1] == gotTail[onto+3]
+			if onto >= 0 && onto+2 < len(gotTail) && onto+4 >= len(gotTail) &&
+				isFullHexSHA(gotTail[onto+1]) && isFullHexSHA(gotTail[onto+2]) &&
+				wantUpdateRefs == gotUpdateRefs &&
+				gotDisablesUpdateRefs == !wantUpdateRefs &&
+				wantNoForkPoint == gotNoForkPoint &&
+				branchMatches {
+				continue
+			}
+		}
 		if want[i].Key() != got[i].Key() {
 			t.Fatalf("ordinary mutation %d changed: want %s; got %s", i, want[i], got[i])
 		}

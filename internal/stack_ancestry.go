@@ -99,6 +99,7 @@ const (
 const (
 	NoteBaseIdentityRemoteMismatch  StackNoteKind = "base-identity-remote-mismatch"
 	NoteBaseIdentityLiteralMismatch StackNoteKind = "base-identity-literal-mismatch"
+	NoteCutoffInvalid               StackNoteKind = "cutoff-invalid"
 )
 
 // RepoSourceMismatchLabel names the feature-level condition raised when the
@@ -166,10 +167,14 @@ type StackEdge struct {
 	MergeBase       *string `json:"merge_base"`
 	MergeBaseShort  string  `json:"merge_base_short,omitempty"`
 
-	LastBaseSHA    string          `json:"last_base_sha,omitempty"`
-	LastBaseCommit string          `json:"last_base_commit,omitempty"`
-	LastBaseShort  string          `json:"last_base_short,omitempty"`
-	BaseRecord     StackBaseRecord `json:"base_record"`
+	LastBaseSHA     string             `json:"last_base_sha,omitempty"`
+	LastBaseCommit  string             `json:"last_base_commit,omitempty"`
+	LastBaseShort   string             `json:"last_base_short,omitempty"`
+	BaseRecord      StackBaseRecord    `json:"base_record"`
+	EffectiveCutoff string             `json:"effective_cutoff,omitempty"`
+	CutoffSource    SyncCutoffSource   `json:"cutoff_source,omitempty"`
+	CutoffValidity  SyncCutoffValidity `json:"cutoff_validity,omitempty"`
+	CutoffReason    SyncCutoffReason   `json:"cutoff_reason,omitempty"`
 
 	Status   AncestryStatus      `json:"status"`
 	Reason   StackAncestryReason `json:"reason"`
@@ -415,9 +420,30 @@ func (ev *ancestryEvaluator) edge(feature string, se StackEntry, stack Stack) St
 		e.BaseRecord = StackBaseRecordUnresolvable
 	}
 
+	decision, cutoffErr := ResolveSyncCutoff(SyncCutoffResolveInput{
+		RepoDir: ev.repoDir, Entry: se.Name, GitBranch: se.GitBranch(),
+		ParentRef: e.BaseRef, ParentSHA: e.ParentHead, ChildSHA: e.LocalHead,
+		Recorded: se.LastBaseSHA, Applicable: true,
+	})
+	e.EffectiveCutoff = decision.EffectiveSHA
+	e.CutoffSource = decision.Source
+	e.CutoffValidity = decision.Validity
+	e.CutoffReason = decision.Reason
+	if cutoffErr != nil {
+		recorded := "<absent>"
+		if se.LastBaseSHA != "" {
+			recorded = ancestrySanitize(se.LastBaseSHA, ancestrySanitizeLimit)
+		}
+		e.Notes = append(e.Notes, StackEdgeNote{
+			Kind: NoteCutoffInvalid,
+			Detail: fmt.Sprintf("sync cutoff is invalid (%s; recorded %s); inspect stack.yaml and known parent history before syncing — tws will not infer a replacement boundary",
+				decision.Reason, recorded),
+		})
+	}
+
 	e = ev.classify(e)
 	if e.Status != "" && e.Status != AncestryStatusCrossRepo {
-		e.Notes = ev.identityNotes(e)
+		e.Notes = append(e.Notes, ev.identityNotes(e)...)
 	}
 	return e
 }
@@ -640,7 +666,7 @@ func ancestryGuidance(e StackEdge, detail string) string {
 	case ReasonParentAdvanced:
 		return fmt.Sprintf("parent `%s` advanced to %s; run: tws sync %s", baseRef, parent, feature)
 	case ReasonParentAdvancedNoBaseRecord:
-		return fmt.Sprintf("parent `%s` advanced to %s; no recorded base commit for this branch, so sync uses a plain rebase — verify the parent history was not rewritten; run: tws sync %s", baseRef, parent, feature)
+		return fmt.Sprintf("parent `%s` advanced to %s, but no recorded cutoff exists and sync will refuse rather than guess the child-owned range; inspect known creation or last-sync history, then repair last_base_sha from a proven commit before retrying feature %s", baseRef, parent, feature)
 	case ReasonBaseRecordUnresolvable:
 		return fmt.Sprintf("recorded base commit %s is not present in this repository; the replay strategy cannot be verified — inspect before running: tws sync %s", recorded, feature)
 	case ReasonBaseRewritten:

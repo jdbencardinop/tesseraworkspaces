@@ -51,6 +51,53 @@ that plain rebase is safe in every rewritten-parent topology.
 - Branch creation, successful sync attribution, interrupted sync, and legacy
   import/migration must be traced to determine how a wrong cutoff can arise.
 
+## Producer audit on v1.2.18-rc.1
+
+The released rollback baseline `18135cbdc1cc593d02ef2d909d04b299f19c3838`
+was exercised with actual `tws new`, `sync`, and archive metadata commands,
+real temporary repositories, and local bare remotes. No stale cutoff was
+injected in this producer test.
+
+- **Creation omission, both modes:** `tws new` knows the selected start ref but
+  new entries omit `last_base_sha`. An initial successful materialized sync
+  subsequently writes the correct parent SHA.
+- **Confirmed stale writer, external archived sync:** starting with the correct
+  recorded parent from that successful sync, archive the child, amend its
+  parent with an isolated extra file, then run local-only sync. The child ref
+  is rewritten and sync exits 0, but its recorded parent remains the old SHA.
+  That old SHA is no longer an ancestor of the rewritten child.
+- The archived executor in `internal/cli/sync_helpers.go` uses plain rebase,
+  ignores `LastBaseSHA`, and publishes no updated cutoff afterward.
+  `markUpdatedAncestors` also marks absent ancestors based on graph position,
+  not authoritative evidence that Git actually moved their refs; its skipped
+  row attribution needs examination.
+- `internal/cli/new.go` has separate external and checkout creation branches;
+  neither initializes the known creation cutoff. Existing-branch registration
+  must not fabricate a creation cutoff.
+- `internal/cli/importcmd.go` preserves exported stack entries. Imported or
+  edited metadata is therefore an input requiring validation, not proof that
+  a recorded value was produced correctly by this version.
+
+These results establish a real producer of stale cutoff metadata, but do not
+claim that archived sync explains every detail of the original v1.2.15 report.
+The session record `sync-cutoff-producer-evidence.json` preserves the exact
+before/after metadata, Git ancestry result and commands.
+
+## Approved missing/invalid cutoff policies
+
+- When no cutoff is recorded, use the current parent tip only if it is proven
+  to be an ancestor of the child, and freeze that exact tip before an earlier
+  row rewrites the parent. Otherwise refuse before branch mutation and explain
+  how to inspect/repair the recorded parent boundary.
+- A recorded cutoff that is missing, not an ancestor, or demonstrably predates
+  already-shared history refuses. Never silently replace it with a guessed
+  merge-base or broaden the replay range.
+- Newly created branches record their exact creation base; existing/restored/
+  imported branches must not be assigned invented provenance.
+- Every successful sync path, including archived entries and genuine
+  collateral updates, must record the correct new cutoff only after verified
+  Git success. Preserve byte-exact abort restoration and frozen recovery.
+
 ## Next boundary
 
 After `sync-transactional-abort`, investigate cutoff attribution and provenance

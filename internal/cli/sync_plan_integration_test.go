@@ -50,6 +50,10 @@ func setupCustomerTopologyExternal(t *testing.T) (repo, bSHA, dSHA, cSHA string)
 	repo = setupGitRepo(t, "master")
 	withWorkspaceEnv(t, repo)
 
+	// Keep one older root before the shared A commit so stale-boundary tests
+	// can prove a record predates already-shared history.
+	writeAndCommit(t, repo, "a.txt", "A\n", "A")
+
 	// master: A-B (B is the fork point the stack later records as its cutoff).
 	writeAndCommit(t, repo, "b.txt", "B\n", "B")
 	bSHA = gitOutput(t, repo, "rev-parse", "HEAD")
@@ -195,7 +199,8 @@ func TestSyncPlanIntegration_CustomerTopologyExternal(t *testing.T) {
 		}
 		// §10.1 rule 1: the replay upstream is the RECORDED CUTOFF (B), not
 		// the destination (D). The destination column still shows D.
-		wantRow := "  - pr2 [feat-pr2] base master \u2192 origin/master@" + dShort + " cutoff " + bShort + " upstream " + bShort + " strategy onto\n"
+		wantRow := "  - pr2 [feat-pr2] base master \u2192 origin/master@" + dShort + " cutoff " + bShort +
+			" effective " + bShort + " source recorded-metadata upstream " + bShort + " strategy onto\n"
 		if !strings.Contains(stdout, wantRow) {
 			t.Fatalf("entries row missing/mismatched.\nwant substring: %q\ngot stdout:\n%s", wantRow, stdout)
 		}
@@ -231,6 +236,9 @@ func TestSyncPlanIntegration_CustomerTopologyExternal(t *testing.T) {
 		if got := cutoff["recorded_sha"]; got != bSHA {
 			t.Fatalf("cutoff.recorded_sha = %v, want old cutoff B (%s)", got, bSHA)
 		}
+		if cutoff["effective_sha"] != bSHA || cutoff["source"] != "recorded-metadata" || cutoff["validity"] != "valid" {
+			t.Fatalf("cutoff decision = %#v, want recorded effective cutoff %s", cutoff, bSHA)
+		}
 
 		replay := entry["replay"].(map[string]any)
 		if got := replay["candidate_count"]; got != float64(1) {
@@ -244,8 +252,8 @@ func TestSyncPlanIntegration_CustomerTopologyExternal(t *testing.T) {
 		if got := replay["upstream_ref"]; got != bSHA {
 			t.Fatalf("replay.upstream_ref = %v, want the cutoff B (%s) on an onto arm", got, bSHA)
 		}
-		if got := replay["upstream_provenance"]; got != "recorded-cutoff" {
-			t.Fatalf("replay.upstream_provenance = %v, want recorded-cutoff", got)
+		if got := replay["upstream_provenance"]; got != "recorded-metadata" {
+			t.Fatalf("replay.upstream_provenance = %v, want recorded-metadata", got)
 		}
 		if got := replay["determinacy"]; got != "exact" {
 			t.Fatalf("replay.determinacy = %v, want exact", got)
@@ -262,7 +270,7 @@ func TestSyncPlanIntegration_CustomerTopologyExternal(t *testing.T) {
 		if got := entry["strategy"]; got != "onto" {
 			t.Fatalf("strategy = %v, want onto", got)
 		}
-		assertOntoArgv(t, entry, dSHA, bSHA, "origin/master")
+		assertOntoArgv(t, entry, dSHA, bSHA, dSHA)
 	})
 
 	// The executed guarded arm really runs `--onto D B`: the destination is
@@ -302,11 +310,57 @@ func TestSyncPlanIntegration_CustomerTopologyExternal(t *testing.T) {
 	})
 }
 
+func TestSyncPlanIntegration_StaleSharedHistoryCutoffCannotBeApproved(t *testing.T) {
+	repo, bSHA, _, _ := setupCustomerTopologyExternal(t)
+	featurePath := internal.FeaturePath("feature")
+	stack, err := internal.LoadStack(featurePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := gitOutput(t, repo, "rev-parse", bSHA+"^^")
+	stack.Branches[0].LastBaseSHA = stale
+	if err := internal.SaveStack(featurePath, stack); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, exit := runSyncExecute(t, "feature", "--plan", "--json", "--no-fetch")
+	if exit != 0 {
+		t.Fatalf("plan exit=%d stderr=%q", exit, stderr)
+	}
+	doc := planDoc(t, stdout)
+	if runnable, _ := doc["runnable"].(bool); runnable {
+		t.Fatalf("stale cutoff plan must not be runnable: blockers=%#v entries=%#v", doc["blockers"], doc["entries"])
+	}
+	refusal := doc["refusal"].(map[string]any)
+	if refusal["kind"] != "cutoff-unresolvable" {
+		t.Fatalf("refusal = %#v, want cutoff-unresolvable", refusal)
+	}
+	entry := doc["entries"].([]any)[0].(map[string]any)
+	cutoff := entry["cutoff"].(map[string]any)
+	if cutoff["recorded_sha"] != stale || cutoff["effective_sha"] != nil ||
+		cutoff["validity"] != "invalid" ||
+		cutoff["reason"] != string(internal.SyncCutoffReasonRecordedPredatesShared) {
+		t.Fatalf("cutoff = %#v", cutoff)
+	}
+	if replay := entry["replay"].(map[string]any); replay["candidate_count"] != nil || replay["range"] != nil {
+		t.Fatalf("invalid cutoff must not publish a replay count/range: %#v", replay)
+	}
+
+	before := gitOutput(t, repo, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads")
+	_, stderr, exit = runSyncExecute(t, "feature", "--no-fetch", "--max-replay-total", "100",
+		"--approve-plan", strings.Repeat("a", 64))
+	if exit == 0 || !strings.Contains(stderr, "plan-guard: cutoff-unresolvable:") {
+		t.Fatalf("approval overrode cutoff refusal: exit=%d stderr=%q", exit, stderr)
+	}
+	if after := gitOutput(t, repo, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads"); after != before {
+		t.Fatalf("guarded cutoff refusal moved refs:\n%s\n---\n%s", before, after)
+	}
+}
+
 // assertOntoArgv checks one plan row's published argv is the external
 // pass-1 `onto` shape whose --onto operand is the destination and whose
 // trailing operand is the recorded cutoff. The plan-only route publishes the
-// destination REF (Git re-resolves it); §10.5's pinning applies to executed
-// guarded argv only, which the guarded-argv subtest asserts separately.
+// destination's frozen full object ID, matching execution.
 func assertOntoArgv(t *testing.T, entry map[string]any, destinationSHA, cutoffSHA, destinationRef string) {
 	t.Helper()
 	raw, ok := entry["argv"].([]any)
@@ -346,7 +400,8 @@ func TestSyncPlanIntegration_CustomerTopologyCheckout(t *testing.T) {
 		if exit != 0 {
 			t.Fatalf("exit=%d stderr=%q", exit, stderr)
 		}
-		wantRow := "  - pr2 [pr2] base main \u2192 main@" + dShort + " cutoff " + bShort + " upstream " + bShort + " strategy onto\n"
+		wantRow := "  - pr2 [pr2] base main \u2192 main@" + dShort + " cutoff " + bShort +
+			" effective " + bShort + " source recorded-metadata upstream " + bShort + " strategy onto\n"
 		if !strings.Contains(stdout, wantRow) {
 			t.Fatalf("entries row missing/mismatched.\nwant substring: %q\ngot stdout:\n%s", wantRow, stdout)
 		}
@@ -393,8 +448,8 @@ func TestSyncPlanIntegration_CustomerTopologyCheckout(t *testing.T) {
 		if got := replay["range"]; got != bSHA+"..pr2" {
 			t.Fatalf("replay.range = %v, want %q (full cutoff SHA .. git branch)", got, bSHA+"..pr2")
 		}
-		if got := replay["upstream_provenance"]; got != "recorded-cutoff" {
-			t.Fatalf("replay.upstream_provenance = %v, want recorded-cutoff", got)
+		if got := replay["upstream_provenance"]; got != "recorded-metadata" {
+			t.Fatalf("replay.upstream_provenance = %v, want recorded-metadata", got)
 		}
 		first := replay["first_candidate"].(map[string]any)
 		if got := first["sha"]; got != cSHA {
@@ -417,11 +472,8 @@ func shortSHAForTest(sha string) string {
 }
 
 // ---------------------------------------------------------------------------
-// An executed guarded run's argv is the MATCHED PAIR of its unguarded twin's
-// (spec.md §10.5): every element is equal except the --onto operand, which a
-// guarded execution path pins to the planned, JIT-revalidated full SHA where
-// the unguarded twin passes the ref name. A row with no --onto arm — and every
-// unguarded, golden-covered invocation — stays byte-identical.
+// Guarded and unguarded execution both consume the same frozen destination
+// and cutoff object IDs.
 // ---------------------------------------------------------------------------
 
 func TestSyncPlanIntegration_GuardedRunArgvEqualsUnguardedTwin(t *testing.T) {
@@ -461,40 +513,23 @@ func TestSyncPlanIntegration_GuardedRunArgvEqualsUnguardedTwin(t *testing.T) {
 	}
 }
 
-// assertMatchedRebaseArgv is §10.5's matched-pair predicate: the two argvs
-// agree element for element, except that where the unguarded control passes a
-// ref name after --onto the guarded run passes a full lowercase-hex SHA.
 func assertMatchedRebaseArgv(t *testing.T, row int, unguarded, guarded []string) {
 	t.Helper()
 	if len(guarded) != len(unguarded) {
 		t.Fatalf("rebase[%d] argv length diverged:\n  unguarded=%v\n  guarded=%v", row, unguarded, guarded)
 	}
-	ontoOperand := -1
-	for i, tok := range unguarded {
-		if tok == "--onto" && i+1 < len(unguarded) {
-			ontoOperand = i + 1
-			break
-		}
-	}
+	onto := slices.Index(unguarded, "--onto")
 	for i := range unguarded {
-		if i == ontoOperand {
+		if onto >= 0 && (i == onto+1 || i == onto+2) {
+			if !isFullHexSHA(unguarded[i]) || !isFullHexSHA(guarded[i]) {
+				t.Fatalf("rebase[%d] cutoff/destination operands must be full object IDs: unguarded=%v guarded=%v", row, unguarded, guarded)
+			}
 			continue
 		}
 		if guarded[i] != unguarded[i] {
-			t.Fatalf("rebase[%d] argv diverged outside the --onto operand at %d:\n  unguarded=%v\n  guarded=%v",
+			t.Fatalf("rebase[%d] argv diverged at %d:\n  unguarded=%v\n  guarded=%v",
 				row, i, unguarded, guarded)
 		}
-	}
-	if ontoOperand < 0 {
-		return
-	}
-	pinned := guarded[ontoOperand]
-	if !isFullHexSHA(pinned) {
-		t.Fatalf("rebase[%d] guarded --onto operand %q is not a pinned full SHA (unguarded passed %q)",
-			row, pinned, unguarded[ontoOperand])
-	}
-	if pinned == unguarded[ontoOperand] {
-		t.Fatalf("rebase[%d] guarded run did not pin its destination: both sides passed %q", row, pinned)
 	}
 }
 
@@ -513,9 +548,7 @@ func isFullHexSHA(s string) bool {
 // TestSyncPlanIntegration_GuardedRunPinsOntoDestination drives a row that
 // really produces an --onto arm — a recorded LastBaseSHA that no longer equals
 // the current base — and asserts §10.5's pinning inside ONE repository: the
-// plan document publishes the shipped (unguarded) argv with the base REF name,
-// and the guarded execution of that same row issues the identical argv with
-// the --onto operand replaced by the resolved full SHA.
+// plan document and guarded execution consume the same full destination SHA.
 func TestSyncPlanIntegration_GuardedRunPinsOntoDestination(t *testing.T) {
 	f := newScopedFixture(t)
 	stack, err := internal.LoadStack(f.featurePath)
@@ -561,8 +594,8 @@ func TestSyncPlanIntegration_GuardedRunPinsOntoDestination(t *testing.T) {
 	if ontoIdx < 0 {
 		t.Fatalf("fixture produced no --onto arm; planned argv = %v", planned)
 	}
-	if isFullHexSHA(planned[ontoIdx]) {
-		t.Fatalf("the published (unguarded) argv must carry the base ref name, got %q", planned[ontoIdx])
+	if !isFullHexSHA(planned[ontoIdx]) {
+		t.Fatalf("the published argv must carry the frozen destination SHA, got %q", planned[ontoIdx])
 	}
 
 	w := newSyncGitWrapper(t, false)
@@ -578,14 +611,13 @@ func TestSyncPlanIntegration_GuardedRunPinsOntoDestination(t *testing.T) {
 			continue
 		}
 		tail := r.Tail()
-		for i, tok := range tail {
-			if tok == "--onto" && i+1 < len(tail) && len(tail) == len(planned) {
-				executed = tail
-			}
+		if slices.Equal(tail, planned) {
+			executed = tail
+			break
 		}
 	}
 	if executed == nil {
-		t.Fatal("guarded run issued no --onto rebase to compare")
+		t.Fatalf("guarded run issued no rebase matching the plan row: planned=%v records=%v", planned, w.records(t))
 	}
 	assertMatchedRebaseArgv(t, 0, planned, executed)
 }
@@ -594,7 +626,7 @@ func TestSyncPlanIntegration_GuardedRunPinsOntoDestination(t *testing.T) {
 // External pass 2 (archived row): an Archived entry with a stored Repo (the
 // "entry-repo" execution-context cell — see setupCustomerTopologyExternal's
 // sibling comment on why an empty Repo can never reach this strategy) runs a
-// plain explicit-branch rebase (no --onto) and never consults its cutoff.
+// explicit-branch --onto rebase using its validated cutoff.
 // ---------------------------------------------------------------------------
 
 func TestSyncPlanIntegration_ExternalPass2ArchivedRow(t *testing.T) {
@@ -640,22 +672,29 @@ func TestSyncPlanIntegration_ExternalPass2ArchivedRow(t *testing.T) {
 	if got := entry["materialization"]; got != "archived-metadata" {
 		t.Fatalf("materialization = %v, want archived-metadata", got)
 	}
-	if got := entry["strategy"]; got != "plain-explicit-branch" {
-		t.Fatalf("strategy = %v, want plain-explicit-branch", got)
+	if got := entry["strategy"]; got != "onto" {
+		t.Fatalf("strategy = %v, want onto", got)
 	}
 	execCtx := entry["execution_context"].(map[string]any)
 	if got := execCtx["source"]; got != "entry-repo" {
 		t.Fatalf("execution_context.source = %v, want entry-repo (non-empty Repo)", got)
 	}
 	cutoff := entry["cutoff"].(map[string]any)
-	if got := cutoff["usage"]; got != "not_used" {
-		t.Fatalf("cutoff.usage = %v, want not_used (pass 2 never consults the cutoff)", got)
+	if got := cutoff["usage"]; got != "used" {
+		t.Fatalf("cutoff.usage = %v, want used", got)
+	}
+	if cutoff["source"] != "parent-tip-ancestor" || cutoff["validity"] != "valid" {
+		t.Fatalf("archived cutoff decision = %#v", cutoff)
 	}
 	if argv, ok := entry["argv"].([]any); ok {
+		foundOnto := false
 		for _, a := range argv {
 			if s, _ := a.(string); s == "--onto" {
-				t.Fatalf("pass-2 argv must never carry --onto: %v", argv)
+				foundOnto = true
 			}
+		}
+		if !foundOnto {
+			t.Fatalf("pass-2 argv must carry --onto: %v", argv)
 		}
 	}
 }
@@ -1416,8 +1455,9 @@ func recordExecContext(r gitRecord) string {
 // publishes the command the executor would build, and the gate refuses it
 // rather than silently rewriting it into a different rebase.
 //
-// A checkout row never carries --update-refs, so no checkout row is ever
-// gated — asserted here as the negative control, in both stubs.
+// A checkout row and every collateral-disabled external row use the
+// compatibility-safe `-c rebase.updateRefs=false` override, so no such row is
+// gated — asserted here as the negative control.
 func TestSyncPlanIntegration_RebaseUpdateRefsCapabilityGate(t *testing.T) {
 	realGit, err := exec.LookPath("git")
 	if err != nil {
@@ -1624,20 +1664,22 @@ func TestSyncPlanIntegration_VersionProbeOnceBeforePlanningOnControlledRoutes(t 
 	})
 }
 
-// TestSyncPlanIntegration_ZeroVersionProbesOnUnguardedRoutes is §22.32a A3:
-// a genuinely unguarded, no-plan, no-armed-limit invocation must issue ZERO
-// `git --version` probes in any workspace mode. internal/cli/sync.go only
-// reaches InspectExternalPlan via runExternalPlan (--plan) or a guarded/
-// armed route, and internal/checkout_sync.go only reaches
-// InspectCheckoutPlan on its own --plan branch — so an external run with
-// neither --plan nor an armed limit (both the new-mode-triggering --no-fetch
-// form and the legacy, no-trigger-flag-at-all form), and a checkout run with
-// no --plan, must never probe.
-func TestSyncPlanIntegration_ZeroVersionProbesOnUnguardedRoutes(t *testing.T) {
+// TestSyncPlanIntegration_VersionProbesOnUnguardedRoutes is §22.32a A3
+// plus the compatibility gate: unguarded external scope=all/full routes issue
+// exactly one pre-mutation probe because their real argv carries the
+// Git-2.38-only positive option. Checkout emits the compatibility-safe config
+// override and still performs zero version probes.
+func TestSyncPlanIntegration_VersionProbesOnUnguardedRoutes(t *testing.T) {
 	assertZero := func(t *testing.T, records []gitRecord) {
 		t.Helper()
 		if probes := versionProbeIndices(records); len(probes) != 0 {
 			t.Fatalf("expected zero git --version probes, found %d at indices %v", len(probes), probes)
+		}
+	}
+	assertOne := func(t *testing.T, records []gitRecord) {
+		t.Helper()
+		if probes := versionProbeIndices(records); len(probes) != 1 {
+			t.Fatalf("expected one pre-mutation git --version probe, found %d at indices %v", len(probes), probes)
 		}
 	}
 
@@ -1652,7 +1694,7 @@ func TestSyncPlanIntegration_ZeroVersionProbesOnUnguardedRoutes(t *testing.T) {
 		if exit != 0 {
 			t.Fatalf("exit = %d, want 0", exit)
 		}
-		assertZero(t, w.records(t))
+		assertOne(t, w.records(t))
 	})
 
 	t.Run("external_legacy_unarmed", func(t *testing.T) {
@@ -1666,7 +1708,7 @@ func TestSyncPlanIntegration_ZeroVersionProbesOnUnguardedRoutes(t *testing.T) {
 		if exit != 0 {
 			t.Fatalf("exit = %d, want 0", exit)
 		}
-		assertZero(t, w.records(t))
+		assertOne(t, w.records(t))
 	})
 
 	t.Run("checkout_unarmed", func(t *testing.T) {
@@ -1723,8 +1765,6 @@ func TestSyncPlanIntegration_UpdateRefsArgvBiconditionalCorpusWide(t *testing.T)
 		t.Fatalf("this test's host must be at/above Git 2.38 for the biconditional's precondition to hold; ProbeGitVersion=%+v err=%v", v, err)
 	}
 
-	pass1Strategies := map[string]bool{"plain": true, "onto": true, "conditional": true}
-
 	assertRow := func(t *testing.T, doc map[string]any, row map[string]any) {
 		t.Helper()
 		wsMap, _ := doc["workspace"].(map[string]any)
@@ -1732,7 +1772,8 @@ func TestSyncPlanIntegration_UpdateRefsArgvBiconditionalCorpusWide(t *testing.T)
 		policyMap, _ := doc["policy"].(map[string]any)
 		scopeKind, _ := policyMap["scope_kind"].(string)
 		strategy, _ := row["strategy"].(string)
-		expected := mode == "external" && scopeKind == "all" && pass1Strategies[strategy]
+		materialization, _ := row["materialization"].(string)
+		expected := mode == "external" && scopeKind == "all" && materialization == "materialized" && strategy == "onto"
 
 		var argvs [][]any
 		if argv, ok := row["argv"].([]any); ok {
@@ -1821,26 +1862,23 @@ func TestSyncPlanIntegration_UpdateRefsArgvBiconditionalCorpusWide(t *testing.T)
 		assertDoc(t, stdout)
 	})
 
-	t.Run("external_conditional", func(t *testing.T) {
+	t.Run("external_fetch_exact", func(t *testing.T) {
 		setupCustomerTopologyExternal(t)
-		// Deliberately no --no-fetch: BaseMayMoveBeforeExecution requires
-		// fetch enabled (internal/rebase_plan_build.go), which is what turns
-		// this fixture's "onto" row into "conditional".
 		stdout, stderr, exit := runSyncExecute(t, "feature", "--plan", "--json")
 		if exit != 0 {
 			t.Fatalf("exit=%d stderr=%q", exit, stderr)
 		}
 		doc := planDoc(t, stdout)
 		entries, _ := doc["entries"].([]any)
-		foundConditional := false
+		foundOnto := false
 		for _, e := range entries {
 			row := e.(map[string]any)
-			if row["strategy"] == "conditional" {
-				foundConditional = true
+			if row["strategy"] == "onto" {
+				foundOnto = true
 			}
 		}
-		if !foundConditional {
-			t.Fatalf("expected this fixture (fetch enabled, recorded LastBaseSHA behind origin/master's current tip) to produce a conditional row, got entries=%v", entries)
+		if !foundOnto {
+			t.Fatalf("expected fetch-enabled planning to publish an exact onto row, got entries=%v", entries)
 		}
 		assertDoc(t, stdout)
 	})
@@ -2239,8 +2277,9 @@ func assertGitProcessCensus(t *testing.T, records []gitRecord, want map[string]i
 // The attribution axes are the three the design actually has:
 //
 //   - per canonical COMMON DIR: `worktree list --porcelain` (holder
-//     inventory) and `for-each-ref` (branch ref inventory) — one each, for
-//     both fixtures, because both live in a single repository;
+//     inventory) and, only where collateral is enabled, `for-each-ref`
+//     (branch ref inventory). Checkout's invocation-local false override makes
+//     collateral impossible and avoids that inventory.
 //   - per EXECUTION CONTEXT: one `config --list --show-scope -z` inventory
 //     plus exactly two typed `config --type=bool --get` reads. External's
 //     three worktrees are three contexts (3 and 6); checkout's single
@@ -2281,9 +2320,10 @@ func TestSyncPlanIntegration_GitProcessCeilingPerRow(t *testing.T) {
 			"untracked-probe":      3,  // one per row
 			"candidate-probe":      4,  // rev-list count/first/stream/patch-equivalent on the one exact row
 			"candidate-subject":    1,  // the one exact row's first-candidate subject
+			"ancestry-probe":       6,  // cutoff ancestry/shared-history proofs
 			"context-roots":        20, // --show-toplevel + --git-common-dir pairs
 			"default-branch-probe": 2,
-			"ref-resolution":       9,
+			"ref-resolution":       21, // raw parent/child/recorded/effective commit proofs
 		})
 	})
 
@@ -2308,16 +2348,19 @@ func TestSyncPlanIntegration_GitProcessCeilingPerRow(t *testing.T) {
 		assertGitProcessCensus(t, w.records(t), map[string]int{
 			"version":              1,
 			"holder-inventory":     1, // one repository, one common dir
+			"branch-ref-inventory": 0, // updateRefs=false needs no collateral inventory
 			"config-inventory":     1, // one execution context
 			"config-typed-read":    2, // two per execution context
 			"dirty-probe":          3,
 			"untracked-probe":      1,
-			"ancestry-probe":       3, // checkout's stack-wide ancestry pass
+			"candidate-probe":      4,
+			"candidate-subject":    1,
+			"ancestry-probe":       15, // no collateral range probes under the false override
 			"short-sha":            4,
 			"in-progress-state":    11, // rebase-merge/rebase-apply/MERGE_HEAD/... probes
 			"context-roots":        18,
 			"default-branch-probe": 3,
-			"ref-resolution":       21,
+			"ref-resolution":       45,
 		})
 	})
 }
@@ -3612,6 +3655,37 @@ func TestSyncPlanIntegration_CapabilityGatesFireAboveTheFetch(t *testing.T) {
 		if len(documentLevelBlockersOfKind(t, scoped, "probe-failed")) != 0 {
 			t.Fatalf("a SCOPED run publishes no --update-refs argv, so rule 3b must not fire: %v", scoped["blockers"])
 		}
+		localOnly, _ := capabilityGateDoc(t, g, realGit, "git version 2.37.0", "--local-only", "--no-fetch")
+		if len(documentLevelBlockersOfKind(t, localOnly, "probe-failed")) != 0 {
+			t.Fatalf("a local-only run publishes no positive update-refs option: %v", localOnly["blockers"])
+		}
+
+		archived := newScopedFixture(t)
+		archived.advanceRoot(t)
+		for _, name := range []string{"child", "parent", "root"} {
+			if err := archiveExternal(archived.feature, name); err != nil {
+				t.Fatal(err)
+			}
+		}
+		allArchived, _ := capabilityGateDoc(t, archived, realGit, "git version 2.37.0", "--no-fetch")
+		if len(documentLevelBlockersOfKind(t, allArchived, "probe-failed")) != 0 {
+			t.Fatalf("an all-archived run has no positive update-refs row: %v", allArchived["blockers"])
+		}
+
+		checkout := checkoutCapabilityGateDoc(t, realGit, "git version 2.37.0", "--no-fetch")
+		if checkout["runnable"] != true || len(documentLevelBlockersOfKind(t, checkout, "probe-failed")) != 0 {
+			t.Fatalf("checkout must remain runnable on Git 2.37: runnable=%v blockers=%v", checkout["runnable"], checkout["blockers"])
+		}
+		for _, raw := range checkout["entries"].([]any) {
+			argv, _ := raw.(map[string]any)["argv"].([]any)
+			var tokens []string
+			for _, token := range argv {
+				tokens = append(tokens, token.(string))
+			}
+			if slices.Contains(tokens, "--update-refs") || slices.Contains(tokens, "--no-update-refs") {
+				t.Fatalf("checkout 2.37 argv retained an unsupported update-refs flag: %v", tokens)
+			}
+		}
 	})
 
 	t.Run("2.39_above_both_gates_fetches_by_default", func(t *testing.T) {
@@ -4261,7 +4335,7 @@ func criterion19Cases() []criterion19Case {
 				}
 			})
 			gitInDir(t, f.repo, "branch", "-D", "phantom")
-			return f.feature, withLimits()
+			return f.feature, []string{"--fetch", "--max-replay-total", "50"}
 		}},
 		{kind: "cutoff-unresolvable", setup: func(t *testing.T) (string, []string) {
 			// A recorded cutoff that no longer resolves.

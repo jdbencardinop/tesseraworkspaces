@@ -283,6 +283,11 @@ const (
 	fpEntryBaseDecisionSHA            uint16 = 38 // fixed anchor, §8.2
 	fpEntryCollateralKnown            uint16 = 39
 	fpEntryCollateralRefs             uint16 = 40
+	fpEntryCutoffEffectiveSHA         uint16 = 41
+	fpEntryCutoffSource               uint16 = 42
+	fpEntryCutoffValidity             uint16 = 43
+	fpEntryCutoffReason               uint16 = 44
+	fpEntryCutoffResolvedSHA          uint16 = 45
 )
 
 // ============================================================================
@@ -456,6 +461,11 @@ func encodeFingerprintEntry(entry PlanEntry) []byte {
 		collateralElements = append(collateralElements, tlvElement(tlvTagStruct, encodeFingerprintCollateralRef(ref)))
 	}
 	e.arrayPtr(fpEntryCollateralRefs, entry.CollateralRefs != nil, collateralElements)
+	e.bytesPtr(fpEntryCutoffEffectiveSHA, entry.Cutoff.EffectiveSHA)
+	e.bytesValue(fpEntryCutoffSource, entry.Cutoff.Source)
+	e.bytesPtr(fpEntryCutoffValidity, entry.Cutoff.Validity)
+	e.bytesPtr(fpEntryCutoffReason, entry.Cutoff.Reason)
+	e.bytesPtr(fpEntryCutoffResolvedSHA, entry.Cutoff.ResolvedSHA)
 	return e.payload()
 }
 

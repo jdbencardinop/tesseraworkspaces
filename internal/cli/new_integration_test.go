@@ -30,8 +30,12 @@ func TestCreateWorktreeFromExplicitLocalBase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := internal.GetBranch(stack, "local-base").Base; got != "master" {
+	entry := internal.GetBranch(stack, "local-base")
+	if got := entry.Base; got != "master" {
 		t.Fatalf("base = %q, want master", got)
+	}
+	if entry.LastBaseSHA != masterSHA {
+		t.Fatalf("last_base_sha = %q, want exact creation commit %s", entry.LastBaseSHA, masterSHA)
 	}
 }
 
@@ -55,7 +59,59 @@ func TestCreateWorktreeFromExplicitRemoteTagAndSHA(t *testing.T) {
 				t.Fatalf("createWorktree: %v", err)
 			}
 			assertWorktreeHEAD(t, "feature", tc.name, masterSHA)
+			stack, err := internal.LoadStack(internal.FeaturePath("feature"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := internal.GetBranch(stack, tc.name).LastBaseSHA; got != masterSHA {
+				t.Fatalf("last_base_sha = %q, want %s", got, masterSHA)
+			}
 		})
+	}
+}
+
+func TestCreateWorktreeExistingBranchDoesNotInventCutoff(t *testing.T) {
+	repo := setupGitRepo(t, "master")
+	gitRun(t, repo, "branch", "adopted", "master")
+	withWorkspaceEnv(t, repo)
+
+	if err := createWorktree("feature", "adopted", "master", repo, false); err != nil {
+		t.Fatalf("createWorktree: %v", err)
+	}
+
+	stack, err := internal.LoadStack(internal.FeaturePath("feature"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := internal.GetBranch(stack, "adopted").LastBaseSHA; got != "" {
+		t.Fatalf("adopted branch last_base_sha = %q, want unknown", got)
+	}
+}
+
+func TestCreateWorktreePinsCreationRefBeforeItMoves(t *testing.T) {
+	repo := setupGitRepo(t, "master")
+	withWorkspaceEnv(t, repo)
+	creation := gitOutput(t, repo, "rev-parse", "master")
+	creationResolvedHook = func(_, baseRef, resolved string) error {
+		if baseRef != "master" || resolved != creation {
+			t.Fatalf("resolved base = %s/%s, want master/%s", baseRef, resolved, creation)
+		}
+		writeAndCommit(t, repo, "raced.txt", "moved\n", "move base after resolution")
+		return nil
+	}
+	t.Cleanup(func() { creationResolvedHook = nil })
+	if err := createWorktree("feature", "raced", "master", repo, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := gitOutput(t, repo, "rev-parse", "raced"); got != creation {
+		t.Fatalf("created branch = %s, want frozen %s", got, creation)
+	}
+	stack, err := internal.LoadStack(internal.FeaturePath("feature"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := internal.GetBranch(stack, "raced").LastBaseSHA; got != creation {
+		t.Fatalf("creation cutoff = %s, want frozen %s", got, creation)
 	}
 }
 

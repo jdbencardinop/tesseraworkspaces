@@ -132,16 +132,36 @@ func formatRebasePlanEntryRow(b *strings.Builder, entry PlanEntry) {
 		resolved = *entry.Base.Ref
 	}
 
-	fmt.Fprintf(b, "  - %s [%s] base %s \u2192 %s@%s cutoff %s upstream %s strategy %s\n",
+	fmt.Fprintf(b, "  - %s [%s] base %s \u2192 %s@%s cutoff %s effective %s source %s upstream %s strategy %s\n",
 		name, gitBranch, configured, resolved,
 		rebasePlanEntryDestination(entry, isSkipped),
 		rebasePlanEntryRecorded(entry),
+		rebasePlanEntryCutoffEffective(entry),
+		rebasePlanEntryCutoffSource(entry),
 		rebasePlanEntryEffective(entry, isSkipped),
 		entry.Strategy)
 	fmt.Fprintf(b, "    candidates %s range %s first %s\n",
 		rebasePlanEntryCount(entry, isSkipped),
 		rebasePlanEntryRange(entry, gitBranch),
 		rebasePlanEntryFirst(entry))
+}
+
+func rebasePlanEntryCutoffEffective(entry PlanEntry) string {
+	if entry.Cutoff.EffectiveSHA == nil {
+		return "<none>"
+	}
+	return shortSHA(*entry.Cutoff.EffectiveSHA)
+}
+
+func rebasePlanEntryCutoffSource(entry PlanEntry) string {
+	source := entry.Cutoff.Source
+	if source == "" {
+		source = string(SyncCutoffSourceNone)
+	}
+	if entry.Cutoff.Validity != nil && *entry.Cutoff.Validity != string(SyncCutoffValid) {
+		source += "/" + *entry.Cutoff.Validity
+	}
+	return source
 }
 
 // rebasePlanEntryDestination is the eleven-field table's <destination>.

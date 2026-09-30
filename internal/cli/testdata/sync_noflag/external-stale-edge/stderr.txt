@@ -1,2 +1,2 @@
 exit: 1
-sync incomplete
+legacy sync recovery at <FEATURE>/.sync-state.yaml predates frozen cutoff evidence; preserve it and run 'tws sync auth --abort' or inspect it manually — continuation will not guess a replay boundary

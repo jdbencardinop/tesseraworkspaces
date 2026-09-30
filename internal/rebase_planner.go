@@ -119,7 +119,7 @@ func EntryContexts(in EntryContextInput) EntryContextResult {
 	case in.Entry.Repo != "":
 		dir, source = in.Entry.Repo, "entry-repo"
 	default:
-		dir, source = "", "process-cwd"
+		dir, source = in.Layout.RepoRoot, "workspace-repo-root"
 	}
 
 	// §4.2's base-context ladder, mirrored from the shipped executor's own
@@ -134,7 +134,7 @@ func EntryContexts(in EntryContextInput) EntryContextResult {
 		case materialization == "materialized":
 			baseDir, baseSource = in.Layout.WorktreePath(in.Entry.Name), "worktree"
 		default:
-			baseDir, baseSource = "", "process-cwd"
+			baseDir, baseSource = in.Layout.RepoRoot, "workspace-repo-root"
 		}
 	}
 
@@ -237,6 +237,7 @@ func ResolveSyncBaseWithDefaultBranch(stack Stack, entry StackEntry, defaultBran
 	if entry.Base == "" {
 		return ResolveSyncBaseResult{Kind: "none"}
 	}
+
 	parent := GetBranch(stack, entry.Base)
 	if parent.Name != "" && SameStackRepo(parent.Repo, entry.Repo) {
 		return ResolveSyncBaseResult{Base: parent.GitBranch(), Kind: "stack-entry", DependsOnName: parent.Name}
@@ -253,6 +254,20 @@ func ResolveSyncBaseWithDefaultBranch(stack Stack, entry StackEntry, defaultBran
 		return ResolveSyncBaseResult{Base: "origin/" + defaultBranch, IsRemoteTracking: true, Kind: kind, DependsOnName: dependsOn}
 	}
 	return ResolveSyncBaseResult{Base: entry.Base, Kind: kind, DependsOnName: dependsOn}
+}
+
+// ResolveCheckoutSyncBase mirrors checkoutBaseTokenFor: checkout mode has one
+// repository, resolves an in-stack logical parent through GitBranch(), and
+// otherwise preserves the configured literal token. It never rewrites the
+// repository's default branch to origin/<name>.
+func ResolveCheckoutSyncBase(stack Stack, entry StackEntry) ResolveSyncBaseResult {
+	if entry.Base == "" {
+		return ResolveSyncBaseResult{Kind: "none"}
+	}
+	if parent := GetBranch(stack, entry.Base); parent.Name != "" {
+		return ResolveSyncBaseResult{Base: parent.GitBranch(), Kind: "stack-entry", DependsOnName: parent.Name}
+	}
+	return ResolveSyncBaseResult{Base: entry.Base, Kind: "literal-ref"}
 }
 
 // ============================================================================
@@ -381,6 +396,8 @@ type ReplayUpstreamInput struct {
 	// CutoffResolvedSHA is entries[].cutoff.resolved_sha — the peeled recorded
 	// cutoff. It is "" unless CutoffState == "present".
 	CutoffResolvedSHA string
+	CutoffValid       bool
+	CutoffSource      string
 }
 
 // effectiveUpstream is §10.1 rule 1: where a recorded cutoff is present AND
@@ -390,7 +407,7 @@ type ReplayUpstreamInput struct {
 // resolution. The returned pair is (upstream_ref, upstream_sha); the ref is
 // the cutoff for an `onto` arm and base.ref for a plain one (§4.2).
 func effectiveUpstream(in ReplayUpstreamInput) (ref, sha string) {
-	if in.CutoffUsage == "used" && in.CutoffState == "present" && in.CutoffResolvedSHA != "" {
+	if in.CutoffUsage == "used" && in.CutoffValid && in.CutoffResolvedSHA != "" {
 		return in.CutoffResolvedSHA, in.CutoffResolvedSHA
 	}
 	return in.UpstreamRef, in.UpstreamSHA
@@ -433,12 +450,10 @@ func firstReplayHazard(in ReplayUpstreamInput) (determinacy string, reason *stri
 		return "unknown", tok("base-unset")
 	case in.BaseRefMissing:
 		return "unknown", tok("base-ref-missing")
-	case in.CutoffUsage == "used" && in.CutoffState == "unresolvable":
+	case in.CutoffUsage == "used" && !in.CutoffValid:
 		return "unknown", tok("cutoff-unresolvable")
 	case in.Deferred:
 		return "unknown", tok("upstream-deferred")
-	case in.CutoffUsage == "used" && in.CutoffState == "absent":
-		return "snapshot", tok("no-recorded-cutoff")
 	case in.CutoffUsage == "not_used" && in.CutoffState == "present":
 		return "snapshot", tok("cutoff-not-used-on-arm")
 	default:
@@ -450,10 +465,13 @@ func firstReplayHazard(in ReplayUpstreamInput) (determinacy string, reason *stri
 // hazard reason firstReplayHazard already computed (§5's four-value domain):
 // a recorded cutoff actually consumed, a live read of the base ref standing
 // in for one, a deferred upstream, or unknown for every other hazard.
-func upstreamProvenanceFor(reason *string, cutoffUsage string) string {
+func upstreamProvenanceFor(reason *string, cutoffUsage, cutoffSource string) string {
 	if reason == nil {
 		if cutoffUsage == "used" {
-			return "recorded-cutoff"
+			if cutoffSource != "" && cutoffSource != string(SyncCutoffSourceNone) {
+				return cutoffSource
+			}
+			return "effective-cutoff"
 		}
 		return "base-ref-snapshot"
 	}
@@ -478,7 +496,7 @@ func upstreamProvenanceFor(reason *string, cutoffUsage string) string {
 func ReplayUpstream(in ReplayUpstreamInput) ReplayUpstreamResult {
 	determinacy, reason := firstReplayHazard(in)
 	result := ReplayUpstreamResult{Determinacy: determinacy, Reason: reason, MayDropBecomesEmpty: true}
-	result.UpstreamProvenance = upstreamProvenanceFor(reason, in.CutoffUsage)
+	result.UpstreamProvenance = upstreamProvenanceFor(reason, in.CutoffUsage, in.CutoffSource)
 
 	if determinacy != "exact" && determinacy != "snapshot" {
 		return result
@@ -676,11 +694,13 @@ type RebaseStrategyInput struct {
 	// Mode == ModeCheckout.
 	Pass int
 
-	GitBranch      string
-	BaseResolved   bool
-	Base           string
-	LastBaseSHA    string
-	CurrentBaseSHA string // "" when unresolvable
+	GitBranch          string
+	BaseResolved       bool
+	Base               string
+	LastBaseSHA        string
+	CurrentBaseSHA     string // "" when unresolvable
+	EffectiveCutoffSHA string
+	CutoffValid        bool
 
 	// HeadUsable is entries[].head.state == "present" (§9.3's "missing/
 	// unresolvable head" row). It only changes ModeCheckout's outcome —
@@ -739,23 +759,30 @@ type RebaseStrategyResult struct {
 // internal/cli/sync_helpers.go's two rebase-arg-building blocks (external),
 // internal/checkout_sync.go's gitRebaseOnto/gitPlainRebase (checkout). This
 // is the one place either could drift from what RebaseStrategy publishes.
+func SyncNoUpdateRefsRebaseArgs(args ...string) []string {
+	out := []string{"-c", "rebase.updateRefs=false", "rebase"}
+	return append(out, args...)
+}
+
 func rebaseArgv(mode WorkspaceMode, base, branch, lastBaseSHA string, onto, scoped bool) []string {
 	if mode == ModeCheckout {
 		if onto {
-			return []string{"rebase", "--no-fork-point", "--onto", base, lastBaseSHA}
+			return SyncNoUpdateRefsRebaseArgs("--no-fork-point", "--onto", base, lastBaseSHA)
 		}
-		return []string{"rebase", "--no-fork-point", base}
+		return SyncNoUpdateRefsRebaseArgs("--no-fork-point", base)
 	}
 	if branch != "" {
-		// external pass 2: explicit branch, never --update-refs, never --onto.
-		return []string{"rebase", base, branch}
+		if onto {
+			return SyncNoUpdateRefsRebaseArgs("--onto", base, lastBaseSHA, branch)
+		}
+		return SyncNoUpdateRefsRebaseArgs(base, branch)
 	}
 	// external pass 1: implicit HEAD.
 	if scoped {
 		if onto {
-			return []string{"rebase", "--onto", base, lastBaseSHA}
+			return SyncNoUpdateRefsRebaseArgs("--onto", base, lastBaseSHA)
 		}
-		return []string{"rebase", base}
+		return SyncNoUpdateRefsRebaseArgs(base)
 	}
 	if onto {
 		return []string{"rebase", "--update-refs", "--onto", base, lastBaseSHA}
@@ -896,49 +923,21 @@ func RebaseStrategy(in RebaseStrategyInput) RebaseStrategyResult {
 		// and lets Git itself fail at execution time.
 		return RebaseStrategyResult{Strategy: "unknown"}
 	}
+	if !in.CutoffValid || in.EffectiveCutoffSHA == "" {
+		return RebaseStrategyResult{Strategy: "unknown"}
+	}
 
 	if in.Mode == ModeCheckout {
-		strategy := "plain"
-		ontoOperand := in.Base
-		if in.CheckoutOnto {
-			strategy = "onto"
-			// §9.3's frozen checkout shape is
-			// `rebase --no-fork-point --onto <NewBaseSHA> <LastBaseSHA>`:
-			// internal/checkout_sync.go's executor calls
-			// gitRebaseOnto(opts.RepoDir, entry.NewBaseSHA, entry.LastBaseSHA),
-			// so the published --onto operand is the resolved destination
-			// SHA, never the base ref name. The plain arm keeps entry.Base
-			// verbatim, exactly as gitPlainRebase passes it.
-			ontoOperand = in.CurrentBaseSHA
-		}
-		argv := rebaseArgv(ModeCheckout, ontoOperand, "", in.LastBaseSHA, in.CheckoutOnto, false)
-		return RebaseStrategyResult{Strategy: strategy, Argv: argv, EffectiveBackend: effectiveBackendFor(in, argv)}
+		argv := rebaseArgv(ModeCheckout, in.CurrentBaseSHA, "", in.EffectiveCutoffSHA, true, false)
+		return RebaseStrategyResult{Strategy: "onto", Argv: argv, EffectiveBackend: effectiveBackendFor(in, argv)}
 	}
 
 	if in.Pass == 2 {
-		argv := rebaseArgv(ModeExternal, in.Base, in.GitBranch, "", false, false)
-		return RebaseStrategyResult{Strategy: "plain-explicit-branch", Argv: argv, EffectiveBackend: effectiveBackendFor(in, argv)}
+		argv := rebaseArgv(ModeExternal, in.CurrentBaseSHA, in.GitBranch, in.EffectiveCutoffSHA, true, true)
+		return RebaseStrategyResult{Strategy: "onto", Argv: argv, EffectiveBackend: effectiveBackendFor(in, argv)}
 	}
 
-	// Pass 1: the onto/plain choice depends on comparing LastBaseSHA against
-	// the base's current position (§10, mirrored from sync_helpers.go's
-	// rebaseArgs construction).
-	onto := in.LastBaseSHA != "" && in.CurrentBaseSHA != "" && in.LastBaseSHA != in.CurrentBaseSHA
-	if !onto {
-		argv := rebaseArgv(ModeExternal, in.Base, "", in.LastBaseSHA, false, in.Scoped)
-		return RebaseStrategyResult{Strategy: "plain", Argv: argv, EffectiveBackend: effectiveBackendFor(in, argv)}
-	}
-	ontoArgv := rebaseArgv(ModeExternal, in.Base, "", in.LastBaseSHA, true, in.Scoped)
-	if in.BaseMayMoveBeforeExecution {
-		plainArgv := rebaseArgv(ModeExternal, in.Base, "", in.LastBaseSHA, false, in.Scoped)
-		alts := [2][]string{ontoArgv, plainArgv}
-		condition := "base-may-move-before-execution"
-		// A conditional row publishes two argvs; both alternatives of a tws
-		// argv agree on whether they carry a merge-forcing option (the
-		// unscoped pass-1 pair both carry --update-refs, the scoped pair
-		// neither), so the row's backend is that shared answer.
-		return RebaseStrategyResult{Strategy: "conditional", Condition: &condition, ArgvAlternatives: &alts, EffectiveBackend: effectiveBackendFor(in, ontoArgv)}
-	}
+	ontoArgv := rebaseArgv(ModeExternal, in.CurrentBaseSHA, "", in.EffectiveCutoffSHA, true, in.Scoped)
 	return RebaseStrategyResult{Strategy: "onto", Argv: ontoArgv, EffectiveBackend: effectiveBackendFor(in, ontoArgv)}
 }
 

@@ -383,8 +383,9 @@ func TestStackAncestry_SidewaysRewriteNoRecord(t *testing.T) {
 	if edge.BaseRecord != StackBaseRecordAbsent {
 		t.Errorf("base record = %q, want absent", edge.BaseRecord)
 	}
-	if !strings.Contains(edge.Guidance, "verify the parent history was not rewritten") {
-		t.Errorf("guidance %q must state the uncertainty honestly", edge.Guidance)
+	if !strings.Contains(edge.Guidance, "sync will refuse rather than guess") ||
+		!strings.Contains(edge.Guidance, "repair last_base_sha from a proven commit") {
+		t.Errorf("guidance %q must state the conservative repair contract", edge.Guidance)
 	}
 }
 
@@ -1189,8 +1190,8 @@ func TestStackAncestry_RepoSourceMismatchIsFeatureLevel(t *testing.T) {
 		t.Errorf("checkout output must never contain %q:\n%s", RepoSourceMismatchLabel, combined)
 	}
 
-	if got := countSourceMatches(t, "stack_ancestry.go", `StackNoteKind = "`); got != 2 {
-		t.Errorf("StackNoteKind constant count = %d, want 2", got)
+	if got := countSourceMatches(t, "stack_ancestry.go", `StackNoteKind = "`); got != 3 {
+		t.Errorf("StackNoteKind constant count = %d, want 3", got)
 	}
 	assertNoSourceMatch(t, "checkout_health.go", RepoSourceMismatchLabel)
 	assertNoSourceMatch(t, "checkout_health.go", "RepoSourceMismatchLabel")
@@ -1507,7 +1508,7 @@ func TestStackAncestry_ReadOnly(t *testing.T) {
 		}
 		if len(inv.args) > 0 && inv.args[0] == "merge-base" {
 			for _, arg := range inv.args[1:] {
-				if arg == "--is-ancestor" {
+				if arg == "--is-ancestor" || arg == "--all" {
 					continue
 				}
 				if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(arg) {
@@ -2643,4 +2644,111 @@ func TestStackAncestry_ProbeFailedEndToEnd(t *testing.T) {
 	if report.HasErrors() {
 		t.Error("a failed ancestry probe must never produce an error exit")
 	}
+}
+
+func TestDoctorCutoffEvidenceRendering(t *testing.T) {
+	cases := []struct {
+		name string
+		edge StackEdge
+		want string
+	}{
+		{
+			name: "valid-recorded",
+			edge: StackEdge{Name: "recorded", LastBaseSHA: "aaa", EffectiveCutoff: "aaa",
+				CutoffSource: SyncCutoffSourceRecorded, CutoffValidity: SyncCutoffValid,
+				CutoffReason: SyncCutoffReasonValidRecorded},
+			want: `cutoff evidence: raw="aaa" effective="aaa" source=recorded-metadata validity=valid reason=recorded-cutoff-valid`,
+		},
+		{
+			name: "valid-parent-tip-fallback",
+			edge: StackEdge{Name: "fallback", EffectiveCutoff: "bbb",
+				CutoffSource: SyncCutoffSourceParentTip, CutoffValidity: SyncCutoffValid,
+				CutoffReason: SyncCutoffReasonValidParentTip},
+			want: `cutoff evidence: raw="<absent>" effective="bbb" source=parent-tip-ancestor validity=valid reason=missing-cutoff-parent-ancestor`,
+		},
+		{
+			name: "sha1-prose-abbreviated",
+			edge: StackEdge{Name: "sha1", LastBaseSHA: strings.Repeat("a", 40),
+				EffectiveCutoff: strings.Repeat("a", 40),
+				CutoffSource:    SyncCutoffSourceRecorded, CutoffValidity: SyncCutoffValid,
+				CutoffReason: SyncCutoffReasonValidRecorded},
+			want: `cutoff evidence: raw="aaaaaaaaaaaa" effective="aaaaaaaaaaaa" source=recorded-metadata validity=valid reason=recorded-cutoff-valid`,
+		},
+		{
+			name: "sha256-prose-abbreviated",
+			edge: StackEdge{Name: "sha256", LastBaseSHA: strings.Repeat("A", 64),
+				EffectiveCutoff: strings.Repeat("a", 64),
+				CutoffSource:    SyncCutoffSourceRecorded, CutoffValidity: SyncCutoffValid,
+				CutoffReason: SyncCutoffReasonValidRecorded},
+			want: `cutoff evidence: raw="aaaaaaaaaaaa" effective="aaaaaaaaaaaa" source=recorded-metadata validity=valid reason=recorded-cutoff-valid`,
+		},
+		{
+			name: "raw-ref-preserved",
+			edge: StackEdge{Name: "tag", LastBaseSHA: "refs/tags/release-base",
+				EffectiveCutoff: strings.Repeat("b", 40),
+				CutoffSource:    SyncCutoffSourceRecorded, CutoffValidity: SyncCutoffValid,
+				CutoffReason: SyncCutoffReasonValidRecorded},
+			want: `cutoff evidence: raw="refs/tags/release-base" effective="bbbbbbbbbbbb" source=recorded-metadata validity=valid reason=recorded-cutoff-valid`,
+		},
+		{
+			name: "invalid-sanitized",
+			edge: StackEdge{Name: "invalid", LastBaseSHA: "bad\nraw",
+				CutoffSource: SyncCutoffSourceRecorded, CutoffValidity: SyncCutoffInvalid,
+				CutoffReason: SyncCutoffReasonRecordedNotAncestor},
+			want: `cutoff evidence: raw="bad?raw" effective="<none>" source=recorded-metadata validity=invalid reason=recorded-cutoff-not-ancestor`,
+		},
+		{
+			name: "unevaluated",
+			edge: StackEdge{Name: "unknown", LastBaseSHA: "ccc"},
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.edge.Status = AncestryStatusCurrent
+			tc.edge.Reason = ReasonParentContained
+			tc.edge.Severity = SeverityOK
+			issues := AncestryHealthIssues(StackRepoResolution{}, []StackEdge{tc.edge})
+			if tc.want == "" {
+				if len(issues) != 0 {
+					t.Fatalf("unevaluated external doctor emitted cutoff evidence: %+v", issues)
+				}
+			} else if len(issues) != 1 || issues[0].Problem != tc.want || issues[0].Severity != SeverityInfo {
+				t.Fatalf("external doctor evidence = %+v, want %q", issues, tc.want)
+			}
+			entry := CheckoutFeatureEntry{
+				LastBaseSHA: tc.edge.LastBaseSHA, EffectiveCutoff: tc.edge.EffectiveCutoff,
+				CutoffSource: tc.edge.CutoffSource, CutoffValidity: tc.edge.CutoffValidity,
+				CutoffReason: tc.edge.CutoffReason, AncestryStatus: AncestryStatusCurrent,
+			}
+			lines := checkoutFeatureDetailLines(entry)
+			if tc.want == "" {
+				if len(lines) != 0 {
+					t.Fatalf("unevaluated checkout doctor emitted cutoff evidence: %v", lines)
+				}
+			} else if len(lines) != 1 || lines[0] != tc.want {
+				t.Fatalf("checkout doctor evidence = %v, want %q", lines, tc.want)
+			}
+		})
+	}
+}
+
+func TestParentAdvancedWithoutCutoffGuidanceRefusesGuessing(t *testing.T) {
+	guidance := ancestryGuidance(StackEdge{
+		Feature: "feature", Name: "child", GitBranch: "child",
+		BaseRef: "parent", ParentHeadShort: "abc1234",
+		Reason: ReasonParentAdvancedNoBaseRecord,
+	}, "")
+	for _, want := range []string{
+		"no recorded cutoff exists", "sync will refuse rather than guess",
+		"repair last_base_sha from a proven commit",
+	} {
+		if !strings.Contains(guidance, want) {
+			t.Fatalf("guidance %q lacks %q", guidance, want)
+		}
+	}
+	if strings.Contains(guidance, "plain rebase") || strings.Contains(guidance, "run: tws sync") {
+		t.Fatalf("guidance still promises an unsafe sync: %q", guidance)
+	}
+	assertSanitizedLine(t, guidance)
 }

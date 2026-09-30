@@ -11,6 +11,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var creationResolvedHook func(repoRoot, baseRef, resolvedSHA string) error
+
 func newCmd() *cobra.Command {
 	var base string
 	var force bool
@@ -123,16 +125,27 @@ func createCheckoutBranch(ws internal.Workspace, feature, name, requestedBase st
 	}
 
 	// Create git branch if it does not exist.
+	var creationSHA string
 	if !branchExisted {
-		if err := internal.RunDir(repoRoot, "git", "branch", gitBranch, baseRef); err != nil {
+		creationSHA, err = resolveCreationCommit(repoRoot, baseRef)
+		if err != nil {
+			return err
+		}
+		if creationResolvedHook != nil {
+			if err := creationResolvedHook(repoRoot, baseRef, creationSHA); err != nil {
+				return err
+			}
+		}
+		if err := internal.RunDir(repoRoot, "git", "branch", gitBranch, creationSHA); err != nil {
 			return fmt.Errorf("creating git branch %s: %w", gitBranch, err)
 		}
 	}
 
 	// Register in stack.
 	entry := internal.StackEntry{
-		Name: name,
-		Base: baseName,
+		Name:        name,
+		Base:        baseName,
+		LastBaseSHA: creationSHA,
 	}
 	if gitBranch != name {
 		entry.Branch = gitBranch
@@ -199,6 +212,7 @@ func createWorktree(feature, name, requestedBase, repoPath string, force bool) e
 		branchExists = true
 	}
 
+	var creationSHA string
 	if branchExists {
 		if isCheckedOutIn(repoRoot, gitBranch) && !force {
 			return fmt.Errorf("branch %q is already checked out in another worktree; use --force to check it out anyway", gitBranch)
@@ -213,16 +227,26 @@ func createWorktree(feature, name, requestedBase, repoPath string, force bool) e
 			return err
 		}
 	} else {
-		if err := internal.RunDir(repoRoot, "git", "worktree", "add", path, "-b", gitBranch, baseRef); err != nil {
+		creationSHA, err = resolveCreationCommit(repoRoot, baseRef)
+		if err != nil {
+			return err
+		}
+		if creationResolvedHook != nil {
+			if err := creationResolvedHook(repoRoot, baseRef, creationSHA); err != nil {
+				return err
+			}
+		}
+		if err := internal.RunDir(repoRoot, "git", "worktree", "add", path, "-b", gitBranch, creationSHA); err != nil {
 			return err
 		}
 	}
 
 	if !internal.HasBranch(stack, name) {
 		entry := internal.StackEntry{
-			Name: name,
-			Base: baseName,
-			Repo: storedRepo,
+			Name:        name,
+			Base:        baseName,
+			Repo:        storedRepo,
+			LastBaseSHA: creationSHA,
 		}
 		if gitBranch != name {
 			entry.Branch = gitBranch
@@ -230,6 +254,16 @@ func createWorktree(feature, name, requestedBase, repoPath string, force bool) e
 		stack.Branches = append(stack.Branches, entry)
 		if err := internal.SaveStack(featurePath, stack); err != nil {
 			return err
+		}
+	} else {
+		for i := range stack.Branches {
+			if stack.Branches[i].Name == name && stack.Branches[i].Archived {
+				stack.Branches[i].Archived = false
+				if err := internal.SaveStack(featurePath, stack); err != nil {
+					return fmt.Errorf("failed to reactivate archived worktree metadata: %w", err)
+				}
+				break
+			}
 		}
 	}
 
@@ -331,6 +365,24 @@ func resolveCreationBase(repoRoot, storedRepo string, stack internal.Stack, requ
 		return "", "", fmt.Errorf("base ref %q does not exist in %s", requestedBase, repoRoot)
 	}
 	return requestedBase, baseRef, nil
+}
+
+func resolveCreationCommit(repoRoot, baseRef string) (string, error) {
+	cmd := exec.Command("git", "-C", repoRoot, "rev-parse", "--verify", "--quiet", "--end-of-options", baseRef+"^{commit}")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("resolve creation base %q in %s: %s", baseRef, repoRoot, strings.TrimSpace(string(out)))
+	}
+	sha := strings.ToLower(strings.TrimSpace(string(out)))
+	if len(sha) != 40 && len(sha) != 64 {
+		return "", fmt.Errorf("resolve creation base %q in %s: Git returned invalid object id %q", baseRef, repoRoot, sha)
+	}
+	for _, r := range sha {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return "", fmt.Errorf("resolve creation base %q in %s: Git returned invalid object id %q", baseRef, repoRoot, sha)
+		}
+	}
+	return sha, nil
 }
 
 func sameStackRepo(a, b string) bool {

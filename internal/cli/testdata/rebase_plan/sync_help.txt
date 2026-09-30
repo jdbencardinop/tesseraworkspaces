@@ -22,6 +22,15 @@ attempt the run becomes forward-only, and neither recovery verb rewrites remote
 refs. Once forward completion is durable, --continue and --abort only finish
 cleanup and never rewind later operator work.
 
+Before any branch moves, sync validates and freezes each selected row's replay
+cutoff. A recorded last_base_sha must resolve, be an ancestor of the child, and
+must not predate history already shared by the parent and child. If no cutoff is
+recorded, the current parent tip is used only when it is proven to be an ancestor
+of the child. Sync never guesses a merge-base or fork point. Plans expose the raw
+record, effective cutoff, source, validity and reason; approval cannot waive an
+invalid cutoff. Legacy recovery without durable cutoff preimages refuses forward
+continuation and preserves its state for abort or manual inspection.
+
 If stack.yaml is absent, the historical compatibility path is available only
 after an interactive warning and confirmation, or with --allow-nontransactional.
 That deliberate exception has no complete rollback: earlier branches can remain

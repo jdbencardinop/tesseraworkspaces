@@ -37,6 +37,16 @@ func validateSyncTransactionRelationships(tx *SyncTransaction, before []byte) er
 	if tx.Ready && tx.Phase == SyncTxnPreparing || !tx.Ready && len(tx.Actions) != 0 {
 		return invalid("readiness disagrees with progress")
 	}
+	switch tx.EvidenceVersion {
+	case SyncTransactionLegacyEvidenceVersion:
+		if tx.ParentAttributionFrom != 0 {
+			return invalid("legacy parent attribution boundary")
+		}
+	case SyncTransactionEvidenceVersion:
+		if tx.ParentAttributionFrom < 1 || tx.ParentAttributionFrom > len(tx.Actions)+1 {
+			return invalid("parent attribution boundary")
+		}
+	}
 	rollingBack := tx.Rollback.StartedAt != ""
 	if tx.Completion != "" {
 		if tx.Completion != "forward-complete" && tx.Completion != "cancelled-before-mutation" {
@@ -84,11 +94,13 @@ func validateSyncTransactionRelationships(tx *SyncTransaction, before []byte) er
 		return invalid("metadata preimage is not a stack")
 	}
 	entries := make(map[string]string, len(stack.Branches))
+	stackEntries := make(map[string]StackEntry, len(stack.Branches))
 	for _, entry := range stack.Branches {
 		if entry.Name == "" || entries[entry.Name] != "" {
 			return invalid("ambiguous stack entry identity")
 		}
 		entries[entry.Name] = "refs/heads/" + entry.GitBranch()
+		stackEntries[entry.Name] = entry
 	}
 	selected := make(map[string]bool, len(tx.Selected))
 	for _, name := range tx.Selected {
@@ -98,6 +110,12 @@ func validateSyncTransactionRelationships(tx *SyncTransaction, before []byte) er
 		selected[name] = true
 	}
 	repos := make(map[string]*SyncTransactionRepo, len(tx.Repositories))
+	type selectedRefEvidence struct {
+		commonDir string
+		ref       string
+		preimage  string
+	}
+	selectedRefs := make(map[string]selectedRefEvidence, len(selected))
 	holders := map[string]bool{}
 	attributed := map[string]bool{}
 	for i := range tx.Repositories {
@@ -121,6 +139,7 @@ func validateSyncTransactionRelationships(tx *SyncTransaction, before []byte) er
 					return invalid("selected branch attribution")
 				}
 				attributed[name] = true
+				selectedRefs[name] = selectedRefEvidence{commonDir: repo.CommonDir, ref: ref.Ref, preimage: ref.PreimageSHA}
 			}
 		}
 		for _, holder := range repo.Holders {
@@ -162,6 +181,87 @@ func validateSyncTransactionRelationships(tx *SyncTransaction, before []byte) er
 	if len(attributed) != len(selected) {
 		return invalid("selected branch lacks a preimage")
 	}
+	if !tx.CutoffsReady && len(tx.Cutoffs) != 0 {
+		return invalid("cutoff rows exist before cutoff readiness")
+	}
+	cutoffByEntry := make(map[string]SyncCutoffDecision, len(tx.Cutoffs))
+	if tx.CutoffsReady {
+		if len(tx.Cutoffs) != len(selected) {
+			return invalid("cutoff evidence does not cover the selection")
+		}
+		seenCutoff := map[string]bool{}
+		for _, cutoff := range tx.Cutoffs {
+			repo := repos[cutoff.RepoCommonDir]
+			stackEntry := stackEntries[cutoff.Entry]
+			refEvidence := selectedRefs[cutoff.Entry]
+			if repo == nil || !selected[cutoff.Entry] || seenCutoff[cutoff.Entry] ||
+				cutoff.GitBranch != stackEntry.GitBranch() || cutoff.ChildRef != entries[cutoff.Entry] ||
+				cutoff.RepoCommonDir != refEvidence.commonDir || cutoff.ChildRef != refEvidence.ref ||
+				cutoff.ChildSHA != refEvidence.preimage || cutoff.Recorded != stackEntry.LastBaseSHA ||
+				cutoff.ConfiguredBase != stackEntry.Base ||
+				!reparentStateOID(cutoff.ChildSHA, repo.OIDWidth) ||
+				strings.ContainsAny(cutoff.Recorded, "\x00\r\n") || len(cutoff.Recorded) > 1024 {
+				return invalid("cutoff identity")
+			}
+			seenCutoff[cutoff.Entry] = true
+			cutoffByEntry[cutoff.Entry] = cutoff
+			parentEntry := ""
+			if parent := stackEntries[stackEntry.Base]; parent.Name != "" {
+				if WorkspaceMode(tx.WorkspaceMode) == ModeCheckout || SameStackRepo(parent.Repo, stackEntry.Repo) {
+					parentEntry = parent.Name
+				}
+			}
+			if cutoff.ParentEntry != parentEntry {
+				return invalid("cutoff parent identity")
+			}
+			if parentEntry != "" {
+				if cutoff.ParentRef != stackEntries[parentEntry].GitBranch() {
+					return invalid("cutoff parent ref")
+				}
+			} else if cutoff.Applicable && cutoff.ParentRef != cutoff.ConfiguredBase &&
+				cutoff.ParentRef != "origin/"+cutoff.ConfiguredBase {
+				return invalid("cutoff literal parent ref")
+			}
+			switch cutoff.Validity {
+			case SyncCutoffValid:
+				if !cutoff.Applicable {
+					return invalid("applicable cutoff decision")
+				}
+				if cutoff.ParentRef == "" || strings.ContainsAny(cutoff.ParentRef, "\x00\r\n") ||
+					len(cutoff.ParentRef) > 1024 ||
+					!reparentStateOID(cutoff.ParentSHA, repo.OIDWidth) ||
+					!reparentStateOID(cutoff.EffectiveSHA, repo.OIDWidth) {
+					return invalid("cutoff object ids")
+				}
+				if cutoff.SharedSHA != "" && !reparentStateOID(cutoff.SharedSHA, repo.OIDWidth) {
+					return invalid("cutoff shared history")
+				}
+				switch cutoff.Source {
+				case SyncCutoffSourceRecorded:
+					if cutoff.Recorded == "" || !reparentStateOID(cutoff.RecordedSHA, repo.OIDWidth) ||
+						cutoff.EffectiveSHA != cutoff.RecordedSHA ||
+						cutoff.Reason != SyncCutoffReasonValidRecorded {
+						return invalid("recorded cutoff decision")
+					}
+				case SyncCutoffSourceParentTip:
+					if cutoff.Recorded != "" || cutoff.RecordedSHA != "" ||
+						cutoff.EffectiveSHA != cutoff.ParentSHA ||
+						cutoff.Reason != SyncCutoffReasonValidParentTip {
+						return invalid("missing cutoff decision")
+					}
+				default:
+					return invalid("cutoff source")
+				}
+			case SyncCutoffNotApplicable:
+				if cutoff.Applicable || cutoff.Source != SyncCutoffSourceNone || cutoff.EffectiveSHA != "" ||
+					cutoff.Reason != SyncCutoffReasonNotApplicable {
+					return invalid("not-applicable cutoff decision")
+				}
+			default:
+				return invalid("cutoff validity")
+			}
+		}
+	}
 	if mode := WorkspaceMode(tx.WorkspaceMode); mode == ModeCheckout && len(repos) > 1 {
 		return invalid("checkout transaction spans repositories")
 	}
@@ -201,6 +301,11 @@ func validateSyncTransactionRelationships(tx *SyncTransaction, before []byte) er
 		if action.Status != SyncTxnActionIntent && action.Status != SyncTxnActionObserved && action.Status != SyncTxnActionFailed ||
 			action.Status == SyncTxnActionIntent && i != len(tx.Actions)-1 {
 			return invalid("action status")
+		}
+		if (action.DestinationSHA == "") != (action.CutoffSHA == "") ||
+			action.DestinationSHA != "" && (!reparentStateOID(action.DestinationSHA, repo.OIDWidth) ||
+				!reparentStateOID(action.CutoffSHA, repo.OIDWidth)) {
+			return invalid("action replay boundary")
 		}
 		refs := map[string]bool{}
 		for _, ref := range repo.Refs {
@@ -268,6 +373,121 @@ func validateSyncTransactionRelationships(tx *SyncTransaction, before []byte) er
 			}
 			if len(seen) != len(refs) {
 				return invalid("incomplete action ref image")
+			}
+		}
+		attributionRequired := tx.EvidenceVersion == SyncTransactionEvidenceVersion &&
+			action.Sequence >= tx.ParentAttributionFrom
+		if action.ParentDestinationsReady != attributionRequired ||
+			!action.ParentDestinationsReady && len(action.ParentDestinations) != 0 {
+			return invalid("action parent attribution readiness")
+		}
+		if action.ParentDestinationsReady {
+			expected := map[string]bool{}
+			for _, cutoff := range tx.Cutoffs {
+				if cutoff.Entry != action.Entry && cutoff.RepoCommonDir == action.RepoCommonDir && allowed[cutoff.ChildRef] {
+					expected[cutoff.Entry] = true
+				}
+			}
+			if len(action.ParentDestinations) != len(expected) {
+				return invalid("action parent attribution coverage")
+			}
+			beforeValues := syncTransactionValuesMap(action.BeforeRefs)
+			afterValues := syncTransactionValuesMap(action.AfterRefs)
+			seenParents := map[string]bool{}
+			for _, parent := range action.ParentDestinations {
+				cutoff, ok := cutoffByEntry[parent.Entry]
+				if !ok || !expected[parent.Entry] || seenParents[parent.Entry] ||
+					parent.ParentEntry != cutoff.ParentEntry || parent.ParentRef != cutoff.ParentRef ||
+					!reparentStateOID(parent.ActionSHA, repo.OIDWidth) ||
+					strings.ContainsAny(parent.ParentRef, "\x00\r\n") || len(parent.ParentRef) > 1024 {
+					return invalid("action parent attribution identity")
+				}
+				seenParents[parent.Entry] = true
+				if cutoff.ParentEntry != "" {
+					parentCutoff, ok := cutoffByEntry[cutoff.ParentEntry]
+					if !ok || parent.Kind != "stack-entry" || parent.CanonicalRef != parentCutoff.ChildRef {
+						return invalid("action stack parent attribution")
+					}
+				} else {
+					if reparentStateRef(cutoff.ParentRef) && parent.CanonicalRef != cutoff.ParentRef {
+						return invalid("action explicit parent ref attribution")
+					}
+					switch parent.Kind {
+					case "object":
+						if parent.CanonicalRef != "" {
+							return invalid("action object parent attribution")
+						}
+						if reparentStateOID(cutoff.ParentRef, repo.OIDWidth) &&
+							strings.ToLower(cutoff.ParentRef) != parent.ActionSHA {
+							return invalid("action object parent identity")
+						}
+					case "local-branch":
+						if !strings.HasPrefix(parent.CanonicalRef, "refs/heads/") {
+							return invalid("action local parent attribution")
+						}
+					case "remote-tracking":
+						if !strings.HasPrefix(parent.CanonicalRef, "refs/remotes/") {
+							return invalid("action remote parent attribution")
+						}
+					case "tag":
+						if !strings.HasPrefix(parent.CanonicalRef, "refs/tags/") {
+							return invalid("action tag parent attribution")
+						}
+					case "ref":
+						if !strings.HasPrefix(parent.CanonicalRef, "refs/") ||
+							strings.HasPrefix(parent.CanonicalRef, "refs/heads/") ||
+							strings.HasPrefix(parent.CanonicalRef, "refs/remotes/") ||
+							strings.HasPrefix(parent.CanonicalRef, "refs/tags/") {
+							return invalid("action literal ref attribution")
+						}
+					default:
+						return invalid("action parent attribution kind")
+					}
+				}
+				if strings.HasPrefix(parent.CanonicalRef, "refs/heads/") {
+					if beforeValues[parent.CanonicalRef] != parent.ActionSHA {
+						return invalid("action local parent preimage")
+					}
+				}
+				expectedMove := strings.HasPrefix(parent.CanonicalRef, "refs/heads/") &&
+					allowed[parent.CanonicalRef] &&
+					(parent.CanonicalRef == action.ContextRef ||
+						!syncActionRefHeld(parent.CanonicalRef, action.BeforeHolders))
+				if parent.MovesWithAction != expectedMove {
+					return invalid("action parent movement attribution")
+				}
+				if parent.MovesWithAction {
+					if cutoff.EffectiveSHA != parent.ActionSHA {
+						return invalid("action moving parent cutoff transition")
+					}
+				} else {
+					if cutoff.EffectiveSHA != action.CutoffSHA {
+						return invalid("action collateral cutoff transition")
+					}
+					switch parent.Kind {
+					case "object", "tag":
+					default:
+						if parent.ActionSHA != action.DestinationSHA {
+							return invalid("action nonmoving parent destination")
+						}
+					}
+				}
+				if action.Status == SyncTxnActionIntent {
+					if parent.DestinationSHA != "" {
+						return invalid("pending action parent destination")
+					}
+				} else {
+					if !reparentStateOID(parent.DestinationSHA, repo.OIDWidth) {
+						return invalid("action parent destination")
+					}
+					if parent.MovesWithAction {
+						if afterValues[parent.CanonicalRef] != parent.DestinationSHA {
+							return invalid("action local parent destination")
+						}
+					} else if parent.DestinationSHA != action.DestinationSHA {
+						return invalid("action collateral transition destination")
+					}
+				}
 			}
 		}
 	}

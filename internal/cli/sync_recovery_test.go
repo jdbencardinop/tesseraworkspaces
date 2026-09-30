@@ -1398,7 +1398,8 @@ func TestSyncRecovery_Cell4ContinueResumesAndCompletes(t *testing.T) {
 		t.Fatal("the fixture must leave real pending work, or the resume proves nothing")
 	}
 
-	// (a) the document the resume is admitted by: rows, runnable, no refusal.
+	// (a) the document preserves the sentinel's rows but refuses forward
+	// replay because the legacy sentinel has no frozen cutoff preimages.
 	planOut, _, planExit := runSync(t, f.feature, "--plan", "--json", "--continue")
 	if planExit != 0 {
 		t.Fatalf("--plan always exits 0: exit=%d", planExit)
@@ -1407,11 +1408,11 @@ func TestSyncRecovery_Cell4ContinueResumesAndCompletes(t *testing.T) {
 	if got, _ := planField(t, doc, "summary", "plannability").(string); got != "rows" {
 		t.Fatalf("plannability = %q, want rows: the sentinel IS this continuation's persisted subject", got)
 	}
-	if got := planField(t, doc, "runnable"); got != true {
-		t.Fatalf("runnable = %v, want true", got)
+	if got := planField(t, doc, "runnable"); got != false {
+		t.Fatalf("runnable = %v, want false", got)
 	}
-	if got := planField(t, doc, "refusal", "kind"); got != nil {
-		t.Fatalf("refusal.kind = %v, want null", got)
+	if got := planField(t, doc, "refusal", "kind"); got != "cutoff-unresolvable" {
+		t.Fatalf("refusal.kind = %v, want cutoff-unresolvable", got)
 	}
 	names := map[string]bool{}
 	for _, raw := range planField(t, doc, "entries").([]any) {
@@ -1426,30 +1427,15 @@ func TestSyncRecovery_Cell4ContinueResumesAndCompletes(t *testing.T) {
 		t.Fatalf("entries[] = %v, want EXACTLY the sentinel's pending intent %v: the recovery arm re-plans nothing", names, pending)
 	}
 
-	// (b) the run itself completes through the payload-aware executor.
-	stdout, stderr, exit := runSyncExecute(t, f.feature, "--continue")
-	if exit != 0 {
-		t.Fatalf("a flagless --continue over a valid backup sentinel must resume: exit=%d stderr=%q stdout=%q", exit, stderr, stdout)
+	// (b) the old backup sentinel has no durable cutoff preimages, so forward
+	// continuation refuses and preserves the recovery evidence.
+	_, stderr, exit := runSyncExecute(t, f.feature, "--continue")
+	if exit == 0 || !strings.Contains(stderr, "no frozen cutoff evidence") {
+		t.Fatalf("legacy backup sentinel was not refused: exit=%d stderr=%q", exit, stderr)
 	}
-	if !strings.Contains(stdout, "Sync complete.") {
-		t.Fatalf("stdout = %q, want the shipped legacy tail", stdout)
+	if got := internal.InspectGuardedLegacySentinel(f.featurePath, f.feature); got.Verdict != internal.SentinelValid {
+		t.Fatalf("legacy cutoff refusal did not preserve the sentinel: %+v", got)
 	}
-	for _, name := range pending {
-		if !strings.Contains(stdout, name) {
-			t.Fatalf("stdout = %q, want every pending entry %q to have been processed", stdout, name)
-		}
-	}
-	// §12.8b's prose table: an interrupted FRESH guarded legacy setup has no
-	// prior state, so the recovery arm prints NO resume line at all.
-	if view.Sentinel.PriorLegacyPresent {
-		t.Fatal("this fixture must be the fresh-setup sentinel")
-	}
-	if strings.Contains(stdout, "Resuming sync with") {
-		t.Fatalf("stdout = %q must print no resume line for a fresh-setup sentinel (§22.24j)", stdout)
-	}
-
-	// (c) the guarded teardown removed all three artefacts.
-	f.stateFilesGone(t)
 }
 
 // TestSyncRecovery_Cell4TriggerFlagsRaiseTheShippedI20Sentence is §12.8b's
@@ -1787,13 +1773,12 @@ func TestSyncRecovery_Cell4LimitTableIsTheSentinelsOwn(t *testing.T) {
 	t.Run("matching_limit_resumes_at_runtime", func(t *testing.T) {
 		f := newScopedFixture(t)
 		buildResumableCell4FixtureWithLimit(t, f, &persisted)
-		stdout, stderr, exit := runSyncExecute(t, f.feature, "--continue", "--max-replay-total", strconv.Itoa(persisted))
-		if exit != 0 {
-			t.Fatalf("a MATCHING limit must resume: exit=%d stderr=%q", exit, stderr)
+		_, stderr, exit := runSyncExecute(t, f.feature, "--continue", "--max-replay-total", strconv.Itoa(persisted))
+		if exit == 0 || !strings.Contains(stderr, "no frozen cutoff evidence") {
+			t.Fatalf("matching limit authorized unknown legacy cutoff evidence: exit=%d stderr=%q", exit, stderr)
 		}
-		if !strings.Contains(stdout, "Sync complete.") {
-			t.Fatalf("stdout = %q, want the shipped legacy tail", stdout)
+		if got := internal.InspectGuardedLegacySentinel(f.featurePath, f.feature); got.Verdict != internal.SentinelValid {
+			t.Fatalf("legacy cutoff refusal did not preserve the sentinel: %+v", got)
 		}
-		f.stateFilesGone(t)
 	})
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -293,10 +294,8 @@ func (g *planGuardRun) revalidate(name string) error {
 }
 
 // planLayout converts the external layout to the internal-owned
-// RebasePlanLayout (§9.0): RepoRoot stays "" on the external route, exactly
-// as the checkout twin leaves WorktreesRoot "".
-func planLayout(l externalSyncLayout) internal.RebasePlanLayout {
-	return internal.RebasePlanLayout{FeaturePath: l.FeaturePath, WorktreesRoot: l.WorktreesRoot}
+func planLayout(l externalSyncLayout, repoRoot string) internal.RebasePlanLayout {
+	return internal.RebasePlanLayout{FeaturePath: l.FeaturePath, WorktreesRoot: l.WorktreesRoot, RepoRoot: repoRoot}
 }
 
 // externalWorkspace projects internal.Workspace into the plan's display-only
@@ -416,13 +415,11 @@ func InspectExternalPlan(req ExternalPlanInspectionRequest) ExternalPlanInspecti
 	insp.Continue = req.Continue
 	insp.Capabilities, insp.Version, _ = internal.ProbeGitCapabilities()
 	insp.State = internal.InspectExternalPlanState(req.Layout.FeaturePath, internal.ExternalPlanStateOpts{Classified: req.Classified})
-	// §16 rules 3a/3b, at their required position: immediately after the
-	// version probe, ABOVE this route's own fetch and above every config
-	// read. Rule 3b is argv-derived and decided from mode and scope here,
-	// before any row is built: only an external UNSCOPED (scope=all) run
-	// publishes a pass-1 `--update-refs` argv (§9.3).
+	// Rule 3a is fixed immediately after the version probe, above fetch and
+	// config reads. Rule 3b is appended after selection/materialization can
+	// prove this invocation has an actual positive --update-refs row.
 	insp.Gates = append(
-		internal.CapabilityGates(insp.Version, insp.Capabilities, externalArgvNeedsUpdateRefs(req)),
+		internal.CapabilityGates(insp.Version, insp.Capabilities, false),
 		externalPreconditionGates(req)...)
 
 	payload := req.Classified.Payload
@@ -488,11 +485,15 @@ func InspectExternalPlan(req ExternalPlanInspectionRequest) ExternalPlanInspecti
 	} else {
 		insp.Remaining = internal.RemainingRebaseEntries(
 			route,
-			planLayout(req.Layout),
+			planLayout(req.Layout, req.Ws.RepoRoot),
 			internal.RemainingEntriesState{Mode: internal.ModeExternal, External: insp.State},
 			order, sel,
 		)
 	}
+	insp.Gates = append(insp.Gates, internal.RebaseUpdateRefsCapabilityGates(
+		insp.Version, insp.Capabilities,
+		externalSelectionNeedsUpdateRefs(req.Layout, sel, insp.Remaining),
+	)...)
 
 	if req.Continue {
 		insp.StageFacts = externalStageFacts(insp.Remaining)
@@ -508,21 +509,35 @@ func InspectExternalPlan(req ExternalPlanInspectionRequest) ExternalPlanInspecti
 	return insp
 }
 
+// externalSelectionNeedsUpdateRefs is §16 rule 3b's precise argv predicate.
+// Only remaining, selected, materialized pass-1 rows in a full scope=all
+// external run carry the positive option. Local-only, scoped, all-archived,
+// and publication/cleanup-only continuation routes remain supported on
+// Git 2.26-2.37.
+func externalSelectionNeedsUpdateRefs(layout externalSyncLayout, sel internal.SyncSelection, remaining []string) bool {
+	if sel.Policy.Scoped() || sel.Policy.Propagation != internal.SyncPropagationFull {
+		return false
+	}
+	pending := make(map[string]bool, len(remaining))
+	for _, name := range remaining {
+		pending[name] = true
+	}
+	for _, entry := range sel.Entries {
+		if !pending[entry.Name] {
+			continue
+		}
+		if _, err := os.Stat(layout.WorktreePath(entry.Name)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // externalEffectiveRoute derives this invocation's own effective route
 // (§13.6 rule 4), mirroring internal's own checkout twin: a --continue of an
 // already-persisted payload inherits ITS OWN route (PayloadNewMode, never
 // re-derived from req.NewMode, which a continuation invocation need not even
 // repeat); a fresh run's route is req.NewMode directly.
-// externalArgvNeedsUpdateRefs is §16 rule 3b's argv-derived predicate,
-// answered from mode and scope BEFORE any row is built, because the gate
-// itself must sit above the fetch: the external pass-1 `scope=all` shapes are
-// the only argv this feature ever publishes carrying `--update-refs`
-// (`internal/cli/sync_helpers.go`'s unscoped rebase-arg construction, §9.3),
-// so a SCOPED run (`--only`/`--from`) and every checkout run never need it.
-func externalArgvNeedsUpdateRefs(req ExternalPlanInspectionRequest) bool {
-	return !req.Policy.Scoped()
-}
-
 func externalEffectiveRoute(req ExternalPlanInspectionRequest, payload *internal.SyncRunState) string {
 	if req.Continue && payload != nil {
 		if internal.PayloadNewMode(payload) {
@@ -1107,7 +1122,7 @@ func externalPlanRequest(req ExternalPlanInspectionRequest, insp ExternalPlanIns
 	}
 
 	return internal.RebasePlanRequest{
-		Layout:                    planLayout(req.Layout),
+		Layout:                    planLayout(req.Layout, req.Ws.RepoRoot),
 		Mode:                      internal.ModeExternal,
 		Feature:                   req.Feature,
 		Workspace:                 externalWorkspace(req.Ws),

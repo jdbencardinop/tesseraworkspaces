@@ -946,18 +946,9 @@ func TestCheckoutSyncPlan_RunCheckoutSync_GuardedApprovedRunPersistsGuardedVersi
 	}
 }
 
-// TestCheckoutSyncPlan_ContinueCheckoutSync_ArmedResumeUpgradesV2Transaction
-// proves ContinueCheckoutSync's own guard seam (§13.2a, §13.6 rule 4d): an
-// armed --continue (opts.PlanGuard.Armed()) resuming a plain, pre-existing
-// v2 transaction (one this test builds and saves directly, exactly as an
-// older, unguarded run would have left behind) calls
-// upgradeGuardedCheckoutTransaction below the seam and above resumeTransaction,
-// so the persisted transaction is upgraded to state_version: 3 carrying the
-// resume's own armed limit — a flagless resume of an already-guarded
-// transaction stays guarded through PersistedGuarded alone, but this test
-// exercises the upgrade path itself, on a transaction that was never guarded
-// to begin with.
-func TestCheckoutSyncPlan_ContinueCheckoutSync_ArmedResumeUpgradesV2Transaction(t *testing.T) {
+// A legacy transaction has no durable cutoff preimages. Guard approval cannot
+// upgrade that missing evidence into a replay boundary.
+func TestCheckoutSyncPlan_ContinueCheckoutSync_ArmedLegacyResumeRefusesUnknownCutoff(t *testing.T) {
 	dir, ws := cspFixture(t)
 	feature := "feat-resume-upgrade"
 	fp := ws.FeaturePath(feature)
@@ -981,29 +972,21 @@ func TestCheckoutSyncPlan_ContinueCheckoutSync_ArmedResumeUpgradesV2Transaction(
 	if checkoutRecoveryIsGuarded(tx) {
 		t.Fatal("the transaction this test built must start out NOT guarded, or the upgrade this test proves would be a no-op")
 	}
-	cspStopAtPlanned(t)
-
 	opts := cspOpts(feature, fp, dir, cspAllPolicy(SyncFetchDisabled))
 	opts.Continue = true
 	opts.PlanGuard = CheckoutPlanGuard{MaxTotal: intPtr(5)}
 
 	err := ContinueCheckoutSync(opts)
-	if !errors.Is(err, errCspGuardStop) {
-		t.Fatalf("err = %v, want the injected step-hook stop error", err)
+	if err == nil || !strings.Contains(err.Error(), "predates frozen cutoff evidence") {
+		t.Fatalf("err = %v, want conservative legacy cutoff refusal", err)
 	}
 
 	got, lerr := LoadCheckoutTransaction(fp)
 	if lerr != nil {
 		t.Fatalf("expected the transaction to still be readable: %v", lerr)
 	}
-	if got.StateVersion != CheckoutTransactionGuardedVersion {
-		t.Fatalf("StateVersion = %d, want upgraded to %d", got.StateVersion, CheckoutTransactionGuardedVersion)
-	}
-	if got.MaxReplayTotal == nil || *got.MaxReplayTotal != 5 {
-		t.Fatalf("MaxReplayTotal = %v, want a pointer to 5: the armed resume must persist its own limit onto the upgraded transaction", got.MaxReplayTotal)
-	}
-	if !checkoutRecoveryIsGuarded(got) {
-		t.Fatal("the upgraded transaction must now report guarded, so a later flagless resume stays guarded via PersistedGuarded")
+	if got.StateVersion != CheckoutTransactionVersion || got.MaxReplayTotal != nil || checkoutRecoveryIsGuarded(got) {
+		t.Fatalf("legacy refusal mutated recovery state: %+v", got)
 	}
 }
 
@@ -1312,7 +1295,7 @@ func TestCheckoutSyncPlan_FinalizeTransaction_WholePlanAncestryPostcondition(t *
 		}
 		var refusal *PlanGuardRefusalError
 		if errors.As(err, &refusal) {
-			t.Fatalf("guarded err is a *PlanGuardRefusalError (%+v); the finalizer's postcondition is native on BOTH routes", refusal)
+			t.Fatalf("guarded err is a *PlanGuardRefusalError (%+v); want native transaction ownership refusal", refusal)
 		}
 		if combined := stdout + stderr; strings.Contains(combined, "plan-guard: ") {
 			t.Fatalf("captured output = %q, want no plan-guard marker even on the guarded route", combined)
@@ -1335,13 +1318,10 @@ func TestCheckoutSyncPlan_FinalizeTransaction_WholePlanAncestryPostcondition(t *
 		}
 	})
 
-	// (9) The PLAN route contributes ZERO EXTRA `merge-base --is-ancestor`
-	// processes: it never runs finalizeTransaction, so the only ancestry
-	// probes it issues are the shipped stack-wide pass's own — exactly one
-	// per stack entry. The EXECUTING control twin, over the identical
-	// fixture, issues strictly more, and the difference is precisely the
-	// finalization loop's own len(Plan) probes plus the per-entry ones. Both
-	// numbers are measured from a real argv log, never estimated.
+	// (9) The plan route now proves each cutoff as well as evaluating stack
+	// ancestry, but still never runs finalizeTransaction. The executing twin
+	// therefore issues at least one additional finalization ancestry probe per
+	// plan row.
 	t.Run("PlanRouteAddsZeroFinalizationMergeBaseProbes", func(t *testing.T) {
 		dir, feature, fp, _ := cspFinalizePostconditionFixture(t)
 		opts := cspOpts(feature, fp, dir, cspAllPolicy(SyncFetchDisabled))
@@ -1359,8 +1339,8 @@ func TestCheckoutSyncPlan_FinalizeTransaction_WholePlanAncestryPostcondition(t *
 		if HasCheckoutTransaction(fp) || HasCheckoutLock(fp) {
 			t.Fatal("a --plan route must create neither a transaction nor a lock")
 		}
-		if planProbes != entries {
-			t.Fatalf("plan route issued %d `merge-base --is-ancestor` processes, want exactly %d — one per stack entry, and ZERO from finalizeTransaction",
+		if planProbes < entries {
+			t.Fatalf("plan route issued %d `merge-base --is-ancestor` processes, want at least %d stack/cutoff proofs",
 				planProbes, entries)
 		}
 

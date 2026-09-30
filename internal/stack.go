@@ -275,9 +275,9 @@ func TopoSort(s Stack) ([]StackEntry, error) {
 
 	// Kahn's algorithm
 	var queue []string
-	for name, deg := range inDegree {
-		if deg == 0 {
-			queue = append(queue, name)
+	for _, entry := range s.Branches {
+		if inDegree[entry.Name] == 0 {
+			queue = append(queue, entry.Name)
 		}
 	}
 
@@ -306,13 +306,9 @@ func TopoSort(s Stack) ([]StackEntry, error) {
 // It is deliberately NOT TopoSort, is never called by it, and never modifies
 // it. Two differences are load-bearing:
 //
-//  1. TopoSort seeds its ready queue by ranging over a Go map, so its initial
-//     root order is randomized per run. A fingerprint and a replay sequence
-//     both need an order that never changes between a --plan and its
-//     execution, so the ready set here is a min-heap keyed by the entry's
-//     index in Stack.Branches: stack.yaml declaration order is the sole
-//     sibling tie-break, and it is a stable, operator-visible, byte-durable
-//     property of the very file the run rewrites.
+//  1. TopoSort orders the whole graph with stack.yaml declaration order as
+//     its sibling tie-break. This function applies that same stable,
+//     operator-visible ordering only inside the target's reachable closure.
 //  2. An edge exists only where child.Base == parent.Name AND the two entries
 //     share a repository (SameStackRepo). TopoSort ignores Repo entirely, so
 //     an unrelated stack in another repository whose Base merely spells the

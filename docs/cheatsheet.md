@@ -147,7 +147,7 @@ this version. Exit status is 0 whenever a report was produced.
 ```sh
 tws sync auth                # fetches, then rebases parent→child
                              # if auth-models fails, middleware+routes are skipped
-                             # archived branches synced via --update-refs or optimistic rebase
+                             # archived branches use the same validated cutoff as materialized rows
 ```
 
 ### Sync modes
@@ -172,6 +172,33 @@ tws sync auth --fetch                # input refs: fetch first (external default
 - Selectors are logical `stack.yaml` names, never Git branches.
 - `--no-fetch` is an input-ref policy, not an offline mode: `--push` is still allowed.
 - A scoped run drops `--update-refs`, so unselected branches never move.
+- Collateral-disabled routes use
+  `git -c rebase.updateRefs=false rebase`, so `rebase.updateRefs=true` in
+  repository or inherited config cannot re-enable movement during
+  scoped/local-only, archived, or checkout sync. This remains compatible with
+  Git 2.26-2.37; only intentional full external `--update-refs` needs 2.38.
+- Before mutation, every selected row freezes an effective replay cutoff.
+  Recorded `last_base_sha` values must resolve, be ancestors of their child,
+  and not predate already-shared parent/child history. If the record is absent,
+  the current parent tip is accepted only when Git proves it is an ancestor of
+  the child. tws never guesses a merge-base, fork point, reflog entry, or
+  arbitrary ancestor.
+- New branches store the exact full creation commit. Successful materialized,
+  archived, and genuinely moved `--update-refs` rows refresh their destination
+  cutoff from their own action-time parent evidence (a moving local parent's
+  postimage, or a containment-proven executed destination for a nonmoving
+  local/remote/tag/object parent whose frozen old cutoff equals the action's
+  replay cutoff); failed and untouched rows retain their old metadata. A
+  different cutoff inside the replay range without an exact rewritten parent
+  counterpart is refused before rebase. A recorded collateral C→U transition
+  does not replace configured tag/OID parent C: the next explicit sync uses
+  destination C, cutoff U, and replays only U..child before recording C.
+- Full external actions durably save completion for every selected ref they
+  actually move together with the primary; recovery never reruns a finalized
+  collateral row after a post-progress crash.
+- Doctor shows sanitized raw/effective/source/validity/reason cutoff evidence
+  for evaluated rows. Unevaluated rows claim no decision, and missing-record
+  parent advancement directs known-history repair rather than a plain rebase.
 - `--only`/`--from` on an archived entry is refused; on an unmaterialized entry it is allowed.
 - Trigger flags on `--continue` require v2 state; against legacy or absent state they are refused.
 - `--abort` cannot be combined with a mode flag: abort is defined by the persisted run.
@@ -226,6 +253,9 @@ tws sync auth --no-fetch --approve-plan <fingerprint> --max-replay-per-entry 10
 ```
 
 - `--plan` renders each entry's old base, new base, and `candidates` count and exits before rebasing anything — but it still fetches exactly where the run it describes fetches: an external plan fetches by default, a checkout plan only under `--fetch`, and `--plan --continue` never fetches. `--plan --no-fetch` previews a different, fully local route.
+- `entries[].cutoff` distinguishes the raw record from `effective_sha` and
+  reports `source`, `validity`, and `reason`. An invalid cutoff is non-waivable;
+  `--approve-plan` never authorizes it, and plan/status/doctor never repair it.
 - `candidates` is an upper bound, never a promise of what gets applied.
 - `--max-replay-per-entry <n>` / `--max-replay-total <n>` bound only this invocation's work and refuse before rebasing if exceeded; they are never cumulative across resumes.
 - `--approve-plan <fingerprint>` re-supplies the 64-hex fingerprint `--plan` printed, and requires at least one of those limits on every route, `--plan` included. A plan paired with `--approve-plan` but no limit mints no fingerprint — that pairing is a documentation bug, never a valid workflow.
@@ -233,6 +263,10 @@ tws sync auth --no-fetch --approve-plan <fingerprint> --max-replay-per-entry 10
 - Admission for the guarded run is one predicate: `runnable && !guard.would_refuse && guard.execute_blocked_by == [] && refusal.kind == null`. Branch on it, never on `--plan`'s own exit status — a plan-only run exits `0` even when it describes a refusal.
 - A guarded refusal exits `1` and writes exactly one `plan-guard: <kind>: <detail>` line on stderr; a detail beginning `state-preserved: ` means something on disk outlives the refusal. A refusal tws already performs — a dirty tree, a held lock, an unresolvable base, an incomplete previous run — keeps its own wording, exits `1`, and is never marked.
 - A guarded run's limits are recorded in recovery state, so an older tws release refuses to resume it rather than silently dropping the guard.
+- Legacy remaining replay without safely reconstructible cutoff evidence
+  refuses continuation. Safe pre-mutation and publication/cleanup-only recovery
+  remain supported under their ownership and phase restrictions; never use
+  `--abort` after publication starts.
 
 ## Reparent a branch onto a new base
 

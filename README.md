@@ -91,6 +91,17 @@ existing no-flag behavior; recovery now preserves rollback evidence. Notes:
   anchor is a no-op success, not an error.
 - A scoped run drops `git rebase --update-refs`, so it cannot move a branch
   outside the selection.
+- Every selected row is preflighted before branch mutation. A recorded
+  `last_base_sha` must resolve, be an ancestor of the child, and not predate
+  history already shared by parent and child. When it is absent, tws freezes
+  the current parent tip only if Git proves that tip is an ancestor of the
+  child. It never substitutes a merge-base, fork point, reflog entry, or
+  arbitrary ancestor.
+- New branches record the exact full commit used for creation. Existing,
+  restored, and imported branches preserve their evidence or remain unknown.
+- Materialized, archived, and actual `--update-refs` collateral branches
+  refresh `last_base_sha` only after verified Git success. Failed and untouched
+  rows retain their previous metadata.
 - Incompatible combinations are refused before any fetch, lock, or rebase.
 - Every new ordinary-sync `--push` is strict: the run stops at the first
   rejected push, keeps its recovery state, and `tws sync <feature> --continue`
@@ -115,6 +126,42 @@ new-mode route, not the one a bare `tws sync <feature>` takes. Bare `--plan`
 (no other flag) describes exactly the no-flag run. Its `candidates` counts are
 an upper bound on what a guarded run might replay, never a promise of what
 gets applied.
+
+Each `entries[].cutoff` reports the raw recorded value, its resolved commit,
+the frozen `effective_sha`, `source`, `validity`, and `reason`. Human plans
+render the recorded and effective cutoffs separately. A cutoff refusal is a
+hard safety blocker; an approval token or replay-limit waiver cannot override
+it. Read-only plans do not repair metadata.
+
+For selected branches moved collaterally by external `--update-refs`, sync
+captures that row's own canonical parent in the correct repository immediately
+before the Git action. Local branch parents use their verified action
+postimage when they move with the action. Nonmoving local, remote-tracking,
+tag, and object parents record the exact executed `--onto` transition only
+after their action-time commit is proven to be contained by that destination
+and their frozen old cutoff exactly matches the primary action's replay
+cutoff. A cutoff inside that replay range needs a moving local parent's exact
+`AfterRefs` counterpart; otherwise sync refuses before the rebase instead of
+moving the branch and guessing. The recorded transition remains an old cutoff,
+not a replacement configured parent: if tag/OID parent C produced collateral
+transition C→U, a later explicit sync plans and runs `--onto C U`, replays only
+U..child, and records C only after success.
+
+Scoped and local-only external rebases, archived external rebases, and all
+checkout rebases invoke `git -c rebase.updateRefs=false rebase`.
+Repository-local or inherited `rebase.updateRefs=true` therefore cannot
+re-enable collateral movement, while these routes remain compatible with Git
+2.26-2.37. Full external actions intentionally using `--update-refs` still
+require Git 2.38. Their moved selected collateral metadata and durable
+completion progress are recorded with the primary action before execution
+advances.
+
+Doctor prints sanitized raw/effective/source/validity/reason cutoff evidence
+for every evaluated stack edge, abbreviating object IDs in prose; structured
+reports retain full values. Unevaluated edges do not claim a cutoff
+decision. A missing record with an advanced parent is reported as a
+known-history repair requirement; doctor no longer promises a plain rebase
+that sync would refuse.
 
 `--max-replay-per-entry <n>` and `--max-replay-total <n>` refuse before
 rebasing if this invocation would replay more candidates than the bound, for

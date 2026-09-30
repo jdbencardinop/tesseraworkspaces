@@ -106,6 +106,25 @@ func TestTopoSort_SingleBranch(t *testing.T) {
 	}
 }
 
+func TestTopoSort_PreservesDeclarationOrderForIndependentRoots(t *testing.T) {
+	stack := Stack{Branches: []StackEntry{
+		{Name: "primary", Base: "refs/remotes/origin/master"},
+		{Name: "collateral", Base: "refs/tags/base"},
+		{Name: "other", Base: "deadbeef"},
+	}}
+	for i := 0; i < 20; i++ {
+		sorted, err := TopoSort(stack)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for j, want := range []string{"primary", "collateral", "other"} {
+			if sorted[j].Name != want {
+				t.Fatalf("iteration %d order[%d] = %q, want declaration-order %q", i, j, sorted[j].Name, want)
+			}
+		}
+	}
+}
+
 func TestTopoSort_Empty(t *testing.T) {
 	s := Stack{}
 

@@ -2,5 +2,7 @@ exit: 0
 auth: 1 issue(s)
   [!] api: has uncommitted changes
       commit or stash changes before syncing
+  [i] models: cutoff evidence: raw="<absent>" effective="b79744b9fd8e" source=parent-tip-ancestor validity=valid reason=missing-cutoff-parent-ancestor
+  [i] api: cutoff evidence: raw="<absent>" effective="b79744b9fd8e" source=parent-tip-ancestor validity=valid reason=missing-cutoff-parent-ancestor
 
 1 issue(s) found.

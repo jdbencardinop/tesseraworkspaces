@@ -842,7 +842,7 @@ func gitCheckout(repoDir, branch string) error {
 }
 
 func gitRebaseOnto(repoDir, newBase, oldBase string) error {
-	cmd := exec.Command("git", "rebase", "--no-fork-point", "--onto", newBase, oldBase)
+	cmd := exec.Command("git", SyncNoUpdateRefsRebaseArgs("--no-fork-point", "--onto", newBase, oldBase)...)
 	cmd.Dir = repoDir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -856,7 +856,7 @@ func gitRebaseOnto(repoDir, newBase, oldBase string) error {
 }
 
 func gitPlainRebase(repoDir, base string) error {
-	cmd := exec.Command("git", "rebase", "--no-fork-point", base)
+	cmd := exec.Command("git", SyncNoUpdateRefsRebaseArgs("--no-fork-point", base)...)
 	cmd.Dir = repoDir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1564,6 +1564,24 @@ func RunCheckoutSync(opts CheckoutSyncOpts) error {
 		_ = releaseCheckoutSyncLocks(opts)
 		return fmt.Errorf("capture sync rollback preimage: %w", err)
 	}
+	planByName := make(map[string]CheckoutPlanEntry, len(plan))
+	for _, entry := range plan {
+		planByName[entry.Name] = entry
+	}
+	cutoffInputs := make([]SyncCutoffFreezeInput, 0, len(sel.Entries))
+	for _, selected := range sel.Entries {
+		input := SyncCutoffFreezeInput{Entry: selected.Name, RepoDir: opts.RepoDir}
+		if entry, ok := planByName[selected.Name]; ok {
+			input.Applicable = true
+			input.ParentRef = entry.Base
+			input.ParentSHA = entry.NewBaseSHA
+		}
+		cutoffInputs = append(cutoffInputs, input)
+	}
+	if err := FreezeSyncCutoffs(tx.Transaction, stack, cutoffInputs, func() error { return nil }); err != nil {
+		_ = releaseCheckoutSyncLocks(opts)
+		return err
+	}
 	if err := PreflightSyncTransactionBirth(tx.Transaction); err != nil {
 		_ = releaseCheckoutSyncLocks(opts)
 		return fmt.Errorf("preflight sync rollback holders: %w", err)
@@ -1633,6 +1651,25 @@ func ContinueCheckoutSync(opts CheckoutSyncOpts) error {
 	guarded := opts.PlanGuard.Guarded()
 	var insp CheckoutPlanInspection
 	if !cleanupOnly {
+		legacyNoReplay := tx.Transaction == nil && tx.CurrentIndex == len(tx.Plan) &&
+			(tx.Stage == StageRestoring || tx.Stage == StagePublishing || tx.Stage == StageCompleted)
+		if tx.Transaction == nil && !legacyNoReplay {
+			return fmt.Errorf("checkout sync recovery predates frozen cutoff evidence; preserve %s and use --abort or inspect the legacy transaction manually — continuation will not guess a replay boundary",
+				CheckoutTransactionPath(opts.FeaturePath))
+		}
+		if tx.Transaction != nil {
+			needsCutoff := tx.CurrentIndex < len(tx.Plan) &&
+				tx.Stage != StageRestoring && tx.Stage != StagePublishing && tx.Stage != StageCompleted
+			if needsCutoff {
+				if err := RevalidateSyncCutoffs(tx.Transaction); err != nil {
+					return err
+				}
+			} else if tx.Transaction.CutoffsReady {
+				if err := RevalidateSyncCutoffs(tx.Transaction); err != nil {
+					return err
+				}
+			}
+		}
 		if SyncTransactionRollingBack(tx.Transaction) {
 			return fmt.Errorf("checkout sync rollback has started; forward continuation is disabled — re-run with --abort")
 		}
@@ -2114,6 +2151,14 @@ func processBranch(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 	}
 	entry.NewBaseSHA = newBaseSHA
 
+	var cutoffDecision SyncCutoffDecision
+	if tx.Transaction != nil {
+		cutoffDecision, err = RevalidateSyncCutoffEntry(tx.Transaction, opts.RepoDir, entry.Name)
+		if err != nil {
+			return err
+		}
+	}
+
 	// JIT guard revalidation seam: re-measure this entry against current
 	// Git state immediately before its own first Git command in this
 	// invocation runs, so drift between admission and execution refuses
@@ -2124,9 +2169,10 @@ func processBranch(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 	}
 
 	if tx.Transaction != nil {
-		if err := BeginSyncGitActionWithContextRef(tx.Transaction, opts.RepoDir, "rebase", entry.Name, opts.RepoDir,
+		if err := BeginSyncRebaseAction(tx.Transaction, opts.RepoDir, entry.Name, opts.RepoDir,
 			"refs/heads/"+entry.Branch,
-			[]string{"refs/heads/" + entry.Branch}, func() error { return SaveCheckoutTransaction(opts.FeaturePath, tx) }); err != nil {
+			[]string{"refs/heads/" + entry.Branch}, entry.NewBaseSHA, cutoffDecision.EffectiveSHA,
+			func() error { return SaveCheckoutTransaction(opts.FeaturePath, tx) }); err != nil {
 			return err
 		}
 	}
@@ -2227,13 +2273,13 @@ func doRebase(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 		}
 	}
 
-	// Amend-aware: if LastBaseSHA differs from NewBaseSHA, use --onto
 	var rebaseErr error
 	if tx.Transaction != nil {
-		args := []string{"rebase", "--no-fork-point", entry.Base}
-		if entry.LastBaseSHA != "" && entry.LastBaseSHA != entry.NewBaseSHA {
-			args = []string{"rebase", "--no-fork-point", "--onto", entry.NewBaseSHA, entry.LastBaseSHA}
+		cutoff, err := SyncCutoffForEntry(tx.Transaction, entry.Name)
+		if err != nil {
+			return err
 		}
+		args := SyncNoUpdateRefsRebaseArgs("--no-fork-point", "--onto", entry.NewBaseSHA, cutoff.EffectiveSHA)
 		rebaseErr = RunSyncRebaseSilent(tx.Transaction, opts.RepoDir, args...)
 	} else if entry.LastBaseSHA != "" && entry.LastBaseSHA != entry.NewBaseSHA {
 		rebaseErr = gitRebaseOnto(opts.RepoDir, entry.NewBaseSHA, entry.LastBaseSHA)
@@ -2285,18 +2331,22 @@ func finalizeTransaction(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 		return fmt.Errorf("reload stack for LastBaseSHA update: %w", err)
 	}
 	for _, pe := range tx.Plan {
+		destinationSHA, verifyErr := VerifySyncDestination(opts.RepoDir, pe.NewBaseSHA, "refs/heads/"+pe.Branch)
+		if verifyErr != nil {
+			return fmt.Errorf("verify destination cutoff for %s: %w", pe.Name, verifyErr)
+		}
 		for i := range stack.Branches {
 			// Attribute by logical Name when the plan carries it (C3); an old
 			// transaction with no name falls back to the first GitBranch match.
 			if pe.Name != "" {
 				if stack.Branches[i].Name == pe.Name {
-					stack.Branches[i].LastBaseSHA = pe.NewBaseSHA
+					stack.Branches[i].LastBaseSHA = destinationSHA
 					break
 				}
 				continue
 			}
 			if stack.Branches[i].GitBranch() == pe.Branch {
-				stack.Branches[i].LastBaseSHA = pe.NewBaseSHA
+				stack.Branches[i].LastBaseSHA = destinationSHA
 				break
 			}
 		}

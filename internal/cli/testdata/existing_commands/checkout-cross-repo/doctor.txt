@@ -7,7 +7,9 @@ Workspace: <META> (mode: checkout)
 
 Features:
   [ok] auth/models base=main ancestry=current head=b79744b parent=b79744b
+      cutoff evidence: raw="<absent>" effective="b79744b9fd8e" source=parent-tip-ancestor validity=valid reason=missing-cutoff-parent-ancestor
   [ok] auth/api base=models ancestry=current head=b79744b parent=b79744b
+      cutoff evidence: raw="<absent>" effective="b79744b9fd8e" source=parent-tip-ancestor validity=valid reason=missing-cutoff-parent-ancestor
   [i] auth/wiki base=main ancestry=cross-repo-unsupported
       reason: cross-repo
       entry targets another repository (<OTHER>); cross-repo ancestry is not evaluated, so this edge is reported as cross-repo-unsupported

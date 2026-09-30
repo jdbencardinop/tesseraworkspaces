@@ -860,12 +860,16 @@ type PlanEntryHead struct {
 
 // PlanEntryCutoff is entries[].cutoff (Group C).
 type PlanEntryCutoff struct {
-	RecordedSHA *string `json:"recorded_sha"`
-	State       *string `json:"state"`      // absent | present | unresolvable
-	Provenance  string  `json:"provenance"` // recorded-by-sync | none
-	ResolvedSHA *string `json:"resolved_sha"`
-	Usage       string  `json:"usage"` // used | not_used
-	Write       string  `json:"write"` // per-entry | at-finalization | never
+	RecordedSHA  *string `json:"recorded_sha"`
+	State        *string `json:"state"`      // absent | present | unresolvable
+	Provenance   string  `json:"provenance"` // recorded-metadata | none
+	ResolvedSHA  *string `json:"resolved_sha"`
+	EffectiveSHA *string `json:"effective_sha"`
+	Source       string  `json:"source"`   // recorded-metadata | parent-tip-ancestor | none
+	Validity     *string `json:"validity"` // valid | invalid | not-applicable | null
+	Reason       *string `json:"reason"`
+	Usage        string  `json:"usage"` // used | not_used
+	Write        string  `json:"write"` // per-entry | at-finalization | never
 }
 
 // PlanReplayCandidate is entries[].replay.first_candidate.

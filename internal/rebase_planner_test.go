@@ -85,7 +85,7 @@ func TestRebasePlanner_EntryContexts(t *testing.T) {
 		}
 	})
 
-	t.Run("ExternalNonMaterializedNoRepoUsesProcessCWD", func(t *testing.T) {
+	t.Run("ExternalNonMaterializedNoRepoUsesWorkspaceRoot", func(t *testing.T) {
 		oldCWD, err := os.Getwd()
 		if err != nil {
 			t.Fatal(err)
@@ -96,19 +96,20 @@ func TestRebasePlanner_EntryContexts(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		layout := RebasePlanLayout{WorktreesRoot: t.TempDir()}
+		repo := rppRepo(t)
+		layout := RebasePlanLayout{WorktreesRoot: t.TempDir(), RepoRoot: repo}
 		entry := StackEntry{Name: "no-repo-no-worktree"}
 		sel := SyncSelection{Entries: []SyncSelectedEntry{{Name: entry.Name, Role: SyncRoleAnchor}}}
 
 		result := EntryContexts(EntryContextInput{Entry: entry, Mode: ModeExternal, Layout: layout, Selection: sel})
-		if result.ExecutionDir != "" || result.ExecutionSource != "process-cwd" {
-			t.Fatalf("dir/source = %q/%q, want \"\"/process-cwd", result.ExecutionDir, result.ExecutionSource)
+		if result.ExecutionDir != repo || result.ExecutionSource != "workspace-repo-root" {
+			t.Fatalf("dir/source = %q/%q, want %q/workspace-repo-root", result.ExecutionDir, result.ExecutionSource, repo)
 		}
-		if result.ExecutionErr == nil {
-			t.Fatal("expected a non-nil ExecutionErr: the process cwd was deliberately made a non-repository")
+		if result.ExecutionErr != nil {
+			t.Fatalf("workspace repository context failed: %v", result.ExecutionErr)
 		}
-		if result.ExecutionContext.Source != "process-cwd" || result.ExecutionContext.ContextID != nil {
-			t.Fatalf("ExecutionContext = %+v, want {Source: process-cwd, ContextID: nil} on the error path", result.ExecutionContext)
+		if result.ExecutionContext.Source != "workspace-repo-root" || result.ExecutionContext.ContextID == nil {
+			t.Fatalf("ExecutionContext = %+v, want measured workspace repository context", result.ExecutionContext)
 		}
 	})
 
@@ -523,7 +524,7 @@ func TestRebasePlanner_FirstReplayHazard(t *testing.T) {
 	// precedence descends in this exact order and nothing skips a rank.
 	base := ReplayUpstreamInput{
 		ContextUsable: true, HeadUsable: true, BaseUnset: false, BaseRefMissing: false,
-		CutoffUsage: "not_used", CutoffState: "", Deferred: false,
+		CutoffUsage: "not_used", CutoffState: "", CutoffValid: true, Deferred: false,
 	}
 	cases := []struct {
 		name            string
@@ -537,9 +538,13 @@ func TestRebasePlanner_FirstReplayHazard(t *testing.T) {
 		{"4HeadRefMissing", func(in *ReplayUpstreamInput) { in.HeadUsable = false }, "unknown", tok("head-ref-missing")},
 		{"5BaseUnset", func(in *ReplayUpstreamInput) { in.BaseUnset = true }, "unknown", tok("base-unset")},
 		{"6BaseRefMissing", func(in *ReplayUpstreamInput) { in.BaseRefMissing = true }, "unknown", tok("base-ref-missing")},
-		{"7CutoffUnresolvable", func(in *ReplayUpstreamInput) { in.CutoffUsage, in.CutoffState = "used", "unresolvable" }, "unknown", tok("cutoff-unresolvable")},
+		{"7CutoffUnresolvable", func(in *ReplayUpstreamInput) {
+			in.CutoffUsage, in.CutoffState, in.CutoffValid = "used", "unresolvable", false
+		}, "unknown", tok("cutoff-unresolvable")},
 		{"8UpstreamDeferred", func(in *ReplayUpstreamInput) { in.Deferred = true }, "unknown", tok("upstream-deferred")},
-		{"9NoRecordedCutoff", func(in *ReplayUpstreamInput) { in.CutoffUsage, in.CutoffState = "used", "absent" }, "snapshot", tok("no-recorded-cutoff")},
+		{"9NoRecordedCutoffUsesValidatedFallback", func(in *ReplayUpstreamInput) {
+			in.CutoffUsage, in.CutoffState, in.CutoffValid, in.CutoffResolvedSHA = "used", "absent", true, "parent"
+		}, "exact", nil},
 		{"10CutoffNotUsedOnArm", func(in *ReplayUpstreamInput) { in.CutoffUsage, in.CutoffState = "not_used", "present" }, "snapshot", tok("cutoff-not-used-on-arm")},
 		{"11Exact", func(in *ReplayUpstreamInput) {}, "exact", nil},
 	}
@@ -574,7 +579,7 @@ func TestRebasePlanner_FirstReplayHazard(t *testing.T) {
 	t.Run("PrecedenceRank8BeatsRanks9And10", func(t *testing.T) {
 		in := base
 		in.Deferred = true
-		in.CutoffUsage, in.CutoffState = "used", "absent" // would itself be rank 9
+		in.CutoffUsage, in.CutoffState, in.CutoffValid = "used", "absent", true
 		determinacy, reason := firstReplayHazard(in)
 		if determinacy != "unknown" || reason == nil || *reason != "upstream-deferred" {
 			t.Fatalf("determinacy/reason = %q/%v, want unknown/upstream-deferred", determinacy, reason)
@@ -590,7 +595,7 @@ func TestRebasePlanner_UpstreamProvenanceFor(t *testing.T) {
 		cutoffUsage string
 		want        string
 	}{
-		{"NilReasonWithCutoffUsedIsRecordedCutoff", nil, "used", "recorded-cutoff"},
+		{"NilReasonWithCutoffUsedIsEffectiveCutoff", nil, "used", "effective-cutoff"},
 		{"NilReasonWithCutoffNotUsedIsBaseRefSnapshot", nil, "not_used", "base-ref-snapshot"},
 		{"UpstreamDeferredIsBaseRefDeferred", tok("upstream-deferred"), "used", "base-ref-deferred"},
 		{"NoRecordedCutoffIsBaseRefSnapshot", tok("no-recorded-cutoff"), "used", "base-ref-snapshot"},
@@ -599,7 +604,7 @@ func TestRebasePlanner_UpstreamProvenanceFor(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := upstreamProvenanceFor(tc.reason, tc.cutoffUsage)
+			got := upstreamProvenanceFor(tc.reason, tc.cutoffUsage, "")
 			if got != tc.want {
 				t.Fatalf("upstreamProvenanceFor(%v, %q) = %q, want %q", tc.reason, tc.cutoffUsage, got, tc.want)
 			}
@@ -669,7 +674,7 @@ func TestRebasePlanner_ReplayUpstream(t *testing.T) {
 		}
 	})
 
-	t.Run("SnapshotDeterminacyAlsoRunsTheRealProbes", func(t *testing.T) {
+	t.Run("ValidatedMissingCutoffFallbackRunsExactProbes", func(t *testing.T) {
 		repo := rppRepo(t)
 		gitInTest(t, repo, "branch", "upstream-base")
 		upstreamSHA := gitInTest(t, repo, "rev-parse", "upstream-base")
@@ -679,10 +684,11 @@ func TestRebasePlanner_ReplayUpstream(t *testing.T) {
 			ContextUsable: true, ExecDir: repo,
 			HeadUsable: true, GitBranch: "main",
 			UpstreamRef: "upstream-base", UpstreamSHA: upstreamSHA,
-			CutoffUsage: "used", CutoffState: "absent",
+			CutoffUsage: "used", CutoffState: "absent", CutoffValid: true,
+			CutoffResolvedSHA: upstreamSHA, CutoffSource: string(SyncCutoffSourceParentTip),
 		})
-		if result.Determinacy != "snapshot" || result.Reason == nil || *result.Reason != "no-recorded-cutoff" {
-			t.Fatalf("Determinacy/Reason = %q/%v, want snapshot/no-recorded-cutoff", result.Determinacy, result.Reason)
+		if result.Determinacy != "exact" || result.Reason != nil {
+			t.Fatalf("Determinacy/Reason = %q/%v, want exact/nil", result.Determinacy, result.Reason)
 		}
 		if result.CandidateCount == nil || *result.CandidateCount != 1 {
 			t.Fatalf("CandidateCount = %v, want 1 (a snapshot row still runs the real candidate probes)", result.CandidateCount)
@@ -917,11 +923,11 @@ func TestRebasePlanner_RebaseArgv(t *testing.T) {
 		onto, scoped              bool
 		want                      []string
 	}{
-		{"CheckoutOnto", ModeCheckout, "base", "", "lastSHA", true, false, []string{"rebase", "--no-fork-point", "--onto", "base", "lastSHA"}},
-		{"CheckoutPlain", ModeCheckout, "base", "", "", false, false, []string{"rebase", "--no-fork-point", "base"}},
-		{"ExternalPass2ExplicitBranchIgnoresOntoAndScoped", ModeExternal, "base", "branch", "", true, true, []string{"rebase", "base", "branch"}},
-		{"ExternalPass1ScopedOnto", ModeExternal, "base", "", "lastSHA", true, true, []string{"rebase", "--onto", "base", "lastSHA"}},
-		{"ExternalPass1ScopedPlain", ModeExternal, "base", "", "", false, true, []string{"rebase", "base"}},
+		{"CheckoutOnto", ModeCheckout, "base", "", "lastSHA", true, false, []string{"-c", "rebase.updateRefs=false", "rebase", "--no-fork-point", "--onto", "base", "lastSHA"}},
+		{"CheckoutPlain", ModeCheckout, "base", "", "", false, false, []string{"-c", "rebase.updateRefs=false", "rebase", "--no-fork-point", "base"}},
+		{"ExternalPass2ExplicitBranchUsesOnto", ModeExternal, "base", "branch", "lastSHA", true, true, []string{"-c", "rebase.updateRefs=false", "rebase", "--onto", "base", "lastSHA", "branch"}},
+		{"ExternalPass1ScopedOnto", ModeExternal, "base", "", "lastSHA", true, true, []string{"-c", "rebase.updateRefs=false", "rebase", "--onto", "base", "lastSHA"}},
+		{"ExternalPass1ScopedPlain", ModeExternal, "base", "", "", false, true, []string{"-c", "rebase.updateRefs=false", "rebase", "base"}},
 		{"ExternalPass1UnscopedOnto", ModeExternal, "base", "", "lastSHA", true, false, []string{"rebase", "--update-refs", "--onto", "base", "lastSHA"}},
 		{"ExternalPass1UnscopedPlain", ModeExternal, "base", "", "", false, false, []string{"rebase", "--update-refs", "base"}},
 	}
@@ -1132,13 +1138,14 @@ func TestRebasePlanner_RebaseStrategy(t *testing.T) {
 		result := RebaseStrategy(RebaseStrategyInput{
 			Mode: ModeCheckout, ContextUsable: true, HeadUsable: true, BaseResolved: true,
 			CurrentBaseSHA: "newbase-sha", Base: "release", LastBaseSHA: "oldbase-sha", CheckoutOnto: true,
+			EffectiveCutoffSHA: "oldbase-sha", CutoffValid: true,
 			BackendConfigReadable: true, BackendConfigValid: true, BackendConfigValue: "apply",
 			CapDefaultBackendMerge: true, CapDefaultBackendMergeKnown: true,
 		})
 		if result.Strategy != "onto" {
 			t.Fatalf("Strategy = %q, want onto", result.Strategy)
 		}
-		want := []string{"rebase", "--no-fork-point", "--onto", "newbase-sha", "oldbase-sha"}
+		want := []string{"-c", "rebase.updateRefs=false", "rebase", "--no-fork-point", "--onto", "newbase-sha", "oldbase-sha"}
 		if !stringSlicesEqual(result.Argv, want) {
 			t.Fatalf("Argv = %v, want %v", result.Argv, want)
 		}
@@ -1147,43 +1154,46 @@ func TestRebasePlanner_RebaseStrategy(t *testing.T) {
 		}
 	})
 
-	t.Run("CheckoutPlainWhenCheckoutOntoFalse", func(t *testing.T) {
+	t.Run("CheckoutMissingRecordStillUsesValidatedOnto", func(t *testing.T) {
 		result := RebaseStrategy(RebaseStrategyInput{
 			Mode: ModeCheckout, ContextUsable: true, HeadUsable: true, BaseResolved: true,
-			CurrentBaseSHA: "newbase-sha", Base: "release", CheckoutOnto: false,
+			CurrentBaseSHA: "newbase-sha", Base: "release",
+			EffectiveCutoffSHA: "newbase-sha", CutoffValid: true,
 		})
-		if result.Strategy != "plain" {
-			t.Fatalf("Strategy = %q, want plain", result.Strategy)
+		if result.Strategy != "onto" {
+			t.Fatalf("Strategy = %q, want onto", result.Strategy)
 		}
-		want := []string{"rebase", "--no-fork-point", "release"}
+		want := []string{"-c", "rebase.updateRefs=false", "rebase", "--no-fork-point", "--onto", "newbase-sha", "newbase-sha"}
 		if !stringSlicesEqual(result.Argv, want) {
 			t.Fatalf("Argv = %v, want %v", result.Argv, want)
 		}
 	})
 
-	t.Run("ExternalPass2IsPlainExplicitBranchIgnoringOntoPredicate", func(t *testing.T) {
+	t.Run("ExternalPass2UsesValidatedOntoExplicitBranch", func(t *testing.T) {
 		result := RebaseStrategy(RebaseStrategyInput{
 			Mode: ModeExternal, ContextUsable: true, Pass: 2, Base: "release", GitBranch: "feature-x",
-			LastBaseSHA: "old-sha", CurrentBaseSHA: "new-sha", // onto's own predicate would be true; pass 2 must ignore it
+			LastBaseSHA: "old-sha", CurrentBaseSHA: "new-sha",
+			EffectiveCutoffSHA: "old-sha", CutoffValid: true,
 		})
-		if result.Strategy != "plain-explicit-branch" {
-			t.Fatalf("Strategy = %q, want plain-explicit-branch", result.Strategy)
+		if result.Strategy != "onto" {
+			t.Fatalf("Strategy = %q, want onto", result.Strategy)
 		}
-		want := []string{"rebase", "release", "feature-x"}
+		want := []string{"-c", "rebase.updateRefs=false", "rebase", "--onto", "new-sha", "old-sha", "feature-x"}
 		if !stringSlicesEqual(result.Argv, want) {
 			t.Fatalf("Argv = %v, want %v", result.Argv, want)
 		}
 	})
 
-	t.Run("ExternalPass1PlainWhenLastBaseSHAEqualsCurrentBaseSHA", func(t *testing.T) {
+	t.Run("ExternalPass1UsesOntoWhenCutoffEqualsDestination", func(t *testing.T) {
 		result := RebaseStrategy(RebaseStrategyInput{
 			Mode: ModeExternal, ContextUsable: true, Pass: 1, Base: "release",
 			LastBaseSHA: "same-sha", CurrentBaseSHA: "same-sha", Scoped: false,
+			EffectiveCutoffSHA: "same-sha", CutoffValid: true,
 		})
-		if result.Strategy != "plain" {
-			t.Fatalf("Strategy = %q, want plain", result.Strategy)
+		if result.Strategy != "onto" {
+			t.Fatalf("Strategy = %q, want onto", result.Strategy)
 		}
-		want := []string{"rebase", "--update-refs", "release"}
+		want := []string{"rebase", "--update-refs", "--onto", "same-sha", "same-sha"}
 		if !stringSlicesEqual(result.Argv, want) {
 			t.Fatalf("Argv = %v, want %v", result.Argv, want)
 		}
@@ -1196,13 +1206,14 @@ func TestRebasePlanner_RebaseStrategy(t *testing.T) {
 		result := RebaseStrategy(RebaseStrategyInput{
 			Mode: ModeExternal, ContextUsable: true, Pass: 1, Base: "release",
 			LastBaseSHA: "old-sha", CurrentBaseSHA: "new-sha", Scoped: true, // scoped: EffectiveBackend not forced
+			EffectiveCutoffSHA: "old-sha", CutoffValid: true,
 			BackendConfigReadable: true, BackendConfigValid: true, BackendConfigValue: "apply",
 			CapDefaultBackendMerge: true, CapDefaultBackendMergeKnown: true,
 		})
 		if result.Strategy != "onto" {
 			t.Fatalf("Strategy = %q, want onto", result.Strategy)
 		}
-		want := []string{"rebase", "--onto", "release", "old-sha"}
+		want := []string{"-c", "rebase.updateRefs=false", "rebase", "--onto", "new-sha", "old-sha"}
 		if !stringSlicesEqual(result.Argv, want) {
 			t.Fatalf("Argv = %v, want %v", result.Argv, want)
 		}
@@ -1214,41 +1225,33 @@ func TestRebasePlanner_RebaseStrategy(t *testing.T) {
 		}
 	})
 
-	t.Run("ExternalPass1OntoWithBaseMayMoveIsConditional", func(t *testing.T) {
+	t.Run("ExternalPass1OntoWithFetchedDestinationIsStillExact", func(t *testing.T) {
 		result := RebaseStrategy(RebaseStrategyInput{
 			Mode: ModeExternal, ContextUsable: true, Pass: 1, Base: "release",
 			LastBaseSHA: "old-sha", CurrentBaseSHA: "new-sha", Scoped: false,
+			EffectiveCutoffSHA: "old-sha", CutoffValid: true,
 			BaseMayMoveBeforeExecution: true,
 		})
-		if result.Strategy != "conditional" {
-			t.Fatalf("Strategy = %q, want conditional", result.Strategy)
+		if result.Strategy != "onto" {
+			t.Fatalf("Strategy = %q, want onto", result.Strategy)
 		}
-		if result.Condition == nil || *result.Condition != "base-may-move-before-execution" {
-			t.Fatalf("Condition = %v, want base-may-move-before-execution", result.Condition)
-		}
-		if result.Argv != nil {
-			t.Fatalf("Argv = %v, want nil (only ArgvAlternatives is populated for conditional)", result.Argv)
-		}
-		if result.ArgvAlternatives == nil {
-			t.Fatal("expected a non-nil ArgvAlternatives")
-		}
-		wantOnto := []string{"rebase", "--update-refs", "--onto", "release", "old-sha"}
-		wantPlain := []string{"rebase", "--update-refs", "release"}
-		if !stringSlicesEqual(result.ArgvAlternatives[0], wantOnto) || !stringSlicesEqual(result.ArgvAlternatives[1], wantPlain) {
-			t.Fatalf("ArgvAlternatives = %v, want [%v %v]", *result.ArgvAlternatives, wantOnto, wantPlain)
+		want := []string{"rebase", "--update-refs", "--onto", "new-sha", "old-sha"}
+		if !stringSlicesEqual(result.Argv, want) {
+			t.Fatalf("Argv = %v, want %v", result.Argv, want)
 		}
 		if result.EffectiveBackend == nil || *result.EffectiveBackend != "merge" {
 			t.Fatalf("EffectiveBackend = %v, want merge (unscoped pass 1 still forces merge even for a conditional row)", result.EffectiveBackend)
 		}
 	})
 
-	t.Run("ExternalPass1PlainWhenLastBaseSHAEmpty", func(t *testing.T) {
+	t.Run("ExternalPass1MissingRecordUsesValidatedParentTip", func(t *testing.T) {
 		result := RebaseStrategy(RebaseStrategyInput{
 			Mode: ModeExternal, ContextUsable: true, Pass: 1, Base: "release",
 			LastBaseSHA: "", CurrentBaseSHA: "new-sha",
+			EffectiveCutoffSHA: "new-sha", CutoffValid: true,
 		})
-		if result.Strategy != "plain" {
-			t.Fatalf("Strategy = %q, want plain (onto requires a non-empty LastBaseSHA)", result.Strategy)
+		if result.Strategy != "onto" {
+			t.Fatalf("Strategy = %q, want onto", result.Strategy)
 		}
 	})
 }

@@ -45,6 +45,32 @@ func CountHealthIssues(issues []HealthIssue) int {
 	return n
 }
 
+func cutoffEvidenceValue(value, absent string) string {
+	if value == "" {
+		return absent
+	}
+	lower := strings.ToLower(value)
+	if (len(lower) == 40 || len(lower) == 64) && validLowerHexOID(lower, len(lower)) {
+		return shortSHA(lower)
+	}
+	return ancestrySanitize(value, ancestrySanitizeLimit)
+}
+
+func cutoffEvidenceLine(raw, effective string, source SyncCutoffSource, validity SyncCutoffValidity, reason SyncCutoffReason) string {
+	raw = cutoffEvidenceValue(raw, "<absent>")
+	if validity == "" {
+		return ""
+	}
+	return fmt.Sprintf(
+		"cutoff evidence: raw=%q effective=%q source=%s validity=%s reason=%s",
+		raw,
+		cutoffEvidenceValue(effective, "<none>"),
+		ancestrySanitize(string(source), ancestrySanitizeLimit),
+		ancestrySanitize(string(validity), ancestrySanitizeLimit),
+		ancestrySanitize(string(reason), ancestrySanitizeLimit),
+	)
+}
+
 // AncestryHealthIssues projects evaluated stack edges into external doctor
 // issues. Repository-unavailable edges collapse to a single feature-scoped
 // issue so an unresolvable repository cannot flood the output. Per-edge notes
@@ -57,23 +83,30 @@ func AncestryHealthIssues(res StackRepoResolution, edges []StackEdge) []HealthIs
 		if edge.Status != AncestryStatusCurrent {
 			problem := fmt.Sprintf("ancestry %s: %s", ancestryDisplayStatus(edge.Status), edge.Reason)
 			if edge.Reason == ReasonRepoUnavailable {
-				if repoUnavailableReported {
-					continue
+				if !repoUnavailableReported {
+					repoUnavailableReported = true
+					issues = append(issues, HealthIssue{
+						Branch:   "stack",
+						Problem:  problem,
+						Hint:     edge.Guidance,
+						Severity: edge.Severity,
+					})
 				}
-				repoUnavailableReported = true
+			} else {
 				issues = append(issues, HealthIssue{
-					Branch:   "stack",
+					Branch:   edge.Name,
 					Problem:  problem,
 					Hint:     edge.Guidance,
 					Severity: edge.Severity,
 				})
-				continue
 			}
+		}
+		if evidence := cutoffEvidenceLine(
+			edge.LastBaseSHA, edge.EffectiveCutoff,
+			edge.CutoffSource, edge.CutoffValidity, edge.CutoffReason,
+		); evidence != "" {
 			issues = append(issues, HealthIssue{
-				Branch:   edge.Name,
-				Problem:  problem,
-				Hint:     edge.Guidance,
-				Severity: edge.Severity,
+				Branch: edge.Name, Problem: evidence, Severity: SeverityInfo,
 			})
 		}
 		for _, note := range edge.Notes {

@@ -230,6 +230,61 @@ func TestCheckoutNew_CreatesBranch(t *testing.T) {
 	if !internal.HasBranch(stack, "mybranch") {
 		t.Error("branch not in stack")
 	}
+	mainSHA := gitOutput(t, dir, "rev-parse", "main")
+	if got := internal.GetBranch(stack, "mybranch").LastBaseSHA; got != mainSHA {
+		t.Fatalf("last_base_sha = %q, want exact creation commit %s", got, mainSHA)
+	}
+}
+
+func TestCheckoutNew_ExistingBranchDoesNotInventCutoff(t *testing.T) {
+	dir := setupGitRepoCheckout(t)
+	ws := requireWorkspaceForTest(t, dir)
+	if err := addCheckout(ws, "feat", nil, "", "", false, false, false); err != nil {
+		t.Fatal(err)
+	}
+
+	gitRun(t, dir, "branch", "adopted", "main")
+
+	if err := createCheckoutBranch(ws, "feat", "adopted", "main", false); err != nil {
+		t.Fatal(err)
+	}
+	stack, err := internal.LoadStack(ws.FeaturePath("feat"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := internal.GetBranch(stack, "adopted").LastBaseSHA; got != "" {
+		t.Fatalf("adopted branch last_base_sha = %q, want unknown", got)
+	}
+}
+
+func TestCheckoutNew_PinsCreationRefBeforeItMoves(t *testing.T) {
+	dir := setupGitRepoCheckout(t)
+	ws := requireWorkspaceForTest(t, dir)
+	if err := addCheckout(ws, "feat", nil, "", "", false, false, false); err != nil {
+		t.Fatal(err)
+	}
+	creation := gitOutput(t, dir, "rev-parse", "main")
+	creationResolvedHook = func(_, baseRef, resolved string) error {
+		if baseRef != "main" || resolved != creation {
+			t.Fatalf("resolved base = %s/%s, want main/%s", baseRef, resolved, creation)
+		}
+		writeAndCommit(t, dir, "raced.txt", "moved\n", "move base after resolution")
+		return nil
+	}
+	t.Cleanup(func() { creationResolvedHook = nil })
+	if err := createCheckoutBranch(ws, "feat", "raced", "main", false); err != nil {
+		t.Fatal(err)
+	}
+	if got := gitOutput(t, dir, "rev-parse", "raced"); got != creation {
+		t.Fatalf("created branch = %s, want frozen %s", got, creation)
+	}
+	stack, err := internal.LoadStack(ws.FeaturePath("feat"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := internal.GetBranch(stack, "raced").LastBaseSHA; got != creation {
+		t.Fatalf("creation cutoff = %s, want frozen %s", got, creation)
+	}
 }
 
 func TestCheckoutNew_NoWorktrees(t *testing.T) {

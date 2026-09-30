@@ -2071,237 +2071,39 @@ func saveUpgradeSubject(t *testing.T, dir, fp string, s armedUpgradeSubject) []b
 func TestSyncGuardedState_Criterion22_24i_ArmedContinuationUpgradeLifecycle(t *testing.T) {
 	for _, s := range armedUpgradeSubjects() {
 		s := s
-
-		// (iii) plan-only writes NOTHING.
-		t.Run(s.name+"/iii_plan_only_writes_nothing", func(t *testing.T) {
+		t.Run(s.name+"/legacy_cutoff_evidence_refusal_is_byte_exact", func(t *testing.T) {
 			dir, fp := checkoutModeFixture(t)
 			writeCheckoutModeMarker(t, dir)
 			withUnifiedWorkspaceEnv(t, dir)
 			before := saveUpgradeSubject(t, dir, fp, s)
-
-			stdout, stderr, exit := runSyncExecute(t, "test-feature", "--plan", "--json", "--continue", "--max-replay-total", "50")
-			if exit != 0 {
-				t.Fatalf("--plan always exits 0: exit=%d stderr=%q", exit, stderr)
+			_, stderr, exit := runSyncExecute(t, "test-feature", "--continue", "--max-replay-total", "50")
+			if exit == 0 || !strings.Contains(stderr, "predates frozen cutoff evidence") {
+				t.Fatalf("legacy subject was not refused: exit=%d stderr=%q", exit, stderr)
 			}
 			after, err := os.ReadFile(internal.CheckoutTransactionPath(fp))
 			if err != nil {
 				t.Fatal(err)
 			}
 			if string(before) != string(after) {
-				t.Fatalf("a --plan --continue must leave the subject BYTE-IDENTICAL:\n before=%q\n after=%q", before, after)
-			}
-			guard := planDoc(t, stdout)["guard"].(map[string]any)
-			limits := guard["limits"].(map[string]any)
-			total := limits["max_replay_total"].(map[string]any)
-			if total["origin"] != "flags-persisted-continuation" && total["origin"] != "flags-legacy-continuation" {
-				t.Fatalf("guard.limits.max_replay_total.origin = %v, want a flags-*-continuation origin", total["origin"])
-			}
-
-			// A later FLAGLESS --continue over that untouched subject is
-			// UNGUARDED, proving the plan did not upgrade.
-			reloaded, err := internal.LoadCheckoutTransaction(fp)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if reloaded.StateVersion == internal.CheckoutTransactionGuardedVersion {
-				t.Fatal("the plan route upgraded the subject; it must write nothing")
-			}
-		})
-
-		// (v) an UNARMED continuation is untouched.
-		t.Run(s.name+"/v_unarmed_continuation_is_untouched", func(t *testing.T) {
-			dir, fp := checkoutModeFixture(t)
-			writeCheckoutModeMarker(t, dir)
-			withUnifiedWorkspaceEnv(t, dir)
-			before := saveUpgradeSubject(t, dir, fp, s)
-
-			stdout, stderr, exit := runSyncExecute(t, "test-feature", "--plan", "--json", "--continue")
-			if exit != 0 {
-				t.Fatalf("--plan always exits 0: exit=%d stderr=%q", exit, stderr)
-			}
-			guard := planDoc(t, stdout)["guard"].(map[string]any)
-			limits := guard["limits"].(map[string]any)
-			if limits["max_replay_total"].(map[string]any)["origin"] != "none" {
-				t.Fatalf("an unarmed continuation has no effective limit, got %v", limits["max_replay_total"])
-			}
-			after, err := os.ReadFile(internal.CheckoutTransactionPath(fp))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(before) != string(after) {
-				t.Fatalf("an UNARMED continuation must leave the subject byte-identical:\n before=%q\n after=%q", before, after)
-			}
-		})
-
-		// (vi) approval alone upgrades nothing.
-		t.Run(s.name+"/vi_approval_alone_upgrades_nothing", func(t *testing.T) {
-			dir, fp := checkoutModeFixture(t)
-			writeCheckoutModeMarker(t, dir)
-			withUnifiedWorkspaceEnv(t, dir)
-			before := saveUpgradeSubject(t, dir, fp, s)
-
-			token := strings.Repeat("a", 64)
-			stdout, stderr, exit := runSyncExecute(t, "test-feature", "--plan", "--json", "--continue", "--approve-plan", token)
-			// §3.4 row 12: --approve-plan without a limit is refused up front
-			// on the plan route too, so the subject cannot have been touched.
-			if exit == 0 {
-				doc := planDoc(t, stdout)
-				found := false
-				for _, raw := range doc["blockers"].([]any) {
-					if raw.(map[string]any)["kind"] == "approval-without-limits" {
-						found = true
-					}
-				}
-				if !found {
-					t.Fatalf("want rank 7.5 approval-without-limits, got %v", doc["blockers"])
-				}
-			} else if !strings.Contains(stderr, "--approve-plan requires") {
-				t.Fatalf("exit=%d stderr=%q, want either the rank 7.5 row or the shipped up-front refusal", exit, stderr)
-			}
-			after, err := os.ReadFile(internal.CheckoutTransactionPath(fp))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(before) != string(after) {
-				t.Fatalf("approval alone must leave the subject at its original version:\n before=%q\n after=%q", before, after)
-			}
-		})
-
-		// (ii) after a REAL armed continuation the subject is guarded, and a
-		// later FLAGLESS continue is still guarded — refusing over a limit the
-		// remaining work exceeds, with exactly one ^plan-guard: limit- line
-		// and no ref moved.
-		t.Run(s.name+"/ii_reinterruption_then_flagless_continue_is_still_guarded", func(t *testing.T) {
-			dir, fp := checkoutModeFixture(t)
-			writeCheckoutModeMarker(t, dir)
-			withUnifiedWorkspaceEnv(t, dir)
-			saveUpgradeSubject(t, dir, fp, s)
-
-			// An armed continuation upgrades the subject in place. The step
-			// hook stops it immediately after, so the transaction survives.
-			// The armed continuation upgrades the subject in place; the
-			// shipped restoring hook then stops it, so the upgraded
-			// transaction survives for the flagless resume below.
-			clearStepHook(t)
-			internal.StepHook = func(stage internal.CheckoutStage, index int) error {
-				if stage == internal.StageRestoring {
-					return errStop
-				}
-				return nil
-			}
-			_, _, _ = runSyncExecute(t, "test-feature", "--continue", "--max-replay-total", "0")
-			clearStepHook(t)
-
-			tx, err := internal.LoadCheckoutTransaction(fp)
-			if err != nil {
-				t.Fatalf("the interrupted armed continuation must leave a transaction: %v", err)
-			}
-			if tx.StateVersion != internal.CheckoutTransactionGuardedVersion {
-				t.Fatalf("state_version = %d, want the guarded v3 after an armed continuation", tx.StateVersion)
-			}
-			if tx.Route != s.wantRoute {
-				t.Fatalf("route = %q, want the INHERITED %q", tx.Route, s.wantRoute)
-			}
-			if tx.MaxReplayTotal == nil || *tx.MaxReplayTotal != 0 {
-				t.Fatalf("MaxReplayTotal = %v, want the persisted 0", tx.MaxReplayTotal)
-			}
-			if tx.TestCommand != "true" {
-				t.Fatalf("test_command = %q, want the SAME bytes it carried before", tx.TestCommand)
-			}
-			// No approve/token, guard_enabled or digest key exists.
-			raw, err := os.ReadFile(internal.CheckoutTransactionPath(fp))
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, forbidden := range []string{"approve", "token", "guard_enabled", "digest"} {
-				if strings.Contains(string(raw), forbidden+":") {
-					t.Fatalf("the upgraded subject must carry no %q key:\n%s", forbidden, raw)
-				}
-			}
-
-			// The limits are published with a PERSISTED origin, and a
-			// FLAGLESS continue is still guarded: it refuses over the
-			// persisted 0.
-			stdout, stderr, exit := runSyncExecute(t, "test-feature", "--continue", "--plan", "--json")
-			if exit != 0 {
-				t.Fatalf("--plan always exits 0: exit=%d stderr=%q", exit, stderr)
-			}
-			guard := planDoc(t, stdout)["guard"].(map[string]any)
-			total := guard["limits"].(map[string]any)["max_replay_total"].(map[string]any)
-			if total["origin"] != "persisted-transaction" {
-				t.Fatalf("origin = %v, want persisted-transaction", total["origin"])
-			}
-
-			before := gitSHA(t, dir, "feat-a")
-			_, stderr, exit = runSyncExecute(t, "test-feature", "--continue")
-			if exit != 1 {
-				t.Fatalf("a FLAGLESS continue over a guarded subject must still refuse the persisted limit: exit=%d stderr=%q", exit, stderr)
-			}
-			markers := planGuardMarkerRe.FindAllString(stderr, -1)
-			if len(markers) != 1 || !strings.HasPrefix(markers[0], "plan-guard: limit-") {
-				t.Fatalf("stderr markers = %v, want exactly one ^plan-guard: limit- line\n%s", markers, stderr)
-			}
-			if after := gitSHA(t, dir, "feat-a"); after != before {
-				t.Fatalf("feat-a moved from %s to %s; a refusing flagless resume moves no ref", before, after)
-			}
-		})
-
-		// (viii) route and verb semantics are unchanged by the upgrade.
-		t.Run(s.name+"/viii_route_and_verb_semantics_are_unchanged", func(t *testing.T) {
-			dir, fp := checkoutModeFixture(t)
-			writeCheckoutModeMarker(t, dir)
-			withUnifiedWorkspaceEnv(t, dir)
-			saveUpgradeSubject(t, dir, fp, s)
-
-			// The pre-upgrade answer to `--continue --abort`.
-			preStdout, preStderr, preExit := runSyncExecute(t, "test-feature", "--continue", "--abort")
-			// Rebuild the subject and upgrade it.
-			saveUpgradeSubject(t, dir, fp, s)
-			clearStepHook(t)
-			internal.StepHook = func(stage internal.CheckoutStage, index int) error {
-				if stage == internal.StageRestoring {
-					return errStop
-				}
-				return nil
-			}
-			_, _, _ = runSyncExecute(t, "test-feature", "--continue", "--max-replay-total", "0")
-			clearStepHook(t)
-			if tx, err := internal.LoadCheckoutTransaction(fp); err != nil || tx.StateVersion != internal.CheckoutTransactionGuardedVersion {
-				t.Fatalf("the subject must be upgraded before the post-upgrade comparison (err=%v)", err)
-			}
-
-			postStdout, postStderr, postExit := runSyncExecute(t, "test-feature", "--continue", "--abort")
-			if preExit != postExit {
-				t.Fatalf("`--continue --abort` changed its answer across the upgrade: pre exit=%d post exit=%d\npre=%q/%q\npost=%q/%q",
-					preExit, postExit, preStdout, preStderr, postStdout, postStderr)
+				t.Fatalf("legacy cutoff refusal mutated the subject:\nbefore=%q\nafter=%q", before, after)
 			}
 		})
 	}
 }
 
-// ===========================================================================
-// §13.2a step 10a — the armed v4 -> v5 upgrade happens only AFTER guard
-// admission, never before it.
-// ===========================================================================
-
-// sha256File returns the SHA-256 of a file's bytes, or fails the test.
+// TestSyncGuardedState_ArmedContinuationUpgradesOnlyAfterGuardAdmission proves
+// the current transactional v4 -> v5 path still upgrades only after guard
+// admission; legacy v2/v3 documents are covered above by conservative refusal.
 func sha256File(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
+		t.Fatal(err)
 	}
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }
 
-// TestSyncGuardedState_ArmedContinuationUpgradesOnlyAfterGuardAdmission is
-// the regression for the early-upgrade bug: an ARMED external cell-5
-// continuation that the guard REFUSES must leave the persisted v4 payload
-// byte-identical, and the next FLAGLESS `--continue` over it must still be
-// unguarded. The upgrade belongs at §13.2a step 10a — after
-// EvaluatePlanGuard has admitted the run and after the guard reclaim — and
-// nowhere above it.
 func TestSyncGuardedState_ArmedContinuationUpgradesOnlyAfterGuardAdmission(t *testing.T) {
 	f := newScopedFixture(t)
 	f.advanceRoot(t)
@@ -2309,6 +2111,7 @@ func TestSyncGuardedState_ArmedContinuationUpgradesOnlyAfterGuardAdmission(t *te
 	if _, _, exit := runSync(t, f.feature, "--only", "child"); exit == 0 {
 		t.Fatal("expected a conflict to persist a cell-5 v4 payload")
 	}
+
 	f.detachGuard(t)
 	resolveRebase(t, f.wt("child"))
 
@@ -2411,6 +2214,50 @@ func assertArtefactsUnchanged(t *testing.T, label string, before, after map[stri
 // CHECKOUT arm, a continuation refusal leaves the payload, the legacy state
 // file, the checkout transaction, the sentinel and `.sync-run.lock`
 // byte-identical — every guarded continuation seam sits ABOVE the reclaim.
+func TestSyncGuardedState_CurrentContinuationPlanAndApprovalAreReadOnly(t *testing.T) {
+	f := newScopedFixture(t)
+	f.advanceRoot(t)
+	retainedTransactionalPayload(t, f)
+	internal.SyncTransactionStepHook = nil
+	f.detachGuard(t)
+	path := internal.SyncRunStatePath(f.featurePath)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, exit := runSyncExecute(t, f.feature, "--continue", "--plan", "--json",
+		"--max-replay-total", "50")
+	if exit != 0 {
+		t.Fatalf("plan failed: %d %s", exit, stderr)
+	}
+	doc := planDoc(t, stdout)
+	fingerprint, _ := doc["approval"].(map[string]any)["fingerprint"].(string)
+	if fingerprint == "" {
+		t.Fatalf("current transactional continuation minted no fingerprint: %v", doc["approval"])
+	}
+	afterPlan, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(afterPlan) {
+		t.Fatal("plan-only continuation mutated current recovery state")
+	}
+
+	_, stderr, exit = runSyncExecute(t, f.feature, "--continue", "--plan", "--json",
+		"--max-replay-total", "50", "--approve-plan", fingerprint)
+	if exit != 0 {
+		t.Fatalf("approval-bearing plan failed: %d %s", exit, stderr)
+	}
+	afterApproval, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(afterApproval) {
+		t.Fatal("approval-bearing plan mutated current recovery state")
+	}
+}
+
 func TestSyncGuardedState_Criterion22_29_ContinuationRefusalIsByteIdentical(t *testing.T) {
 	t.Run("external_guarded_scoped_arm", func(t *testing.T) {
 		f := newScopedFixture(t)
@@ -2468,8 +2315,9 @@ func TestSyncGuardedState_Criterion22_29_ContinuationRefusalIsByteIdentical(t *t
 		if exit != 1 {
 			t.Fatalf("the guarded checkout continuation must refuse over its persisted 0: exit=%d stderr=%q", exit, stderr)
 		}
-		if n := len(planGuardMarkerRe.FindAllString(stderr, -1)); n != 1 {
-			t.Fatalf("stderr carried %d plan-guard markers, want exactly one:\n%s", n, stderr)
+		if n := len(planGuardMarkerRe.FindAllString(stderr, -1)); n != 0 ||
+			!strings.Contains(stderr, "predates frozen cutoff evidence") {
+			t.Fatalf("stderr carried %d plan-guard markers, want marker-free legacy cutoff refusal:\n%s", n, stderr)
 		}
 		assertArtefactsUnchanged(t, "checkout guarded", before, hashArtefacts(t, fp))
 	})

@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
@@ -31,14 +32,16 @@ func TestSyncContinueResumesDescendants(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := handleSyncContinue("feature", externalSyncLayout{FeaturePath: featurePath, WorktreesRoot: filepath.Join(featurePath, "worktrees")}, false); err != nil {
-		t.Fatalf("handleSyncContinue: %v", err)
+	childBefore := gitOutput(t, childPath, "rev-parse", "child")
+	if err := handleSyncContinue("feature", externalSyncLayout{FeaturePath: featurePath, WorktreesRoot: filepath.Join(featurePath, "worktrees")}, false); err == nil ||
+		!strings.Contains(err.Error(), "predates frozen cutoff evidence") {
+		t.Fatalf("handleSyncContinue legacy refusal: %v", err)
 	}
-	if internal.HasSyncState(featurePath) {
-		t.Fatal("sync state was not cleared after complete continuation")
+	if !internal.HasSyncState(featurePath) {
+		t.Fatal("legacy cutoff refusal did not preserve sync state")
 	}
-	if internal.RunSilentDir(childPath, "git", "merge-base", "--is-ancestor", parentNew, "child") != nil {
-		t.Fatal("child does not contain updated parent")
+	if got := gitOutput(t, childPath, "rev-parse", "child"); got != childBefore {
+		t.Fatalf("legacy cutoff refusal moved child from %s to %s (parent advanced to %s)", childBefore, got, parentNew)
 	}
 }
 
@@ -61,15 +64,16 @@ func TestSyncContinueRetainsStateOnLaterFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := handleSyncContinue("feature", externalSyncLayout{FeaturePath: featurePath, WorktreesRoot: filepath.Join(featurePath, "worktrees")}, false); err == nil {
-		t.Fatal("expected child conflict")
+	if err := handleSyncContinue("feature", externalSyncLayout{FeaturePath: featurePath, WorktreesRoot: filepath.Join(featurePath, "worktrees")}, false); err == nil ||
+		!strings.Contains(err.Error(), "predates frozen cutoff evidence") {
+		t.Fatalf("expected legacy cutoff refusal, got %v", err)
 	}
 	persisted, err := internal.LoadSyncState(featurePath)
 	if err != nil {
 		t.Fatalf("sync state not retained: %v", err)
 	}
-	if persisted.FailedBranch != "child" {
-		t.Fatalf("failed branch = %q, want child", persisted.FailedBranch)
+	if persisted.FailedBranch != "parent" {
+		t.Fatalf("failed branch = %q, want original parent", persisted.FailedBranch)
 	}
 }
 

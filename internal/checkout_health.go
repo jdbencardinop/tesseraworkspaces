@@ -169,19 +169,23 @@ type CheckoutFeatureEntry struct {
 	ParentHead     string           `json:"parent_head,omitempty"`
 	Severity       CheckoutSeverity `json:"severity"`
 
-	LocalHeadFull  string              `json:"local_head_full,omitempty"`
-	ParentHeadFull string              `json:"parent_head_full,omitempty"`
-	BaseKind       StackBaseKind       `json:"base_kind,omitempty"`
-	BaseRef        string              `json:"base_ref,omitempty"`
-	LastBaseSHA    string              `json:"last_base_sha,omitempty"`
-	LastBaseShort  string              `json:"last_base_short,omitempty"`
-	BaseRecord     StackBaseRecord     `json:"base_record,omitempty"`
-	MergeBase      *string             `json:"merge_base"`
-	MergeBaseShort string              `json:"merge_base_short,omitempty"`
-	Reason         StackAncestryReason `json:"reason,omitempty"`
-	Guidance       string              `json:"guidance,omitempty"`
-	Notes          []StackEdgeNote     `json:"notes,omitempty"`
-	RepoSource     StackRepoSource     `json:"repo_source,omitempty"`
+	LocalHeadFull   string              `json:"local_head_full,omitempty"`
+	ParentHeadFull  string              `json:"parent_head_full,omitempty"`
+	BaseKind        StackBaseKind       `json:"base_kind,omitempty"`
+	BaseRef         string              `json:"base_ref,omitempty"`
+	LastBaseSHA     string              `json:"last_base_sha,omitempty"`
+	LastBaseShort   string              `json:"last_base_short,omitempty"`
+	BaseRecord      StackBaseRecord     `json:"base_record,omitempty"`
+	EffectiveCutoff string              `json:"effective_cutoff,omitempty"`
+	CutoffSource    SyncCutoffSource    `json:"cutoff_source,omitempty"`
+	CutoffValidity  SyncCutoffValidity  `json:"cutoff_validity,omitempty"`
+	CutoffReason    SyncCutoffReason    `json:"cutoff_reason,omitempty"`
+	MergeBase       *string             `json:"merge_base"`
+	MergeBaseShort  string              `json:"merge_base_short,omitempty"`
+	Reason          StackAncestryReason `json:"reason,omitempty"`
+	Guidance        string              `json:"guidance,omitempty"`
+	Notes           []StackEdgeNote     `json:"notes,omitempty"`
+	RepoSource      StackRepoSource     `json:"repo_source,omitempty"`
 }
 
 // CheckoutContextLinkReport describes a single session context link.
@@ -811,6 +815,10 @@ func buildOneFeatureEntry(feature string, se StackEntry, edge StackEdge, current
 	e.LastBaseSHA = edge.LastBaseSHA
 	e.LastBaseShort = edge.LastBaseShort
 	e.BaseRecord = edge.BaseRecord
+	e.EffectiveCutoff = edge.EffectiveCutoff
+	e.CutoffSource = edge.CutoffSource
+	e.CutoffValidity = edge.CutoffValidity
+	e.CutoffReason = edge.CutoffReason
 	e.MergeBase = edge.MergeBase
 	e.MergeBaseShort = edge.MergeBaseShort
 	e.Reason = edge.Reason
@@ -1026,8 +1034,8 @@ func FormatCheckoutHealth(r *CheckoutHealthReport) string {
 }
 
 // checkoutFeatureDetailLines renders the additive indented detail lines that
-// follow an entry line: at most one reason line, one guidance line, and one
-// note line. The `base-record=` token is printed only when the record was
+// follow an entry line: at most one reason line, one cutoff-evidence line, one
+// guidance line, and one note line. The `base-record=` token is printed only when the record was
 // actually consulted, so an edge that never reached the record cannot claim a
 // verdict about it.
 func checkoutFeatureDetailLines(f CheckoutFeatureEntry) []string {
@@ -1044,6 +1052,12 @@ func checkoutFeatureDetailLines(f CheckoutFeatureEntry) []string {
 			reason += fmt.Sprintf(" base-record=%s", f.BaseRecord)
 		}
 		lines = append(lines, reason)
+	}
+	if evidence := cutoffEvidenceLine(
+		f.LastBaseSHA, f.EffectiveCutoff,
+		f.CutoffSource, f.CutoffValidity, f.CutoffReason,
+	); evidence != "" {
+		lines = append(lines, evidence)
 	}
 	if f.Guidance != "" {
 		lines = append(lines, f.Guidance)

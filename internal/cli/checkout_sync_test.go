@@ -75,6 +75,25 @@ func createStackBranch(t *testing.T, dir, branch, base, file, content string) {
 
 func saveTestStack(t *testing.T, featurePath string, entries []internal.StackEntry) {
 	t.Helper()
+	repoDir := filepath.Dir(filepath.Dir(filepath.Dir(featurePath)))
+	byName := make(map[string]internal.StackEntry, len(entries))
+	for _, entry := range entries {
+		byName[entry.Name] = entry
+	}
+	for i := range entries {
+		if entries[i].LastBaseSHA != "" || entries[i].Base == "" {
+			continue
+		}
+		base := entries[i].Base
+		if parent, ok := byName[base]; ok {
+			base = parent.GitBranch()
+		}
+		cmd := exec.Command("git", "merge-base", entries[i].GitBranch(), base)
+		cmd.Dir = repoDir
+		if out, err := cmd.Output(); err == nil {
+			entries[i].LastBaseSHA = strings.TrimSpace(string(out))
+		}
+	}
 	stack := internal.Stack{Branches: entries}
 	if err := internal.SaveStack(featurePath, stack); err != nil {
 		t.Fatal(err)
@@ -1185,10 +1204,9 @@ func TestCheckoutSync_ExternalSyncUnchanged(t *testing.T) {
 	writeAndCommit(t, parentPath, "parent.txt", "parent-v2\n", "parent v2")
 	parentHead := gitOutput(t, parentPath, "rev-parse", "parent")
 
-	externalPath := internal.FeaturePath("external-feature")
-	result := syncFeature("external-feature", externalSyncLayout{FeaturePath: externalPath, WorktreesRoot: filepath.Join(externalPath, "worktrees")}, false, nil)
-	if !result.Complete {
-		t.Fatalf("external sync incomplete: %+v", result)
+	stdout, stderr, exit := runSync(t, "external-feature", "--no-fetch")
+	if exit != 0 {
+		t.Fatalf("external sync incomplete: %d\n%s\n%s", exit, stdout, stderr)
 	}
 	if internal.RunSilentDir(childPath, "git", "merge-base", "--is-ancestor", parentHead, "child") != nil {
 		t.Fatal("external child does not contain updated parent")

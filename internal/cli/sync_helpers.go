@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
@@ -20,6 +21,10 @@ type syncResult struct {
 	// through planGuardRefusal and never treats it as an ordinary failure.
 	Refusal *internal.PlanGuardRefusalError
 }
+
+// syncProgressPersistedHook is a test-only crash seam after one observed
+// action's primary and selected collateral completions are durable.
+var syncProgressPersistedHook func(primary string) error
 
 // syncRunContext carries the frozen decision of a new-mode external run through
 // the executor. It is nil on every no-flag run, which is what structurally
@@ -136,10 +141,6 @@ func (r *syncRunContext) repoDir(layout externalSyncLayout, entry internal.Stack
 	return r.WorkspaceRoot
 }
 
-func syncWithStack(feature string, layout externalSyncLayout, stack internal.Stack, sorted []internal.StackEntry, guard *planGuardRun) syncResult {
-	return syncWithStackFiltered(feature, layout, stack, sorted, nil, guard)
-}
-
 func syncWithStackFiltered(feature string, layout externalSyncLayout, stack internal.Stack, sorted []internal.StackEntry, alreadyDone map[string]bool, guard *planGuardRun) syncResult {
 	return syncWithStackScoped(feature, layout, stack, sorted, alreadyDone, nil, guard)
 }
@@ -149,10 +150,29 @@ func syncWithStackFiltered(feature string, layout externalSyncLayout, stack inte
 // every byte and every process this function runs untouched, since both new
 // JIT seams below are themselves gated on guard != nil.
 func syncWithStackScoped(feature string, layout externalSyncLayout, stack internal.Stack, sorted []internal.StackEntry, alreadyDone map[string]bool, run *syncRunContext, guard *planGuardRun) syncResult {
+	if !run.transactional() {
+		return syncResult{Err: errors.New("sync recovery predates frozen cutoff evidence; preserve the state and use --abort or inspect it manually — continuation will not guess a replay boundary")}
+	}
 	updatedByRef := make(map[string]bool)
 	completed := completedNames(alreadyDone)
 	if alreadyDone == nil {
 		alreadyDone = make(map[string]bool)
+	}
+	needsCutoff := false
+	for _, entry := range sorted {
+		if !alreadyDone[entry.Name] && run.selects(entry.Name) && !run.skipsAnchor(entry.Name) {
+			needsCutoff = true
+			break
+		}
+	}
+	if needsCutoff {
+		if err := internal.RevalidateSyncCutoffs(run.Payload.Transaction); err != nil {
+			return syncResult{Err: err}
+		}
+	} else if run.Payload.Transaction.CutoffsReady {
+		if err := internal.RevalidateSyncCutoffs(run.Payload.Transaction); err != nil {
+			return syncResult{Err: err}
+		}
 	}
 	scoped := run.scoped()
 	rebased := 0
@@ -180,7 +200,108 @@ func syncWithStackScoped(feature string, layout externalSyncLayout, stack intern
 			continue
 		}
 		path := layout.WorktreePath(entry.Name)
-		if _, err := os.Stat(path); os.IsNotExist(err) {
+		if updatedByRef[entry.Name] {
+			mode := "active"
+			if _, err := os.Stat(path); err != nil {
+				mode = "archived"
+			}
+			fmt.Println(formatSyncStatus(entry.Name, mode, "synced"))
+			if !slices.Contains(completed, entry.Name) {
+				completed = append(completed, entry.Name)
+			}
+			alreadyDone[entry.Name] = true
+			continue
+		}
+		if _, err := os.Stat(path); err != nil {
+			if internal.IsPrunableWorktree(entry.GitBranch()) {
+				fmt.Printf("  [?] %s (missing — run: tws archive %s %s or tws new %s %s)\n", entry.Name, feature, entry.Name, feature, entry.Name)
+				return syncFailure(layout, sorted, completed, entry.Name, run)
+			}
+
+			rebaseDir := run.repoDir(layout, entry)
+			base := resolveEntryBase(stack, entry, rebaseDir)
+			currentBaseSHA := internal.GetBranchSHA(rebaseDir, base)
+			if currentBaseSHA == "" {
+				return syncResult{Err: fmt.Errorf("destination parent %q for %s does not resolve", base, entry.Name)}
+			}
+			cutoff, cutoffErr := internal.RevalidateSyncCutoffEntry(run.Payload.Transaction, rebaseDir, entry.Name)
+			if cutoffErr != nil {
+				return syncResult{Err: cutoffErr}
+			}
+
+			if guard != nil {
+				if rerr := guard.revalidate(entry.Name); rerr != nil {
+					return syncGuardFailure(layout, sorted, completed, entry.Name, run, rerr)
+				}
+			}
+
+			allowed, allowedErr := internal.SyncAllowedRebaseRefs(run.Payload.Transaction, rebaseDir,
+				"refs/heads/"+entry.GitBranch(), cutoff.EffectiveSHA, false)
+			if allowedErr != nil {
+				result := syncFailure(layout, sorted, completed, entry.Name, run)
+				result.Err = allowedErr
+				return result
+			}
+			if err := internal.BeginSyncRebaseAction(run.Payload.Transaction, rebaseDir, entry.Name, rebaseDir,
+				"refs/heads/"+entry.GitBranch(), allowed, currentBaseSHA, cutoff.EffectiveSHA,
+				func() error { return run.save(layout) }); err != nil {
+				result := syncFailure(layout, sorted, completed, entry.Name, run)
+				result.Err = err
+				return result
+			}
+			if err := internal.PrepareSyncCheckoutContextRestore(run.Payload.Transaction, rebaseDir,
+				func() error { return run.save(layout) }); err != nil {
+				result := syncFailure(layout, sorted, completed, entry.Name, run)
+				result.Err = err
+				return result
+			}
+
+			rebaseErr := internal.RunSyncRebaseSilent(run.Payload.Transaction, rebaseDir,
+				internal.SyncNoUpdateRefsRebaseArgs("--onto", currentBaseSHA, cutoff.EffectiveSHA, entry.GitBranch())...)
+			if rebaseErr != nil {
+				_ = internal.RunSilentDir(rebaseDir, "git", "rebase", "--abort")
+			}
+			if err := internal.CompleteSyncGitAction(run.Payload.Transaction, rebaseErr, func() error { return run.save(layout) }); err != nil {
+				result := syncFailure(layout, sorted, completed, entry.Name, run)
+				result.Err = err
+				return result
+			}
+			if _, _, active := internal.SyncTransactionActiveRebase(run.Payload.Transaction); !active {
+				if restoreErr := internal.ResumeSyncForwardRestorations(run.Payload.Transaction,
+					func() error { return run.save(layout) }); restoreErr != nil {
+					result := syncFailure(layout, sorted, completed, entry.Name, run)
+					result.Err = restoreErr
+					return result
+				}
+			}
+			if rebaseErr != nil {
+				fmt.Println(formatSyncStatus(entry.Name, "archived", "conflict"))
+				fmt.Printf("    Restore with: tws new %s %s\n", feature, entry.Name)
+				return syncFailure(layout, sorted, completed, entry.Name, run)
+			}
+			affected, finalizeErr := finalizeExternalSuccessfulAction(layout, &stack, run, entry.Name)
+			if finalizeErr != nil {
+				result := syncFailure(layout, sorted, completed, entry.Name, run)
+				result.Err = finalizeErr
+				return result
+			}
+			fmt.Println(formatSyncStatus(entry.Name, "archived", "synced"))
+			for name := range affected {
+				if name != entry.Name {
+					updatedByRef[name] = true
+				}
+			}
+			completed = appendAffectedCompletion(completed, run.Payload.Selected, affected, entry.Name)
+			alreadyDone[entry.Name] = true
+			rebased++
+			if err := persistExternalSyncProgress(layout.FeaturePath, run.Payload, completed); err != nil {
+				return syncResult{Failed: entry.Name, Completed: completed, Err: err}
+			}
+			if syncProgressPersistedHook != nil {
+				if err := syncProgressPersistedHook(entry.Name); err != nil {
+					return syncResult{Failed: entry.Name, Completed: completed, Err: err}
+				}
+			}
 			continue
 		}
 
@@ -190,23 +311,22 @@ func syncWithStackScoped(feature string, layout externalSyncLayout, stack intern
 			return syncFailure(layout, sorted, completed, entry.Name, run)
 		}
 
-		base := resolveEntryBase(stack, entry, syncRepoContext(layout, entry))
-		gitContext := path
-		if entry.Repo != "" {
-			gitContext = entry.Repo
-		}
+		gitContext := run.repoDir(layout, entry)
+		base := resolveEntryBase(stack, entry, gitContext)
 		currentBaseSHA := internal.GetBranchSHA(gitContext, base)
-		rebaseArgs := []string{"rebase", "--update-refs", base}
-		if entry.LastBaseSHA != "" && currentBaseSHA != "" && entry.LastBaseSHA != currentBaseSHA {
-			rebaseArgs = []string{"rebase", "--update-refs", "--onto", base, entry.LastBaseSHA}
+		if currentBaseSHA == "" {
+			return syncResult{Err: fmt.Errorf("destination parent %q for %s does not resolve", base, entry.Name)}
 		}
-		if scoped {
+		cutoff, cutoffErr := internal.RevalidateSyncCutoffEntry(run.Payload.Transaction, gitContext, entry.Name)
+		if cutoffErr != nil {
+			return syncResult{Err: cutoffErr}
+		}
+		useUpdateRefs := !scoped && run.Policy.Propagation != internal.SyncPropagationLocalOnly
+		rebaseArgs := []string{"rebase", "--update-refs", "--onto", currentBaseSHA, cutoff.EffectiveSHA}
+		if !useUpdateRefs {
 			// --update-refs rewrites refs outside the selection, which is
 			// exactly the unrelated ref movement a scoped run must not cause.
-			rebaseArgs = []string{"rebase", base}
-			if entry.LastBaseSHA != "" && currentBaseSHA != "" && entry.LastBaseSHA != currentBaseSHA {
-				rebaseArgs = []string{"rebase", "--onto", base, entry.LastBaseSHA}
-			}
+			rebaseArgs = internal.SyncNoUpdateRefsRebaseArgs("--onto", currentBaseSHA, cutoff.EffectiveSHA)
 		}
 
 		if guard != nil {
@@ -236,21 +356,15 @@ func syncWithStackScoped(feature string, layout externalSyncLayout, stack intern
 
 		if run.transactional() {
 			repoDir := run.repoDir(layout, entry)
-			cutoff := base
-			for i, arg := range rebaseArgs {
-				if arg == "--onto" && i+2 < len(rebaseArgs) {
-					cutoff = rebaseArgs[i+2]
-					break
-				}
-			}
 			allowed, err := internal.SyncAllowedRebaseRefs(run.Payload.Transaction, repoDir,
-				"refs/heads/"+entry.GitBranch(), cutoff, !scoped)
+				"refs/heads/"+entry.GitBranch(), cutoff.EffectiveSHA, useUpdateRefs)
 			if err != nil {
 				result := syncFailure(layout, sorted, completed, entry.Name, run)
 				result.Err = err
 				return result
 			}
-			if err := internal.BeginSyncGitAction(run.Payload.Transaction, repoDir, "rebase", entry.Name, path, allowed, func() error { return run.save(layout) }); err != nil {
+			if err := internal.BeginSyncRebaseAction(run.Payload.Transaction, repoDir, entry.Name, path, "",
+				allowed, currentBaseSHA, cutoff.EffectiveSHA, func() error { return run.save(layout) }); err != nil {
 				result := syncFailure(layout, sorted, completed, entry.Name, run)
 				result.Err = err
 				return result
@@ -287,118 +401,29 @@ func syncWithStackScoped(feature string, layout externalSyncLayout, stack intern
 			return syncFailure(layout, sorted, completed, entry.Name, run)
 		}
 
+		affected, finalizeErr := finalizeExternalSuccessfulAction(layout, &stack, run, entry.Name)
+		if finalizeErr != nil {
+			result := syncFailure(layout, sorted, completed, entry.Name, run)
+			result.Err = finalizeErr
+			return result
+		}
 		fmt.Println(formatSyncStatus(entry.Name, "active", "synced"))
-		if !scoped {
-			markUpdatedAncestors(stack, entry.Name, layout, updatedByRef)
+		for name := range affected {
+			if name != entry.Name {
+				updatedByRef[name] = true
+			}
 		}
-		completed = append(completed, entry.Name)
+		completed = appendAffectedCompletion(completed, run.Payload.Selected, affected, entry.Name)
 		alreadyDone[entry.Name] = true
 		rebased++
-		if currentBaseSHA != "" {
-			internal.UpdateBaseSHA(&stack, entry.Name, currentBaseSHA)
-			if run.transactional() {
-				if err := internal.SyncWriteStackValue(layout.FeaturePath, run.Payload.Transaction, stack, func() error { return run.save(layout) }); err != nil {
-					result := syncFailure(layout, sorted, completed, entry.Name, run)
-					result.Err = fmt.Errorf("persist stack metadata: %w", err)
-					return result
+		if run != nil && run.Payload != nil {
+			if err := persistExternalSyncProgress(layout.FeaturePath, run.Payload, completed); err != nil {
+				return syncResult{Failed: entry.Name, Completed: completed, Err: err}
+			}
+			if syncProgressPersistedHook != nil {
+				if err := syncProgressPersistedHook(entry.Name); err != nil {
+					return syncResult{Failed: entry.Name, Completed: completed, Err: err}
 				}
-			} else if err := internal.SaveStack(layout.FeaturePath, stack); err != nil {
-				result := syncFailure(layout, sorted, completed, entry.Name, run)
-				result.Err = fmt.Errorf("persist stack metadata: %w", err)
-				return result
-			}
-		}
-		if run != nil && run.Payload != nil {
-			if err := persistExternalSyncProgress(layout.FeaturePath, run.Payload, completed); err != nil {
-				return syncResult{Failed: entry.Name, Completed: completed, Err: err}
-			}
-		}
-	}
-
-	for _, entry := range sorted {
-		if alreadyDone[entry.Name] {
-			continue
-		}
-		if !run.selects(entry.Name) {
-			continue
-		}
-		if run.skipsAnchor(entry.Name) {
-			fmt.Println(syncAnchorNoOpLine(entry.Name))
-			alreadyDone[entry.Name] = true
-			anchorsSkipped++
-			continue
-		}
-		path := layout.WorktreePath(entry.Name)
-		if _, err := os.Stat(path); err == nil {
-			continue
-		}
-		if internal.IsPrunableWorktree(entry.GitBranch()) {
-			fmt.Printf("  [?] %s (missing — run: tws archive %s %s or tws new %s %s)\n", entry.Name, feature, entry.Name, feature, entry.Name)
-			return syncFailure(layout, sorted, completed, entry.Name, run)
-		}
-		if updatedByRef[entry.Name] {
-			fmt.Println(formatSyncStatus(entry.Name, "archived", "synced"))
-			completed = append(completed, entry.Name)
-			alreadyDone[entry.Name] = true
-			continue
-		}
-
-		base := resolveEntryBase(stack, entry, entry.Repo)
-		rebaseDir := entry.Repo
-
-		if guard != nil {
-			if rerr := guard.revalidate(entry.Name); rerr != nil {
-				return syncGuardFailure(layout, sorted, completed, entry.Name, run, rerr)
-			}
-		}
-
-		if run.transactional() {
-			if rebaseDir == "" {
-				rebaseDir = run.WorkspaceRoot
-			}
-			allowed := []string{"refs/heads/" + entry.GitBranch()}
-			if err := internal.BeginSyncGitActionWithContextRef(run.Payload.Transaction, rebaseDir, "rebase", entry.Name, rebaseDir,
-				allowed[0], allowed, func() error { return run.save(layout) }); err != nil {
-				result := syncFailure(layout, sorted, completed, entry.Name, run)
-				result.Err = err
-				return result
-			}
-		}
-
-		var rebaseErr error
-		if run.transactional() {
-			rebaseErr = internal.RunSyncRebaseSilent(run.Payload.Transaction, rebaseDir, "rebase", base, entry.GitBranch())
-		} else if rebaseDir != "" {
-			rebaseErr = internal.RunSilentDir(rebaseDir, "git", "rebase", base, entry.GitBranch())
-		} else {
-			rebaseErr = internal.RunSilent("git", "rebase", base, entry.GitBranch())
-		}
-		if rebaseErr != nil {
-			if rebaseDir != "" {
-				_ = internal.RunSilentDir(rebaseDir, "git", "rebase", "--abort")
-			} else {
-				_ = internal.RunSilent("git", "rebase", "--abort")
-			}
-		}
-		if run.transactional() {
-			if err := internal.CompleteSyncGitAction(run.Payload.Transaction, rebaseErr, func() error { return run.save(layout) }); err != nil {
-				result := syncFailure(layout, sorted, completed, entry.Name, run)
-				result.Err = err
-				return result
-			}
-		}
-		if rebaseErr != nil {
-			fmt.Println(formatSyncStatus(entry.Name, "archived", "conflict"))
-			fmt.Printf("    Restore with: tws new %s %s\n", feature, entry.Name)
-			return syncFailure(layout, sorted, completed, entry.Name, run)
-		}
-		fmt.Println(formatSyncStatus(entry.Name, "archived", "synced"))
-		completed = append(completed, entry.Name)
-		alreadyDone[entry.Name] = true
-		rebased++
-		if run != nil && run.Payload != nil {
-			if err := persistExternalSyncProgress(layout.FeaturePath, run.Payload, completed); err != nil {
-				return syncResult{Failed: entry.Name, Completed: completed, Err: err}
 			}
 		}
 	}
@@ -442,6 +467,89 @@ func syncWithStackScoped(feature string, layout externalSyncLayout, stack intern
 	return syncResult{Complete: true, Completed: completed}
 }
 
+func finalizeExternalSuccessfulAction(layout externalSyncLayout, stack *internal.Stack, run *syncRunContext, primary string) (map[string]bool, error) {
+	if !run.transactional() {
+		return nil, errors.New("successful sync action has no transactional cutoff evidence")
+	}
+	tx := run.Payload.Transaction
+	if len(tx.Actions) == 0 {
+		return nil, errors.New("successful sync action has no durable action record")
+	}
+	action := tx.Actions[len(tx.Actions)-1]
+	if action.Entry != primary || action.Kind != "rebase" || action.Status != internal.SyncTxnActionObserved {
+		return nil, fmt.Errorf("latest sync action does not verify successful entry %q", primary)
+	}
+
+	affected := map[string]bool{primary: true}
+	changes := internal.SyncLatestObservedRefChanges(tx)
+	for _, change := range changes {
+		for _, decision := range tx.Cutoffs {
+			if decision.RepoCommonDir == change.RepoCommonDir && decision.ChildRef == change.Ref {
+				affected[decision.Entry] = true
+			}
+		}
+	}
+
+	decisions := make(map[string]internal.SyncCutoffDecision, len(tx.Cutoffs))
+	for _, decision := range tx.Cutoffs {
+		decisions[decision.Entry] = decision
+	}
+	repos := make(map[string]string, len(tx.Repositories))
+	for _, repo := range tx.Repositories {
+		repos[repo.CommonDir] = repo.Root
+	}
+	afterRefs := make(map[string]string, len(action.AfterRefs))
+	for _, ref := range action.AfterRefs {
+		afterRefs[ref.Ref] = ref.SHA
+	}
+	parentDestinations := make(map[string]string, len(action.ParentDestinations))
+	for _, parent := range action.ParentDestinations {
+		parentDestinations[parent.Entry] = parent.DestinationSHA
+	}
+	for name := range affected {
+		decision, ok := decisions[name]
+		if !ok || decision.Validity != internal.SyncCutoffValid {
+			return nil, fmt.Errorf("successful sync entry %q has no valid frozen cutoff decision", name)
+		}
+		repoDir := repos[decision.RepoCommonDir]
+		if repoDir == "" {
+			return nil, fmt.Errorf("successful sync entry %q has no frozen repository", name)
+		}
+		destination := ""
+		if name == primary {
+			destination = action.DestinationSHA
+		} else if action.ParentDestinationsReady {
+			destination = parentDestinations[name]
+		} else if decision.ParentEntry != "" {
+			parentDecision, parentOK := decisions[decision.ParentEntry]
+			if !parentOK {
+				return nil, fmt.Errorf("collateral sync entry %q has no frozen parent decision", name)
+			}
+			destination = afterRefs[parentDecision.ChildRef]
+		} else {
+			parentRef := decision.ParentRef
+			if !strings.HasPrefix(parentRef, "refs/") {
+				parentRef = "refs/heads/" + parentRef
+			}
+			destination = afterRefs[parentRef]
+		}
+		if destination == "" {
+			return nil, fmt.Errorf("successful sync entry %q has no immutable executed destination evidence", name)
+		}
+		destinationSHA, err := internal.VerifySyncDestinationSHA(repoDir, destination, decision.ChildRef)
+		if err != nil {
+			return nil, fmt.Errorf("verify destination cutoff for %s: %w", name, err)
+		}
+		internal.UpdateBaseSHA(stack, name, destinationSHA)
+	}
+	if err := internal.SyncWriteStackValue(layout.FeaturePath, tx, *stack, func() error {
+		return run.save(layout)
+	}); err != nil {
+		return nil, fmt.Errorf("persist stack metadata: %w", err)
+	}
+	return affected, nil
+}
+
 func persistExternalSyncProgress(featurePath string, payload *internal.SyncRunState, completed []string) error {
 	payload.Completed = append([]string(nil), completed...)
 	done := make(map[string]bool, len(completed))
@@ -456,6 +564,18 @@ func persistExternalSyncProgress(featurePath string, payload *internal.SyncRunSt
 	}
 	payload.FailedBranch = ""
 	return internal.SaveSyncRunState(featurePath, payload)
+}
+
+func appendAffectedCompletion(completed, selected []string, affected map[string]bool, primary string) []string {
+	if !slices.Contains(completed, primary) {
+		completed = append(completed, primary)
+	}
+	for _, name := range selected {
+		if name != primary && affected[name] && !slices.Contains(completed, name) {
+			completed = append(completed, name)
+		}
+	}
+	return completed
 }
 
 // syncFailure persists an incomplete run. New-mode runs write the payload only:
@@ -577,29 +697,6 @@ func resolveBase(base, repoCtx string) string {
 		return "origin/" + defaultBranch
 	}
 	return base
-}
-
-func markUpdatedAncestors(stack internal.Stack, branch string, layout externalSyncLayout, updated map[string]bool) {
-	entryMap := make(map[string]internal.StackEntry)
-	for _, e := range stack.Branches {
-		entryMap[e.Name] = e
-	}
-	current := branch
-	for {
-		entry, ok := entryMap[current]
-		if !ok {
-			break
-		}
-		parent, ok := entryMap[entry.Base]
-		if !ok {
-			break
-		}
-		parentPath := layout.WorktreePath(parent.Name)
-		if _, err := os.Stat(parentPath); os.IsNotExist(err) {
-			updated[parent.Name] = true
-		}
-		current = parent.Name
-	}
 }
 
 func formatSyncStatus(name, mode, status string) string {
