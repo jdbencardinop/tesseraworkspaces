@@ -39,7 +39,7 @@ tws <command> [args]
 | `tws decide <feature> "<summary>" [--type T] [--to B]` | Record a decision |
 | `tws decisions show [feature] [--mine] [--all]` | View decisions (auto-detects feature) |
 | `tws decisions ack [feature]` | Mark decisions as read |
-| `tws inject <feature> [branch] [--into <path>]` | Sync inject/ files into worktrees |
+| `tws inject <feature> [branch] [--into <path>]` | Sync inject/ files into external linked worktrees |
 | `tws hooks install [feature]` | Install Claude Code auto-read hooks |
 | `tws hooks remove [feature]` | Remove auto-read hooks |
 | `tws registry add/list/show/check/...` | Manage opt-in global workspace discovery |
@@ -141,19 +141,26 @@ From an existing feature directory, `tws new` infers a single source repository 
       CLAUDE.local.md               # shared context (edit here, all worktrees see it)
       .claude/skills/               # per-feature agent skills
     worktrees/
-      <branch>/                      # full git worktree checkout
-        CLAUDE.local.md → ../../inject/CLAUDE.local.md  (symlink)
+      <logical/name>/                # full git worktree checkout; names may contain /
+        CLAUDE.local.md → <relative path to inject/CLAUDE.local.md>
 ```
 
 ### Context Injection
 
-Files in `inject/` are symlinked into every worktree. Edit once, all worktrees see changes.
+In external mode, files in `inject/` are symlinked into every materialized
+linked worktree. Feature-wide sync follows complete logical names from
+`stack.yaml`, including names such as `review/pr-123`; it never writes into
+intermediate path segments. Existing destination files are preserved.
+
+Checkout mode has one physical checkout and no linked worktrees, so
+`tws inject <feature>` and `tws inject <feature> <branch>` both refuse.
 
 **Important:** Injected files appear as untracked in git status. Either:
 - Add them to `.gitignore` (e.g., `CLAUDE.local.md`)
 - Place them in an already-ignored subfolder (e.g., `inject/.claude/`)
 
-Re-sync after adding new files: `tws inject <feature>`
+Re-sync after adding new files: `tws inject <feature>` or target one logical
+entry with `tws inject <feature> review/pr-123`.
 
 ### Cross-Worktree Decisions
 

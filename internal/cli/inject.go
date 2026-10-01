@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -14,7 +15,10 @@ func injectCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "inject <feature> [branch]",
 		Short: "Sync inject/ files into worktrees",
-		Long: `Re-sync shared files from inject/ into worktrees. With no branch, syncs all worktrees.
+		Long: `Re-sync shared files from inject/ into external linked worktrees.
+With no branch, syncs every materialized worktree discovered for the feature,
+including logical names that contain slashes. Checkout mode is unsupported
+because it has one physical checkout and no linked worktrees.
 
 Injected files are symlinked into the worktree. By default they go to
 the worktree root. Use --into to target a subdirectory (e.g., --into .context).
@@ -40,9 +44,16 @@ Tip: To keep git status clean, either:
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			feature := args[0]
-			featurePath, err := internal.RequireFeaturePath(feature)
+			ws, err := internal.RequireWorkspace()
 			if err != nil {
 				return err
+			}
+			featurePath, err := internal.ResolveFeaturePathFor(ws, feature)
+			if err != nil {
+				return err
+			}
+			if ws.Mode == internal.ModeCheckout {
+				return internal.ErrWorktreeUnsupported
 			}
 
 			injectDir := internal.InjectPath(featurePath)
@@ -54,12 +65,12 @@ Tip: To keep git status clean, either:
 
 			if len(args) == 2 {
 				branch := args[1]
-				path, err := internal.RequireWorktreePath(feature, branch)
+				path, err := internal.ResolveInjectWorktree(featurePath, branch)
+				if errors.Is(err, internal.ErrInjectWorktreeNotFound) {
+					return fmt.Errorf("worktree not found: %s/%s", feature, branch)
+				}
 				if err != nil {
 					return err
-				}
-				if _, err := os.Stat(path); os.IsNotExist(err) {
-					return fmt.Errorf("worktree not found: %s/%s", feature, branch)
 				}
 				if err := internal.InjectFiles(featurePath, path, target); err != nil {
 					return err

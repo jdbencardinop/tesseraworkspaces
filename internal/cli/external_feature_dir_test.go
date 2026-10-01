@@ -17,6 +17,9 @@ func TestExternalFeatureDirectoryCommandMatrix(t *testing.T) {
 	if err := createWorktree("feature", "child", "root", "", false); err != nil {
 		t.Fatal(err)
 	}
+	if err := createWorktree("feature", "review/pr-123", "root", "", false); err != nil {
+		t.Fatal(err)
+	}
 	featurePath := internal.FeaturePath("feature")
 	if err := os.MkdirAll(filepath.Join(featurePath, "inject"), 0755); err != nil {
 		t.Fatal(err)
@@ -76,6 +79,13 @@ func TestExternalFeatureDirectoryCommandMatrix(t *testing.T) {
 				t.Fatalf("%s from feature dir: %v", tc.name, err)
 			}
 		})
+	}
+	nestedContext := filepath.Join(featurePath, "worktrees", "review", "pr-123", "CONTEXT.md")
+	if data, err := os.ReadFile(nestedContext); err != nil || string(data) != "context\n" {
+		t.Fatalf("nested worktree inject from feature directory: data=%q err=%v", data, err)
+	}
+	if _, err := os.Lstat(filepath.Join(featurePath, "worktrees", "review", "CONTEXT.md")); !os.IsNotExist(err) {
+		t.Fatalf("intermediate directory was injected: %v", err)
 	}
 
 	if err := os.Chdir(os.Getenv("TWS_ROOT")); err != nil {

@@ -239,7 +239,10 @@ records must both be preserved for manual inspection; do not delete either.
 
 ### Context Injection
 
-Shared files in `inject/` are symlinked into every worktree:
+In external mode, shared files in `inject/` are symlinked into every
+materialized linked worktree. Feature-wide injection follows logical
+`stack.yaml` names at any depth, so entries such as `review/pr-123` receive the
+files without writing into the intermediate `worktrees/review` directory:
 
 ```sh
 # Edit once, all worktrees see changes
@@ -248,9 +251,16 @@ echo "# Auth context" > ../myapp.tws/auth/inject/CLAUDE.local.md
 # Re-sync after adding new files
 tws inject auth
 
+# A slash-containing logical name can also be selected explicitly
+tws inject auth review/pr-123
+
 # Target a gitignored subdirectory
 tws inject auth --into .context
 ```
+
+Checkout mode has one physical checkout and no linked worktrees, so both
+feature-wide and branch-specific `tws inject` commands refuse explicitly.
+Existing destination files are preserved.
 
 ### Multi-Repo Workspaces
 
@@ -304,7 +314,7 @@ tws init --register --register-alias myapp   # also enroll in the global registr
 | `tws decide <feature> "<msg>" [--type] [--to]` | Record a decision |
 | `tws decisions show [feature] [--mine] [--all]` | View decisions |
 | `tws decisions ack [feature]` | Mark decisions as read |
-| `tws inject <feature> [branch] [--into path]` | Sync inject files |
+| `tws inject <feature> [branch] [--into path]` | Sync inject files into external linked worktrees |
 | `tws doctor [feature]` | Health checks |
 | `tws status [feature] [--json]` | Agent work status per branch |
 | `tws rename feature/branch` | Rename feature or branch |

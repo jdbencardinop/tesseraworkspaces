@@ -1,0 +1,1781 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 79c2035..49d792c 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,6 +2,13 @@
+ 
+ ## Unreleased
+ 
++- **Slash-safe external context injection** — feature-wide `tws inject` now
++  resolves complete logical worktree names at arbitrary depth, verifies each
++  destination against its exact Git admin backpointer and byte-safe registered
++  worktree inventory, and never writes into intermediate directories or copied,
++  stale, or mismatched `.git` markers. Decoupled Git branch names and meaningful
++  whitespace in worktree paths are preserved. Checkout mode continues to
++  refuse both feature-wide and branch-specific injection explicitly.
+ - **Ordinary-sync cutoff integrity** — newly created external and checkout
+   branches record the exact full creation commit, and every selected sync row
+   freezes a repository-bound parent/child preimage plus an effective replay
+diff --git a/README.md b/README.md
+index 197701e..dbee385 100644
+--- a/README.md
++++ b/README.md
+@@ -239,7 +239,10 @@ records must both be preserved for manual inspection; do not delete either.
+ 
+ ### Context Injection
+ 
+-Shared files in `inject/` are symlinked into every worktree:
++In external mode, shared files in `inject/` are symlinked into every
++materialized linked worktree. Feature-wide injection follows logical
++`stack.yaml` names at any depth, so entries such as `review/pr-123` receive the
++files without writing into the intermediate `worktrees/review` directory:
+ 
+ ```sh
+ # Edit once, all worktrees see changes
+@@ -248,10 +251,17 @@ echo "# Auth context" > ../myapp.tws/auth/inject/CLAUDE.local.md
+ # Re-sync after adding new files
+ tws inject auth
+ 
++# A slash-containing logical name can also be selected explicitly
++tws inject auth review/pr-123
++
+ # Target a gitignored subdirectory
+ tws inject auth --into .context
+ ```
+ 
++Checkout mode has one physical checkout and no linked worktrees, so both
++feature-wide and branch-specific `tws inject` commands refuse explicitly.
++Existing destination files are preserved.
++
+ ### Multi-Repo Workspaces
+ 
+ Work on code and docs repos in the same feature:
+@@ -304,7 +314,7 @@ tws init --register --register-alias myapp   # also enroll in the global registr
+ | `tws decide <feature> "<msg>" [--type] [--to]` | Record a decision |
+ | `tws decisions show [feature] [--mine] [--all]` | View decisions |
+ | `tws decisions ack [feature]` | Mark decisions as read |
+-| `tws inject <feature> [branch] [--into path]` | Sync inject files |
++| `tws inject <feature> [branch] [--into path]` | Sync inject files into external linked worktrees |
+ | `tws doctor [feature]` | Health checks |
+ | `tws status [feature] [--json]` | Agent work status per branch |
+ | `tws rename feature/branch` | Rename feature or branch |
+diff --git a/assets/skills/claude/tesseraworkspaces/SKILL.md b/assets/skills/claude/tesseraworkspaces/SKILL.md
+index ca593e5..ee8c3df 100644
+--- a/assets/skills/claude/tesseraworkspaces/SKILL.md
++++ b/assets/skills/claude/tesseraworkspaces/SKILL.md
+@@ -39,7 +39,7 @@ tws <command> [args]
+ | `tws decide <feature> "<summary>" [--type T] [--to B]` | Record a decision |
+ | `tws decisions show [feature] [--mine] [--all]` | View decisions (auto-detects feature) |
+ | `tws decisions ack [feature]` | Mark decisions as read |
+-| `tws inject <feature> [branch] [--into <path>]` | Sync inject/ files into worktrees |
++| `tws inject <feature> [branch] [--into <path>]` | Sync inject/ files into external linked worktrees |
+ | `tws hooks install [feature]` | Install Claude Code auto-read hooks |
+ | `tws hooks remove [feature]` | Remove auto-read hooks |
+ | `tws registry add/list/show/check/...` | Manage opt-in global workspace discovery |
+@@ -141,19 +141,26 @@ From an existing feature directory, `tws new` infers a single source repository
+       CLAUDE.local.md               # shared context (edit here, all worktrees see it)
+       .claude/skills/               # per-feature agent skills
+     worktrees/
+-      <branch>/                      # full git worktree checkout
+-        CLAUDE.local.md → ../../inject/CLAUDE.local.md  (symlink)
++      <logical/name>/                # full git worktree checkout; names may contain /
++        CLAUDE.local.md → <relative path to inject/CLAUDE.local.md>
+ ```
+ 
+ ### Context Injection
+ 
+-Files in `inject/` are symlinked into every worktree. Edit once, all worktrees see changes.
++In external mode, files in `inject/` are symlinked into every materialized
++linked worktree. Feature-wide sync follows complete logical names from
++`stack.yaml`, including names such as `review/pr-123`; it never writes into
++intermediate path segments. Existing destination files are preserved.
++
++Checkout mode has one physical checkout and no linked worktrees, so
++`tws inject <feature>` and `tws inject <feature> <branch>` both refuse.
+ 
+ **Important:** Injected files appear as untracked in git status. Either:
+ - Add them to `.gitignore` (e.g., `CLAUDE.local.md`)
+ - Place them in an already-ignored subfolder (e.g., `inject/.claude/`)
+ 
+-Re-sync after adding new files: `tws inject <feature>`
++Re-sync after adding new files: `tws inject <feature>` or target one logical
++entry with `tws inject <feature> review/pr-123`.
+ 
+ ### Cross-Worktree Decisions
+ 
+diff --git a/assets/skills/copilot/tws.prompt.md b/assets/skills/copilot/tws.prompt.md
+index 58e9b03..5a48743 100644
+--- a/assets/skills/copilot/tws.prompt.md
++++ b/assets/skills/copilot/tws.prompt.md
+@@ -32,7 +32,7 @@ You are working in a project that uses `tws` for feature-scoped workspaces with
+ - `tws decide <feature> "<summary>" [--type T] [--to B]` — Record a decision
+ - `tws decisions show [feature] [--mine] [--all]` — View decisions (auto-detects feature)
+ - `tws decisions ack [feature]` — Mark all decisions as read
+-- `tws inject <feature> [branch] [--into <path>]` — Sync inject/ files into worktrees
++- `tws inject <feature> [branch] [--into <path>]` — Sync inject/ files into external linked worktrees
+ - `tws hooks install/remove [feature]` — Manage agent hooks
+ - `tws registry add/list/show/check/...` — Manage opt-in global workspace discovery
+ - `tws space add/list/show/remove` — Link and discover tool-owned sibling spaces
+@@ -79,8 +79,14 @@ v1.2.16 only fails closed for same-feature sync after the compatibility envelope
+ 
+ ## Context Injection
+ 
+-Files in `inject/` are symlinked into every worktree. Edit once, all worktrees see changes.
+-Injected files appear as untracked in git — add them to `.gitignore` or use an ignored subfolder.
++In external mode, files in `inject/` are symlinked into every materialized
++linked worktree. Complete logical names such as `review/pr-123` are supported;
++intermediate directories are never injection targets, and existing files are
++preserved. Injected files appear as untracked in git — add them to `.gitignore`
++or use an ignored subfolder.
++
++Checkout mode has no linked worktrees, so both feature-wide and
++branch-specific `tws inject` refuse explicitly.
+ 
+ ## Decisions
+ 
+diff --git a/docs/cheatsheet.md b/docs/cheatsheet.md
+index f3befcc..f3515f4 100644
+--- a/docs/cheatsheet.md
++++ b/docs/cheatsheet.md
+@@ -362,12 +362,16 @@ tws close auth auth-models   # kill tmux session for a worktree
+ ## Context injection
+ 
+ ```sh
+-# Files in inject/ are symlinked into every worktree
++# External mode: files in inject/ are symlinked into every linked worktree
+ ls ../myapp.tws/auth/inject/       # CLAUDE.local.md, .claude/skills/, etc.
+ 
+ # Re-sync after adding new files to inject/
+-tws inject auth                    # all worktrees
+-tws inject auth auth-models        # single worktree
++tws inject auth                    # all materialized logical entries
++tws inject auth review/pr-123      # one slash-containing logical entry
++tws inject auth --into .context    # preserve layout under a target directory
++
++# Checkout mode has no linked worktrees; both forms refuse explicitly.
++# Existing destination files are never overwritten.
+ 
+ # Backfill templates into existing features
+ tws template sync auth --template ~/templates/base
+diff --git a/docs/engineering-workflow.md b/docs/engineering-workflow.md
+index 7c0895a..e213676 100644
+--- a/docs/engineering-workflow.md
++++ b/docs/engineering-workflow.md
+@@ -64,11 +64,11 @@ Current shipped checkout slices:
+ The opt-in global workspace registry is also shipped for stable cross-repository
+ discovery, health checks, and moved-target repair.
+ 
+-Next roadmap work: **ordinary sync safety (issue #4)** — reproduce both reported
+-defects on released v1.2.17 and resolve any remaining rollback/cutoff defect
+-before injection correctness (#1), scoped status projection (#3), and role-aware
+-templates (#2). Keep the existing tpatch features separate rather than combining
+-the queue into one implementation.
++Next roadmap work: **slash-containing worktree injection (issue #1)**. Ordinary
++sync safety (#4) is fully released and verified in `v1.2.18-rc.2`; preserve
++that sync/reparent/session behavior while correcting external linked-worktree
++discovery and explicitly refusing checkout injection. Scoped status projection
++(#3) and role-aware templates (#2) remain later, separate tpatch boundaries.
+ See [`roadmap.md`](roadmap.md).
+ 
+ ## Tpatch workflow
+diff --git a/docs/roadmap.md b/docs/roadmap.md
+index 096a4f7..52d03fe 100644
+--- a/docs/roadmap.md
++++ b/docs/roadmap.md
+@@ -84,10 +84,12 @@ Shipped foundations:
+   reconstructs only the matching recovery reservation. v1.2.16 only fails closed for same-feature sync after envelope
+   birth; do not use an older tws while any reparent is active or recoverable.
+ 
+-Current target: **ordinary sync safety (issue #4)** — reproduce both reported
+-defects against released v1.2.17, then prioritize any remaining anchor-rollback
+-or replay-cutoff defect. Safe reparent/restack is a separate command and does
+-not establish that ordinary sync is fixed.
++Current target: **slash-containing worktree injection (issue #1)** — discover
++the actual external linked-worktree roots for complete logical names such as
++`review/pr-123`, never inject into intermediate directories, and explicitly
++refuse both checkout injection forms. Ordinary sync safety (#4) is fully
++released and verified in `v1.2.18-rc.2`; the release receipt records passing
++main/tag CI, exact binaries, and a clean published tree.
+ 
+ The approved delivery order is **#4, #1, #3, #2**. Keep each existing tpatch
+ feature as its own implementation boundary; the issue-to-feature mapping below
+@@ -137,12 +139,10 @@ For decoupled names, `StackEntry.Name` identifies the tws worktree while `StackE
+ | 3 | P1: scoped-status reliability | [#3: avoid building unrelated feature status](https://github.com/jdbencardinop/tesseraworkspaces/issues/3) | [`scoped-status-projection`](../.tpatch/features/scoped-status-projection/request.md) |
+ | 4 | P2: workflow enhancement | [#2: role-aware templates](https://github.com/jdbencardinop/tesseraworkspaces/issues/2) | [`named-feature-templates`](../.tpatch/features/named-feature-templates/request.md), [`template-conflict-resolution`](../.tpatch/features/template-conflict-resolution/request.md) |
+ 
+-The v1.2.17 baseline reproduction confirms incomplete anchor rollback in both
+-workspace modes. A controlled stale-cutoff fixture also replays upstream history
+-and fails, while the correct-cutoff control succeeds; the origin of the stale
+-metadata remains under investigation. Start with
+-[`sync-transactional-abort`](../.tpatch/features/sync-transactional-abort/analysis.md),
+-then [`sync-cutoff-integrity`](../.tpatch/features/sync-cutoff-integrity/analysis.md).
++Issue #4's transactional abort and cutoff fixes are shipped and verified in
++`v1.2.18-rc.2`. The current implementation boundary is only
++[`fix-inject-slash-worktree-discovery`](../.tpatch/features/fix-inject-slash-worktree-discovery/request.md);
++do not combine it with scoped status or template work.
+ 
+ Nonblocking reparent follow-up:
+ [`fix-reparent-completion-context`](../.tpatch/features/fix-reparent-completion-context/request.md)
+diff --git a/internal/cli/checkout_lifecycle_test.go b/internal/cli/checkout_lifecycle_test.go
+index 1ff8345..47e2f51 100644
+--- a/internal/cli/checkout_lifecycle_test.go
++++ b/internal/cli/checkout_lifecycle_test.go
+@@ -1034,14 +1034,19 @@ func TestInject_PropagatesAmbiguity(t *testing.T) {
+ 		}
+ 	}
+ 
+-	root := buildTestRoot()
+-	root.SetArgs([]string{"inject", "ambig-feat"})
+-	err := root.Execute()
+-	if err == nil {
+-		t.Fatal("expected ambiguity error from inject")
+-	}
+-	if !strings.Contains(err.Error(), "ambiguous") {
+-		t.Errorf("expected ambiguous error, got: %v", err)
++	for _, args := range [][]string{
++		{"inject", "ambig-feat"},
++		{"inject", "ambig-feat", "review/pr-123"},
++	} {
++		root := buildTestRoot()
++		root.SetArgs(args)
++		err := root.Execute()
++		if err == nil {
++			t.Fatalf("expected ambiguity error from inject %v", args)
++		}
++		if !strings.Contains(err.Error(), "ambiguous") {
++			t.Errorf("expected ambiguous error from inject %v, got: %v", args, err)
++		}
+ 	}
+ }
+ 
+diff --git a/internal/cli/external_feature_dir_test.go b/internal/cli/external_feature_dir_test.go
+index 038df85..58f9184 100644
+--- a/internal/cli/external_feature_dir_test.go
++++ b/internal/cli/external_feature_dir_test.go
+@@ -17,6 +17,9 @@ func TestExternalFeatureDirectoryCommandMatrix(t *testing.T) {
+ 	if err := createWorktree("feature", "child", "root", "", false); err != nil {
+ 		t.Fatal(err)
+ 	}
++	if err := createWorktree("feature", "review/pr-123", "root", "", false); err != nil {
++		t.Fatal(err)
++	}
+ 	featurePath := internal.FeaturePath("feature")
+ 	if err := os.MkdirAll(filepath.Join(featurePath, "inject"), 0755); err != nil {
+ 		t.Fatal(err)
+@@ -77,6 +80,13 @@ func TestExternalFeatureDirectoryCommandMatrix(t *testing.T) {
+ 			}
+ 		})
+ 	}
++	nestedContext := filepath.Join(featurePath, "worktrees", "review", "pr-123", "CONTEXT.md")
++	if data, err := os.ReadFile(nestedContext); err != nil || string(data) != "context\n" {
++		t.Fatalf("nested worktree inject from feature directory: data=%q err=%v", data, err)
++	}
++	if _, err := os.Lstat(filepath.Join(featurePath, "worktrees", "review", "CONTEXT.md")); !os.IsNotExist(err) {
++		t.Fatalf("intermediate directory was injected: %v", err)
++	}
+ 
+ 	if err := os.Chdir(os.Getenv("TWS_ROOT")); err != nil {
+ 		t.Fatal(err)
+diff --git a/internal/cli/importcmd.go b/internal/cli/importcmd.go
+index 90ff8c4..928e4f9 100644
+--- a/internal/cli/importcmd.go
++++ b/internal/cli/importcmd.go
+@@ -334,7 +334,10 @@ func recreateExternal(export internal.WorkspaceExport, injectSrc string) error {
+ 	}
+ 
+ 	target := internal.ResolveInjectInto("")
+-	count, _ := internal.InjectFilesForFeature(featurePath, target)
++	count, err := internal.InjectFilesForFeature(featurePath, target)
++	if err != nil {
++		return fmt.Errorf("injecting restored files: %w", err)
++	}
+ 	if count > 0 {
+ 		fmt.Printf("  Injected files into %d worktree(s)\n", count)
+ 	}
+diff --git a/internal/cli/inject.go b/internal/cli/inject.go
+index 9df4f3d..eba1741 100644
+--- a/internal/cli/inject.go
++++ b/internal/cli/inject.go
+@@ -1,6 +1,7 @@
+ package cli
+ 
+ import (
++	"errors"
+ 	"fmt"
+ 	"os"
+ 
+@@ -14,7 +15,10 @@ func injectCmd() *cobra.Command {
+ 	cmd := &cobra.Command{
+ 		Use:   "inject <feature> [branch]",
+ 		Short: "Sync inject/ files into worktrees",
+-		Long: `Re-sync shared files from inject/ into worktrees. With no branch, syncs all worktrees.
++		Long: `Re-sync shared files from inject/ into external linked worktrees.
++With no branch, syncs every materialized worktree discovered for the feature,
++including logical names that contain slashes. Checkout mode is unsupported
++because it has one physical checkout and no linked worktrees.
+ 
+ Injected files are symlinked into the worktree. By default they go to
+ the worktree root. Use --into to target a subdirectory (e.g., --into .context).
+@@ -40,10 +44,17 @@ Tip: To keep git status clean, either:
+ 		},
+ 		RunE: func(cmd *cobra.Command, args []string) error {
+ 			feature := args[0]
+-			featurePath, err := internal.RequireFeaturePath(feature)
++			ws, err := internal.RequireWorkspace()
+ 			if err != nil {
+ 				return err
+ 			}
++			featurePath, err := internal.ResolveFeaturePathFor(ws, feature)
++			if err != nil {
++				return err
++			}
++			if ws.Mode == internal.ModeCheckout {
++				return internal.ErrWorktreeUnsupported
++			}
+ 
+ 			injectDir := internal.InjectPath(featurePath)
+ 			if _, err := os.Stat(injectDir); os.IsNotExist(err) {
+@@ -54,13 +65,13 @@ Tip: To keep git status clean, either:
+ 
+ 			if len(args) == 2 {
+ 				branch := args[1]
+-				path, err := internal.RequireWorktreePath(feature, branch)
++				path, err := internal.ResolveInjectWorktree(featurePath, branch)
++				if errors.Is(err, internal.ErrInjectWorktreeNotFound) {
++					return fmt.Errorf("worktree not found: %s/%s", feature, branch)
++				}
+ 				if err != nil {
+ 					return err
+ 				}
+-				if _, err := os.Stat(path); os.IsNotExist(err) {
+-					return fmt.Errorf("worktree not found: %s/%s", feature, branch)
+-				}
+ 				if err := internal.InjectFiles(featurePath, path, target); err != nil {
+ 					return err
+ 				}
+diff --git a/internal/cli/inject_test.go b/internal/cli/inject_test.go
+new file mode 100644
+index 0000000..ae1b124
+--- /dev/null
++++ b/internal/cli/inject_test.go
+@@ -0,0 +1,796 @@
++package cli
++
++import (
++	"errors"
++	"fmt"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
++)
++
++type injectFixture struct {
++	root        string
++	home        string
++	repo        string
++	workspace   string
++	feature     string
++	featurePath string
++}
++
++func newInjectFixture(t *testing.T, feature string) *injectFixture {
++	t.Helper()
++
++	root := t.TempDir()
++	home := filepath.Join(root, "home")
++	if err := os.MkdirAll(home, 0755); err != nil {
++		t.Fatal(err)
++	}
++	gitConfig := filepath.Join(root, "gitconfig")
++	if err := os.WriteFile(gitConfig, []byte("[user]\n\tname = TWS Inject Test\n\temail = inject@example.test\n\tuseConfigOnly = true\n"), 0600); err != nil {
++		t.Fatal(err)
++	}
++	t.Setenv("HOME", home)
++	t.Setenv("GIT_CONFIG_GLOBAL", gitConfig)
++	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
++	t.Setenv("GIT_CONFIG_COUNT", "0")
++
++	repo := createInjectRepo(t, root, "primary")
++	workspace := filepath.Join(root, "workspace")
++	if err := internal.EnsureExternalWorkspaceMarker(workspace); err != nil {
++		t.Fatal(err)
++	}
++	writeInjectTWSConfig(t, home, repo, workspace, "")
++	t.Setenv("TWS_ROOT", filepath.Join(root, "decoy-workspace"))
++
++	featurePath := filepath.Join(workspace, feature)
++	if err := os.MkdirAll(filepath.Join(featurePath, "inject"), 0755); err != nil {
++		t.Fatal(err)
++	}
++
++	oldCWD, err := os.Getwd()
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { _ = os.Chdir(oldCWD) })
++	if err := os.Chdir(repo); err != nil {
++		t.Fatal(err)
++	}
++
++	return &injectFixture{
++		root:        root,
++		home:        home,
++		repo:        repo,
++		workspace:   workspace,
++		feature:     feature,
++		featurePath: featurePath,
++	}
++}
++
++func createInjectRepo(t *testing.T, root, name string) string {
++	t.Helper()
++	repo := filepath.Join(root, name)
++	remote := filepath.Join(root, name+".git")
++	injectGit(t, "", "init", "--bare", remote)
++	injectGit(t, "", "init", "--initial-branch=main", repo)
++	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte(name+"\n"), 0644); err != nil {
++		t.Fatal(err)
++	}
++	injectGit(t, repo, "add", "README.md")
++	injectGit(t, repo, "commit", "-m", "initial")
++	injectGit(t, repo, "remote", "add", "origin", remote)
++	injectGit(t, repo, "push", "-u", "origin", "main")
++	injectGit(t, remote, "symbolic-ref", "HEAD", "refs/heads/main")
++	return repo
++}
++
++func injectGit(t *testing.T, dir string, args ...string) string {
++	t.Helper()
++	commandArgs := append([]string{}, args...)
++	if dir != "" {
++		commandArgs = append([]string{"-C", dir}, commandArgs...)
++	}
++	cmd := exec.Command("git", commandArgs...)
++	cmd.Env = append(os.Environ(),
++		"GIT_CONFIG_NOSYSTEM=1",
++		"GIT_AUTHOR_NAME=TWS Inject Test",
++		"GIT_AUTHOR_EMAIL=inject@example.test",
++		"GIT_COMMITTER_NAME=TWS Inject Test",
++		"GIT_COMMITTER_EMAIL=inject@example.test",
++	)
++	out, err := cmd.CombinedOutput()
++	if err != nil {
++		t.Fatalf("git %v failed: %v\n%s", commandArgs, err, out)
++	}
++	return strings.TrimSpace(string(out))
++}
++
++func writeInjectTWSConfig(t *testing.T, home, repo, workspace, injectInto string) {
++	t.Helper()
++	configPath := filepath.Join(home, ".config", "tws", "config.yaml")
++	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
++		t.Fatal(err)
++	}
++	content := fmt.Sprintf("workspaces:\n  %q: %q\n", repo, workspace)
++	if canonicalRepo, err := filepath.EvalSymlinks(repo); err == nil && canonicalRepo != repo {
++		content += fmt.Sprintf("  %q: %q\n", canonicalRepo, workspace)
++	}
++	if injectInto != "" {
++		content += fmt.Sprintf("inject_into: %q\n", injectInto)
++	}
++	if err := os.WriteFile(configPath, []byte(content), 0600); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func (f *injectFixture) addWorktree(t *testing.T, repo, logicalName, gitBranch string) string {
++	t.Helper()
++	if repo == "" {
++		repo = f.repo
++	}
++	injectGit(t, repo, "branch", gitBranch, "main")
++	path := filepath.Join(f.featurePath, "worktrees", filepath.FromSlash(logicalName))
++	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
++		t.Fatal(err)
++	}
++	injectGit(t, repo, "worktree", "add", path, gitBranch)
++	return path
++}
++
++func (f *injectFixture) writeInjectFile(t *testing.T, name, content string) string {
++	t.Helper()
++	path := filepath.Join(f.featurePath, "inject", filepath.FromSlash(name))
++	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
++		t.Fatal(err)
++	}
++	return path
++}
++
++func runInjectCommand(t *testing.T, args ...string) (string, error) {
++	t.Helper()
++	cmd := injectCmd()
++	cmd.SilenceErrors = true
++	cmd.SilenceUsage = true
++	cmd.SetArgs(args)
++	var runErr error
++	out := captureStdout(t, func() {
++		runErr = cmd.Execute()
++	})
++	return out, runErr
++}
++
++func assertRelativeInjectLink(t *testing.T, source, destination, wantContent string) {
++	t.Helper()
++	info, err := os.Lstat(destination)
++	if err != nil {
++		t.Fatalf("lstat %s: %v", destination, err)
++	}
++	if info.Mode()&os.ModeSymlink == 0 {
++		t.Fatalf("%s is not a symlink", destination)
++	}
++	gotTarget, err := os.Readlink(destination)
++	if err != nil {
++		t.Fatal(err)
++	}
++	wantTarget, err := filepath.Rel(filepath.Dir(destination), source)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if gotTarget != wantTarget {
++		t.Fatalf("symlink target = %q, want %q", gotTarget, wantTarget)
++	}
++	gotContent, err := os.ReadFile(destination)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if string(gotContent) != wantContent {
++		t.Fatalf("symlink content = %q, want %q", gotContent, wantContent)
++	}
++}
++
++func assertNotExists(t *testing.T, path string) {
++	t.Helper()
++	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
++		t.Fatalf("%s unexpectedly exists or returned a different error: %v", path, err)
++	}
++}
++
++func copyInjectFile(t *testing.T, source, destination string) {
++	t.Helper()
++	data, err := os.ReadFile(source)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(destination, data, 0644); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestInjectFeatureWideDiscoversNestedStackWorktrees(t *testing.T) {
++	f := newInjectFixture(t, "customer")
++	secondary := createInjectRepo(t, f.root, "secondary")
++
++	plain := f.addWorktree(t, "", "plain", "flat-actual")
++	nested := f.addWorktree(t, "", "review/team/pr-123", "feat-review/pr-123")
++	multiRepo := f.addWorktree(t, secondary, "docs/api", "docs-actual")
++	archived := f.addWorktree(t, "", "archive/old", "archive-actual")
++	prunable := f.addWorktree(t, "", "stale/prunable", "stale-actual")
++	if err := os.RemoveAll(prunable); err != nil {
++		t.Fatal(err)
++	}
++
++	stack := internal.Stack{Branches: []internal.StackEntry{
++		{Name: "missing/not-created", Branch: "missing-actual", Base: "main"},
++		{Name: "review/team/pr-123", Branch: "feat-review/pr-123", Base: "plain"},
++		{Name: "archive/old", Branch: "archive-actual", Base: "main", Archived: true},
++		{Name: "plain", Branch: "flat-actual", Base: "main"},
++		{Name: "docs/api", Branch: "docs-actual", Base: "main", Repo: secondary},
++		{Name: "stale/prunable", Branch: "stale-actual", Base: "main"},
++	}}
++	if err := internal.SaveStack(f.featurePath, stack); err != nil {
++		t.Fatal(err)
++	}
++
++	contextSource := f.writeInjectFile(t, "AGENT_CONTEXT.txt", "shared context\n")
++	guideSource := f.writeInjectFile(t, "guides/review.md", "review guide\n")
++	if err := os.WriteFile(filepath.Join(plain, "AGENT_CONTEXT.txt"), []byte("local override\n"), 0644); err != nil {
++		t.Fatal(err)
++	}
++
++	nestedHEAD := injectGit(t, nested, "rev-parse", "HEAD")
++	repoSubdir := filepath.Join(f.repo, "nested", "cwd")
++	if err := os.MkdirAll(repoSubdir, 0755); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.Chdir(repoSubdir); err != nil {
++		t.Fatal(err)
++	}
++
++	out, err := runInjectCommand(t, f.feature)
++	if err != nil {
++		t.Fatalf("feature-wide inject: %v\n%s", err, out)
++	}
++	if out != "Injected files into 3 worktree(s)\n" {
++		t.Fatalf("stdout = %q", out)
++	}
++	if got := injectGit(t, nested, "rev-parse", "HEAD"); got != nestedHEAD {
++		t.Fatalf("nested HEAD changed: %s -> %s", nestedHEAD, got)
++	}
++
++	if data, err := os.ReadFile(filepath.Join(plain, "AGENT_CONTEXT.txt")); err != nil || string(data) != "local override\n" {
++		t.Fatalf("existing file was not preserved: data=%q err=%v", data, err)
++	}
++	assertRelativeInjectLink(t, guideSource, filepath.Join(plain, "guides", "review.md"), "review guide\n")
++	assertRelativeInjectLink(t, contextSource, filepath.Join(nested, "AGENT_CONTEXT.txt"), "shared context\n")
++	assertRelativeInjectLink(t, guideSource, filepath.Join(nested, "guides", "review.md"), "review guide\n")
++	assertRelativeInjectLink(t, contextSource, filepath.Join(multiRepo, "AGENT_CONTEXT.txt"), "shared context\n")
++
++	for _, intermediate := range []string{
++		filepath.Join(f.featurePath, "worktrees", "review"),
++		filepath.Join(f.featurePath, "worktrees", "review", "team"),
++		filepath.Join(f.featurePath, "worktrees", "docs"),
++	} {
++		assertNotExists(t, filepath.Join(intermediate, "AGENT_CONTEXT.txt"))
++		assertNotExists(t, filepath.Join(intermediate, "guides"))
++	}
++	assertNotExists(t, filepath.Join(archived, "AGENT_CONTEXT.txt"))
++	assertNotExists(t, filepath.Join(f.root, "decoy-workspace", f.feature, "worktrees", "plain", "AGENT_CONTEXT.txt"))
++
++	for _, branch := range []string{"archive/old", "missing/not-created"} {
++		branchOut, branchErr := runInjectCommand(t, f.feature, branch)
++		if branchErr == nil {
++			t.Fatalf("explicit inject %q unexpectedly succeeded", branch)
++		}
++		if branchOut != "" {
++			t.Fatalf("explicit inject %q printed success-shaped output %q", branch, branchOut)
++		}
++	}
++}
++
++func TestInjectFeatureWideLegacyFallbackUsesOnlyLinkedWorktreeRoots(t *testing.T) {
++	f := newInjectFixture(t, "legacy")
++	flat := f.addWorktree(t, "", "flat", "legacy-flat")
++	nested := f.addWorktree(t, "", "review/deep/pr-9", "legacy-nested")
++	source := f.writeInjectFile(t, "AGENT_CONTEXT.txt", "legacy context\n")
++
++	standalone := filepath.Join(f.featurePath, "worktrees", "arbitrary", "repo")
++	if err := os.MkdirAll(filepath.Dir(standalone), 0755); err != nil {
++		t.Fatal(err)
++	}
++	injectGit(t, "", "init", "--initial-branch=main", standalone)
++	nestedRepo := filepath.Join(nested, "vendor", "repo")
++	if err := os.MkdirAll(filepath.Dir(nestedRepo), 0755); err != nil {
++		t.Fatal(err)
++	}
++	injectGit(t, "", "init", "--initial-branch=main", nestedRepo)
++
++	out, err := runInjectCommand(t, f.feature)
++	if err != nil {
++		t.Fatalf("legacy feature-wide inject: %v\n%s", err, out)
++	}
++	if out != "Injected files into 2 worktree(s)\n" {
++		t.Fatalf("stdout = %q", out)
++	}
++	assertRelativeInjectLink(t, source, filepath.Join(flat, "AGENT_CONTEXT.txt"), "legacy context\n")
++	assertRelativeInjectLink(t, source, filepath.Join(nested, "AGENT_CONTEXT.txt"), "legacy context\n")
++	assertNotExists(t, filepath.Join(f.featurePath, "worktrees", "review", "AGENT_CONTEXT.txt"))
++	assertNotExists(t, filepath.Join(f.featurePath, "worktrees", "review", "deep", "AGENT_CONTEXT.txt"))
++	assertNotExists(t, filepath.Join(standalone, "AGENT_CONTEXT.txt"))
++	assertNotExists(t, filepath.Join(nestedRepo, "AGENT_CONTEXT.txt"))
++}
++
++func TestInjectRejectsCopiedStaleAndMismatchedGitMarkers(t *testing.T) {
++	markerKinds := []string{"copied", "stale", "mismatched"}
++	for _, markerKind := range markerKinds {
++		for _, metadata := range []bool{true, false} {
++			name := markerKind + "-fallback"
++			if metadata {
++				name = markerKind + "-metadata"
++			}
++			t.Run(name, func(t *testing.T) {
++				f := newInjectFixture(t, "customer")
++				source := f.writeInjectFile(t, "AGENT_CONTEXT.txt", "shared context\n")
++
++				logicalName := "review/pr-123"
++				target := filepath.Join(f.featurePath, "worktrees", filepath.FromSlash(logicalName))
++				var controls []string
++				switch markerKind {
++				case "copied":
++					actual := f.addWorktree(t, "", logicalName, "copied-actual")
++					target = filepath.Join(f.featurePath, "worktrees", "review")
++					logicalName = "review"
++					copyInjectFile(t, filepath.Join(actual, ".git"), filepath.Join(target, ".git"))
++					controls = append(controls, actual)
++				case "stale":
++					actual := f.addWorktree(t, "", logicalName, "stale-actual")
++					marker, err := os.ReadFile(filepath.Join(actual, ".git"))
++					if err != nil {
++						t.Fatal(err)
++					}
++					injectGit(t, f.repo, "worktree", "remove", "--force", actual)
++					if err := os.MkdirAll(actual, 0755); err != nil {
++						t.Fatal(err)
++					}
++					if err := os.WriteFile(filepath.Join(actual, ".git"), marker, 0644); err != nil {
++						t.Fatal(err)
++					}
++				case "mismatched":
++					actual := f.addWorktree(t, "", logicalName, "mismatched-actual")
++					donor := f.addWorktree(t, "", "plain", "mismatched-donor")
++					copyInjectFile(t, filepath.Join(donor, ".git"), filepath.Join(actual, ".git"))
++					controls = append(controls, donor)
++				default:
++					t.Fatalf("unknown marker kind %q", markerKind)
++				}
++
++				if metadata {
++					if err := internal.SaveStack(f.featurePath, internal.Stack{Branches: []internal.StackEntry{{
++						Name: logicalName, Branch: "decoupled-actual", Base: "main",
++					}}}); err != nil {
++						t.Fatal(err)
++					}
++				}
++
++				for _, args := range [][]string{
++					{f.feature},
++					{f.feature, logicalName},
++				} {
++					out, err := runInjectCommand(t, args...)
++					if err == nil {
++						t.Fatalf("inject %v unexpectedly accepted %s marker", args, markerKind)
++					}
++					if out != "" {
++						t.Fatalf("inject %v printed success-shaped output %q", args, out)
++					}
++					if markerKind != "stale" && !strings.Contains(err.Error(), "backpointer") {
++						t.Fatalf("inject %v error = %v, want backpointer refusal", args, err)
++					}
++					assertNotExists(t, filepath.Join(target, filepath.Base(source)))
++					for _, control := range controls {
++						assertNotExists(t, filepath.Join(control, filepath.Base(source)))
++					}
++				}
++			})
++		}
++	}
++}
++
++func TestInjectWorktreeIdentityPreservesWhitespacePaths(t *testing.T) {
++	f := newInjectFixture(t, "whitespace")
++	logicalNames := []string{
++		"review/entry ",
++		"review/\tentry",
++		"review/line\nentry",
++		"review/entry\r",
++	}
++	branches := []string{"actual-trailing-space", "actual-tab", "actual-newline", "actual-carriage-return"}
++	worktrees := make([]string, 0, len(logicalNames))
++	stack := internal.Stack{}
++	for i, logicalName := range logicalNames {
++		worktrees = append(worktrees, f.addWorktree(t, "", logicalName, branches[i]))
++		stack.Branches = append(stack.Branches, internal.StackEntry{
++			Name: logicalName, Branch: branches[i], Base: "main",
++		})
++	}
++	if err := internal.SaveStack(f.featurePath, stack); err != nil {
++		t.Fatal(err)
++	}
++
++	firstSource := f.writeInjectFile(t, "AGENT_CONTEXT.txt", "whitespace context\n")
++	for i, logicalName := range logicalNames {
++		out, err := runInjectCommand(t, f.feature, logicalName)
++		if err != nil {
++			t.Fatalf("explicit inject %q: %v\n%s", logicalName, err, out)
++		}
++		assertRelativeInjectLink(t, firstSource, filepath.Join(worktrees[i], "AGENT_CONTEXT.txt"), "whitespace context\n")
++	}
++
++	secondSource := f.writeInjectFile(t, "SECOND_CONTEXT.txt", "second context\n")
++	out, err := runInjectCommand(t, f.feature)
++	if err != nil {
++		t.Fatalf("feature-wide whitespace inject: %v\n%s", err, out)
++	}
++	if out != "Injected files into 4 worktree(s)\n" {
++		t.Fatalf("stdout = %q", out)
++	}
++	for _, worktree := range worktrees {
++		assertRelativeInjectLink(t, secondSource, filepath.Join(worktree, "SECOND_CONTEXT.txt"), "second context\n")
++	}
++	assertNotExists(t, filepath.Join(f.featurePath, "worktrees", "review", "AGENT_CONTEXT.txt"))
++	assertNotExists(t, filepath.Join(f.featurePath, "worktrees", "review", "SECOND_CONTEXT.txt"))
++}
++
++func TestInjectIntoConfigAndExplicitFlag(t *testing.T) {
++	f := newInjectFixture(t, "targets")
++	worktree := f.addWorktree(t, "", "review/pr-44", "target-actual")
++	if err := internal.SaveStack(f.featurePath, internal.Stack{Branches: []internal.StackEntry{{
++		Name: "review/pr-44", Branch: "target-actual", Base: "main",
++	}}}); err != nil {
++		t.Fatal(err)
++	}
++	source := f.writeInjectFile(t, "AGENT_CONTEXT.txt", "target context\n")
++
++	writeInjectTWSConfig(t, f.home, f.repo, f.workspace, ".configured")
++	out, err := runInjectCommand(t, f.feature)
++	if err != nil {
++		t.Fatalf("configured inject: %v\n%s", err, out)
++	}
++	if out != "Injected files into 1 worktree(s)\n" {
++		t.Fatalf("stdout = %q", out)
++	}
++	assertRelativeInjectLink(t, source, filepath.Join(worktree, ".configured", "AGENT_CONTEXT.txt"), "target context\n")
++	assertNotExists(t, filepath.Join(f.featurePath, "worktrees", "review", ".configured"))
++
++	explicitPath := filepath.Join(worktree, ".explicit", "AGENT_CONTEXT.txt")
++	if err := os.MkdirAll(filepath.Dir(explicitPath), 0755); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(explicitPath, []byte("keep me\n"), 0644); err != nil {
++		t.Fatal(err)
++	}
++	out, err = runInjectCommand(t, f.feature, "review/pr-44", "--into", ".explicit")
++	if err != nil {
++		t.Fatalf("explicit inject: %v\n%s", err, out)
++	}
++	if out != "Injected files into: targets/review/pr-44/.explicit\n" {
++		t.Fatalf("stdout = %q", out)
++	}
++	if data, readErr := os.ReadFile(explicitPath); readErr != nil || string(data) != "keep me\n" {
++		t.Fatalf("explicit existing file was not preserved: data=%q err=%v", data, readErr)
++	}
++	assertNotExists(t, filepath.Join(f.featurePath, "worktrees", "review", ".explicit"))
++}
++
++func TestInjectDiscoveryRejectsCorruptAndUntrustedMetadata(t *testing.T) {
++	tests := []struct {
++		name    string
++		setup   func(t *testing.T, featurePath string)
++		wantErr string
++	}{
++		{
++			name: "malformed",
++			setup: func(t *testing.T, featurePath string) {
++				t.Helper()
++				if err := os.WriteFile(internal.StackPath(featurePath), []byte("branches: ["), 0644); err != nil {
++					t.Fatal(err)
++				}
++			},
++			wantErr: "reading",
++		},
++		{
++			name: "unreadable-shape",
++			setup: func(t *testing.T, featurePath string) {
++				t.Helper()
++				if err := os.MkdirAll(internal.StackPath(featurePath), 0755); err != nil {
++					t.Fatal(err)
++				}
++			},
++			wantErr: "reading",
++		},
++		{
++			name: "unsafe-logical-path",
++			setup: func(t *testing.T, featurePath string) {
++				t.Helper()
++				if err := internal.SaveStack(featurePath, internal.Stack{Branches: []internal.StackEntry{{
++					Name: "../escape", Base: "main",
++				}}}); err != nil {
++					t.Fatal(err)
++				}
++			},
++			wantErr: "safe relative path",
++		},
++		{
++			name: "existing-non-git-directory",
++			setup: func(t *testing.T, featurePath string) {
++				t.Helper()
++				if err := internal.SaveStack(featurePath, internal.Stack{Branches: []internal.StackEntry{{
++					Name: "plain", Base: "main",
++				}}}); err != nil {
++					t.Fatal(err)
++				}
++				if err := os.MkdirAll(filepath.Join(featurePath, "worktrees", "plain"), 0755); err != nil {
++					t.Fatal(err)
++				}
++			},
++			wantErr: "not a linked Git worktree",
++		},
++		{
++			name: "symlink-component",
++			setup: func(t *testing.T, featurePath string) {
++				t.Helper()
++				outside := filepath.Join(t.TempDir(), "outside")
++				if err := os.MkdirAll(outside, 0755); err != nil {
++					t.Fatal(err)
++				}
++				if err := os.MkdirAll(filepath.Join(featurePath, "worktrees"), 0755); err != nil {
++					t.Fatal(err)
++				}
++				if err := os.Symlink(outside, filepath.Join(featurePath, "worktrees", "link")); err != nil {
++					t.Fatal(err)
++				}
++				if err := internal.SaveStack(featurePath, internal.Stack{Branches: []internal.StackEntry{{
++					Name: "link", Base: "main",
++				}}}); err != nil {
++					t.Fatal(err)
++				}
++			},
++			wantErr: "symlink component",
++		},
++		{
++			name: "deterministic-logical-order",
++			setup: func(t *testing.T, featurePath string) {
++				t.Helper()
++				if err := internal.SaveStack(featurePath, internal.Stack{Branches: []internal.StackEntry{
++					{Name: "zeta", Base: "main"},
++					{Name: "alpha", Base: "main"},
++				}}); err != nil {
++					t.Fatal(err)
++				}
++				for _, name := range []string{"zeta", "alpha"} {
++					if err := os.MkdirAll(filepath.Join(featurePath, "worktrees", name), 0755); err != nil {
++						t.Fatal(err)
++					}
++				}
++			},
++			wantErr: `worktree "alpha"`,
++		},
++	}
++
++	for _, tc := range tests {
++		t.Run(tc.name, func(t *testing.T) {
++			featurePath := t.TempDir()
++			if err := os.MkdirAll(filepath.Join(featurePath, "inject"), 0755); err != nil {
++				t.Fatal(err)
++			}
++			if err := os.WriteFile(filepath.Join(featurePath, "inject", "AGENT_CONTEXT.txt"), []byte("context\n"), 0644); err != nil {
++				t.Fatal(err)
++			}
++			tc.setup(t, featurePath)
++
++			count, err := internal.InjectFilesForFeature(featurePath, "")
++			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
++				t.Fatalf("count=%d err=%v, want error containing %q", count, err, tc.wantErr)
++			}
++			if count != 0 {
++				t.Fatalf("count = %d, want 0", count)
++			}
++		})
++	}
++}
++
++func TestInjectRejectsSymlinkedStackMetadata(t *testing.T) {
++	for _, dangling := range []bool{false, true} {
++		t.Run(map[bool]string{false: "readable-link", true: "dangling-link"}[dangling], func(t *testing.T) {
++			f := newInjectFixture(t, "customer")
++			nested := f.addWorktree(t, "", "review/pr-123", "actual-branch")
++			flat := f.addWorktree(t, "", "plain", "flat-branch")
++			source := f.writeInjectFile(t, "AGENT_CONTEXT.txt", "shared context\n")
++			target := filepath.Join(f.featurePath, "referenced-stack.yaml")
++			if !dangling {
++				if err := os.WriteFile(target, []byte("branches: []\n"), 0o600); err != nil {
++					t.Fatal(err)
++				}
++			}
++			if err := os.Symlink(target, internal.StackPath(f.featurePath)); err != nil {
++				t.Fatal(err)
++			}
++			if count, err := internal.InjectFilesForFeature(f.featurePath, ""); err == nil || count != 0 {
++				t.Fatalf("symlinked metadata should refuse before discovery: count=%d err=%v", count, err)
++			}
++			for _, args := range [][]string{{f.feature}, {f.feature, "review/pr-123"}} {
++				out, err := runInjectCommand(t, args...)
++				if err == nil || !strings.Contains(err.Error(), "stack.yaml") {
++					t.Fatalf("inject %v should identify unusable stack metadata: %v", args, err)
++				}
++				if out != "" {
++					t.Fatalf("metadata refusal printed success: %q", out)
++				}
++				assertNotExists(t, filepath.Join(nested, filepath.Base(source)))
++				assertNotExists(t, filepath.Join(flat, filepath.Base(source)))
++			}
++			info, err := os.Lstat(internal.StackPath(f.featurePath))
++			if err != nil || info.Mode()&os.ModeSymlink == 0 {
++				t.Fatalf("metadata refusal changed the symlink: %v", err)
++			}
++		})
++	}
++}
++
++func TestInjectCheckoutModeRefusesWideAndSpecific(t *testing.T) {
++	repo := setupGitRepoCheckout(t)
++	t.Setenv("HOME", t.TempDir())
++	t.Setenv("TWS_ROOT", "")
++	oldCWD, err := os.Getwd()
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { _ = os.Chdir(oldCWD) })
++	if err := os.Chdir(repo); err != nil {
++		t.Fatal(err)
++	}
++
++	featurePath := filepath.Join(repo, ".tws", "features", "customer")
++	if err := os.MkdirAll(filepath.Join(featurePath, "inject"), 0755); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(filepath.Join(featurePath, "inject", "AGENT_CONTEXT.txt"), []byte("context\n"), 0644); err != nil {
++		t.Fatal(err)
++	}
++	if err := internal.SaveStack(featurePath, internal.Stack{Branches: []internal.StackEntry{{
++		Name: "review/pr-123", Branch: "feat-review/pr-123", Base: "main",
++	}}}); err != nil {
++		t.Fatal(err)
++	}
++	before := gitInDir(t, repo, "rev-parse", "HEAD")
++
++	for _, args := range [][]string{
++		{"customer"},
++		{"customer", "review/pr-123"},
++	} {
++		out, runErr := runInjectCommand(t, args...)
++		if !errors.Is(runErr, internal.ErrWorktreeUnsupported) {
++			t.Fatalf("inject %v err = %v", args, runErr)
++		}
++		if out != "" {
++			t.Fatalf("inject %v printed success-shaped output %q", args, out)
++		}
++	}
++	if after := gitInDir(t, repo, "rev-parse", "HEAD"); after != before {
++		t.Fatalf("checkout HEAD changed: %s -> %s", before, after)
++	}
++	assertNotExists(t, filepath.Join(repo, "AGENT_CONTEXT.txt"))
++}
++
++func TestTemplateAndImportUseNestedWorktreeDiscovery(t *testing.T) {
++	f := newInjectFixture(t, "templated")
++	flat := f.addWorktree(t, "", "flat", "template-flat")
++	nested := f.addWorktree(t, "", "review/pr-77", "template-nested")
++	if err := internal.SaveStack(f.featurePath, internal.Stack{Branches: []internal.StackEntry{
++		{Name: "review/pr-77", Branch: "template-nested", Base: "flat"},
++		{Name: "flat", Branch: "template-flat", Base: "main"},
++	}}); err != nil {
++		t.Fatal(err)
++	}
++	templateDir := filepath.Join(f.root, "template")
++	if err := os.MkdirAll(templateDir, 0755); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(filepath.Join(templateDir, "TEMPLATE_CONTEXT.md"), []byte("template context\n"), 0644); err != nil {
++		t.Fatal(err)
++	}
++
++	out := captureStdout(t, func() {
++		syncFeatureTemplate(f.feature, []string{templateDir})
++	})
++	if !strings.Contains(out, "Synced inject to 2 worktree(s)") {
++		t.Fatalf("template stdout = %q", out)
++	}
++	templateSource := filepath.Join(f.featurePath, "inject", "TEMPLATE_CONTEXT.md")
++	assertRelativeInjectLink(t, templateSource, filepath.Join(flat, "TEMPLATE_CONTEXT.md"), "template context\n")
++	assertRelativeInjectLink(t, templateSource, filepath.Join(nested, "TEMPLATE_CONTEXT.md"), "template context\n")
++
++	t.Setenv("TWS_ROOT", f.workspace)
++	importFeature := "imported"
++	importFeaturePath := filepath.Join(f.workspace, importFeature)
++	if err := os.MkdirAll(filepath.Join(importFeaturePath, "inject"), 0755); err != nil {
++		t.Fatal(err)
++	}
++	importWorktree := filepath.Join(importFeaturePath, "worktrees", "review", "pr-88")
++	injectGit(t, f.repo, "branch", "import-nested", "main")
++	if err := os.MkdirAll(filepath.Dir(importWorktree), 0755); err != nil {
++		t.Fatal(err)
++	}
++	injectGit(t, f.repo, "worktree", "add", importWorktree, "import-nested")
++	if err := internal.SaveStack(importFeaturePath, internal.Stack{Branches: []internal.StackEntry{{
++		Name: "review/pr-88", Branch: "import-nested", Base: "main",
++	}}}); err != nil {
++		t.Fatal(err)
++	}
++	importSource := filepath.Join(f.root, "import-source")
++	if err := os.MkdirAll(importSource, 0755); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(filepath.Join(importSource, "IMPORTED_CONTEXT.md"), []byte("imported context\n"), 0644); err != nil {
++		t.Fatal(err)
++	}
++
++	out = captureStdout(t, func() {
++		if err := recreateExternal(internal.WorkspaceExport{Feature: importFeature}, importSource); err != nil {
++			t.Errorf("recreateExternal: %v", err)
++		}
++	})
++	if !strings.Contains(out, "Injected files into 1 worktree(s)") {
++		t.Fatalf("import stdout = %q", out)
++	}
++	importedSource := filepath.Join(importFeaturePath, "inject", "IMPORTED_CONTEXT.md")
++	assertRelativeInjectLink(t, importedSource, filepath.Join(importWorktree, "IMPORTED_CONTEXT.md"), "imported context\n")
++	assertNotExists(t, filepath.Join(importFeaturePath, "worktrees", "review", "IMPORTED_CONTEXT.md"))
++}
++
++func TestTemplateAndImportSurfaceDiscoveryErrors(t *testing.T) {
++	f := newInjectFixture(t, "bad-template")
++	if err := os.MkdirAll(filepath.Join(f.featurePath, "worktrees", "plain"), 0755); err != nil {
++		t.Fatal(err)
++	}
++	if err := internal.SaveStack(f.featurePath, internal.Stack{Branches: []internal.StackEntry{{
++		Name: "plain", Base: "main",
++	}}}); err != nil {
++		t.Fatal(err)
++	}
++	templateDir := filepath.Join(f.root, "template")
++	if err := os.MkdirAll(templateDir, 0755); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(filepath.Join(templateDir, "CONTEXT.md"), []byte("context\n"), 0644); err != nil {
++		t.Fatal(err)
++	}
++
++	out := captureStdout(t, func() {
++		syncFeatureTemplate(f.feature, []string{templateDir})
++	})
++	if !strings.Contains(out, "Warning: worktree inject failed:") {
++		t.Fatalf("template error was not surfaced: %q", out)
++	}
++
++	t.Setenv("TWS_ROOT", f.workspace)
++	badImportPath := filepath.Join(f.workspace, "bad-import")
++	if err := os.MkdirAll(filepath.Join(badImportPath, "inject"), 0755); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(internal.StackPath(badImportPath), []byte("branches: ["), 0644); err != nil {
++		t.Fatal(err)
++	}
++	err := recreateExternal(internal.WorkspaceExport{Feature: "bad-import"}, "")
++	if err == nil || !strings.Contains(err.Error(), "injecting restored files") {
++		t.Fatalf("import error = %v", err)
++	}
++}
+diff --git a/internal/cli/sync_plan_docs_test.go b/internal/cli/sync_plan_docs_test.go
+index 4d043a6..dc7e378 100644
+--- a/internal/cli/sync_plan_docs_test.go
++++ b/internal/cli/sync_plan_docs_test.go
+@@ -122,8 +122,8 @@ func TestSyncPlanDocs_FlagWorkflowSurfacesCarryAllFiveLiterals(t *testing.T) {
+ // own rule: neither file may carry any of the five flag literals.
+ //
+ // Released safety features stay in the shipped list. Post-release
+-// prioritization makes ordinary sync safety the current target; the negative
+-// flag-literal contract is unchanged.
++// prioritization advances to injection correctness after ordinary sync safety
++// ships; the negative flag-literal contract is unchanged.
+ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t *testing.T) {
+ 	literals := []string{"--plan", "--max-replay-per-entry", "--max-replay-total", "--approve-plan", "plan-guard:"}
+ 
+@@ -155,8 +155,11 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t
+ 		}
+ 
+ 		targetTail := ci[targetIdx : targetIdx+min(80, len(ci)-targetIdx)]
+-		if !strings.Contains(targetTail, "ordinary sync safety (issue #4)") {
+-			t.Fatalf(`docs/roadmap.md's "Current target:" sentence must name ordinary sync safety (#4), got: %q`, targetTail)
++		if !strings.Contains(targetTail, "slash-containing worktree injection (issue #1)") {
++			t.Fatalf(`docs/roadmap.md's "Current target:" sentence must name injection correctness (#1), got: %q`, targetTail)
++		}
++		if !strings.Contains(normalizeProse(content), "ordinary sync safety (#4) is fully released and verified in v1.2.18-rc.2") {
++			t.Fatal("docs/roadmap.md must retain the verified ordinary-sync release milestone before advancing the target")
+ 		}
+ 		previous := backlogIdx
+ 		for _, issue := range []string{"[#4:", "[#1:", "[#3:", "[#2:"} {
+@@ -214,8 +217,11 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t
+ 		}
+ 
+ 		nextTail := ci[nextFeatureIdx : nextFeatureIdx+min(80, len(ci)-nextFeatureIdx)]
+-		if !strings.Contains(nextTail, "ordinary sync safety (issue #4)") {
+-			t.Fatalf(`docs/engineering-workflow.md's "Next roadmap work:" sentence must name ordinary sync safety (#4), got: %q`, nextTail)
++		if !strings.Contains(nextTail, "slash-containing worktree injection (issue #1)") {
++			t.Fatalf(`docs/engineering-workflow.md's "Next roadmap work:" sentence must name injection correctness (#1), got: %q`, nextTail)
++		}
++		if !strings.Contains(normalizeProse(content), "ordinary sync safety (#4) is fully released and verified in v1.2.18-rc.2") {
++			t.Fatal("docs/engineering-workflow.md must retain the verified ordinary-sync release milestone before advancing the target")
+ 		}
+ 
+ 		assertNoFlagLiteral(t, "docs/engineering-workflow.md", content)
+diff --git a/internal/inject.go b/internal/inject.go
+index dddb782..1ec77d6 100644
+--- a/internal/inject.go
++++ b/internal/inject.go
+@@ -1,13 +1,25 @@
+ package internal
+ 
+ import (
++	"bytes"
++	"errors"
+ 	"fmt"
++	"io/fs"
+ 	"os"
++	"os/exec"
+ 	"path/filepath"
++	"sort"
++	"strings"
+ )
+ 
+ const InjectDir = "inject"
+ 
++const injectGitPathReadCap = 4096
++
++// ErrInjectWorktreeNotFound identifies an absent materialized worktree without
++// conflating it with an existing path that is not a valid linked worktree.
++var ErrInjectWorktreeNotFound = errors.New("inject worktree not found")
++
+ // InjectPath returns the inject directory path for a feature.
+ func InjectPath(featurePath string) string {
+ 	return filepath.Join(featurePath, InjectDir)
+@@ -65,27 +77,469 @@ func InjectFiles(featurePath, worktreePath, injectInto string) error {
+ 	})
+ }
+ 
+-// InjectFilesForFeature re-syncs inject/ into all active worktrees for a feature.
++type injectWorktreeTarget struct {
++	Name string
++	Path string
++}
++
++type injectStackEntry struct {
++	Name     string
++	Path     string
++	Archived bool
++}
++
++// ResolveInjectWorktree resolves and verifies one logical external worktree.
++// stack.yaml is authoritative when present; otherwise the explicit logical
++// path is accepted only when it is a verified linked Git worktree root.
++func ResolveInjectWorktree(featurePath, name string) (string, error) {
++	entries, hasStack, err := injectStackEntries(featurePath)
++	if err != nil {
++		return "", err
++	}
++	if hasStack {
++		for _, entry := range entries {
++			if entry.Name != name {
++				continue
++			}
++			if entry.Archived {
++				return "", fmt.Errorf("worktree %q is archived", name)
++			}
++			if err := verifyInjectWorktree(featurePath, entry.Path); err != nil {
++				return "", err
++			}
++			return entry.Path, nil
++		}
++		return "", ErrInjectWorktreeNotFound
++	}
++
++	path, err := injectWorktreePath(featurePath, name)
++	if err != nil {
++		return "", err
++	}
++	if err := verifyInjectWorktree(featurePath, path); err != nil {
++		return "", err
++	}
++	return path, nil
++}
++
++// InjectFilesForFeature re-syncs inject/ into every materialized active
++// worktree for a feature. Targets are validated before the first write and
++// processed in deterministic logical-name order.
+ func InjectFilesForFeature(featurePath, injectInto string) (int, error) {
+-	wtDir := filepath.Join(featurePath, "worktrees")
+-	entries, err := os.ReadDir(wtDir)
++	targets, err := discoverInjectWorktrees(featurePath)
+ 	if err != nil {
+-		return 0, nil
++		return 0, err
+ 	}
+ 
+ 	count := 0
+-	for _, e := range entries {
+-		if !e.IsDir() {
++	var injectErrs []error
++	for _, target := range targets {
++		if err := InjectFiles(featurePath, target.Path, injectInto); err != nil {
++			injectErrs = append(injectErrs, fmt.Errorf("inject failed for %s: %w", target.Name, err))
++			continue
++		}
++		count++
++	}
++	return count, errors.Join(injectErrs...)
++}
++
++func discoverInjectWorktrees(featurePath string) ([]injectWorktreeTarget, error) {
++	entries, hasStack, err := injectStackEntries(featurePath)
++	if err != nil {
++		return nil, err
++	}
++	if !hasStack {
++		return discoverLegacyInjectWorktrees(featurePath)
++	}
++
++	targets := make([]injectWorktreeTarget, 0, len(entries))
++	seenPaths := make(map[string]string)
++	for _, entry := range entries {
++		if entry.Archived {
++			continue
++		}
++		err := verifyInjectWorktree(featurePath, entry.Path)
++		if errors.Is(err, ErrInjectWorktreeNotFound) {
++			continue
++		}
++		if err != nil {
++			return nil, fmt.Errorf("worktree %q: %w", entry.Name, err)
++		}
++		canonicalPath := canonicalize(entry.Path)
++		if previous, ok := seenPaths[canonicalPath]; ok {
++			return nil, fmt.Errorf("worktrees %q and %q resolve to the same path %s", previous, entry.Name, canonicalPath)
++		}
++		seenPaths[canonicalPath] = entry.Name
++		targets = append(targets, injectWorktreeTarget{Name: entry.Name, Path: entry.Path})
++	}
++	sort.Slice(targets, func(i, j int) bool {
++		return targets[i].Name < targets[j].Name
++	})
++	return targets, nil
++}
++
++func injectStackEntries(featurePath string) ([]injectStackEntry, bool, error) {
++	stackPath := StackPath(featurePath)
++	info, err := os.Lstat(stackPath)
++	if errors.Is(err, fs.ErrNotExist) {
++		return nil, false, nil
++	}
++	if err != nil {
++		return nil, false, fmt.Errorf("reading %s: %w", stackPath, err)
++	}
++	if !info.Mode().IsRegular() {
++		return nil, true, fmt.Errorf("reading %s: stack metadata must be a regular file", stackPath)
++	}
++	stack, err := LoadStack(featurePath)
++	if err != nil {
++		return nil, true, fmt.Errorf("reading %s: %w", stackPath, err)
++	}
++
++	entries := make([]injectStackEntry, 0, len(stack.Branches))
++	seenNames := make(map[string]bool)
++	for _, branch := range stack.Branches {
++		if seenNames[branch.Name] {
++			return nil, true, fmt.Errorf("stack contains duplicate worktree name %q", branch.Name)
++		}
++		seenNames[branch.Name] = true
++		path, err := injectWorktreePath(featurePath, branch.Name)
++		if err != nil {
++			return nil, true, fmt.Errorf("worktree %q: %w", branch.Name, err)
++		}
++		entries = append(entries, injectStackEntry{
++			Name:     branch.Name,
++			Path:     path,
++			Archived: branch.Archived,
++		})
++	}
++	sort.Slice(entries, func(i, j int) bool {
++		return entries[i].Name < entries[j].Name
++	})
++	return entries, true, nil
++}
++
++func injectWorktreePath(featurePath, name string) (string, error) {
++	if name == "" {
++		return "", fmt.Errorf("logical worktree name cannot be empty")
++	}
++	if filepath.IsAbs(name) || filepath.VolumeName(name) != "" || strings.Contains(name, "\\") {
++		return "", fmt.Errorf("logical worktree name %q is not a safe relative path", name)
++	}
++	clean := filepath.Clean(name)
++	if clean != name || clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
++		return "", fmt.Errorf("logical worktree name %q is not a safe relative path", name)
++	}
++	return filepath.Join(featurePath, "worktrees", clean), nil
++}
++
++func discoverLegacyInjectWorktrees(featurePath string) ([]injectWorktreeTarget, error) {
++	worktreesRoot := filepath.Join(featurePath, "worktrees")
++	info, err := os.Lstat(worktreesRoot)
++	if errors.Is(err, fs.ErrNotExist) {
++		return nil, nil
++	}
++	if err != nil {
++		return nil, fmt.Errorf("reading worktrees directory %s: %w", worktreesRoot, err)
++	}
++	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
++		return nil, fmt.Errorf("worktrees path %s is not a directory", worktreesRoot)
++	}
++
++	var targets []injectWorktreeTarget
++	err = filepath.WalkDir(worktreesRoot, func(path string, entry fs.DirEntry, walkErr error) error {
++		if walkErr != nil {
++			return walkErr
++		}
++		if path == worktreesRoot {
++			return nil
++		}
++		if entry.Type()&os.ModeSymlink != 0 {
++			if entry.IsDir() {
++				return filepath.SkipDir
++			}
++			return nil
++		}
++		if !entry.IsDir() {
++			return nil
++		}
++
++		markerInfo, markerErr := os.Lstat(filepath.Join(path, ".git"))
++		if errors.Is(markerErr, fs.ErrNotExist) {
++			return nil
++		}
++		if markerErr != nil {
++			return markerErr
++		}
++		if !markerInfo.Mode().IsRegular() {
++			return filepath.SkipDir
++		}
++		if err := verifyInjectWorktree(featurePath, path); err != nil {
++			return fmt.Errorf("legacy worktree %s: %w", path, err)
++		}
++		name, err := filepath.Rel(worktreesRoot, path)
++		if err != nil {
++			return err
++		}
++		targets = append(targets, injectWorktreeTarget{Name: name, Path: path})
++		return filepath.SkipDir
++	})
++	if err != nil {
++		return nil, fmt.Errorf("discovering legacy worktrees under %s: %w", worktreesRoot, err)
++	}
++	sort.Slice(targets, func(i, j int) bool {
++		return targets[i].Name < targets[j].Name
++	})
++	return targets, nil
++}
++
++func verifyInjectWorktree(featurePath, path string) error {
++	worktreesRoot := filepath.Join(featurePath, "worktrees")
++	if err := rejectInjectPathSymlinks(worktreesRoot, path); err != nil {
++		if errors.Is(err, fs.ErrNotExist) {
++			return fmt.Errorf("%w: %s", ErrInjectWorktreeNotFound, path)
++		}
++		return err
++	}
++
++	rootPath, err := filepath.EvalSymlinks(worktreesRoot)
++	if err != nil {
++		return err
++	}
++	targetPath, err := filepath.EvalSymlinks(path)
++	if err != nil {
++		return err
++	}
++	rel, err := filepath.Rel(rootPath, targetPath)
++	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
++		return fmt.Errorf("worktree path %s escapes %s", path, worktreesRoot)
++	}
++
++	marker := filepath.Join(path, ".git")
++	markerInfo, err := os.Lstat(marker)
++	if err != nil {
++		if errors.Is(err, fs.ErrNotExist) {
++			return fmt.Errorf("%s is not a linked Git worktree", path)
++		}
++		return fmt.Errorf("reading Git marker %s: %w", marker, err)
++	}
++	if !markerInfo.Mode().IsRegular() {
++		return fmt.Errorf("%s is not a linked Git worktree", path)
++	}
++
++	gitDir, err := resolveInjectGitDir(path, marker)
++	if err != nil {
++		return err
++	}
++	if err := verifyInjectGitBackpointer(path, marker, gitDir); err != nil {
++		return err
++	}
++	if err := verifyInjectCommonDir(path, gitDir); err != nil {
++		return err
++	}
++
++	topLevel, err := gitPathOutput(path, "rev-parse", "--show-toplevel")
++	if err != nil {
++		return fmt.Errorf("%s is not a valid Git worktree: %w", path, err)
++	}
++	if canonicalize(topLevel) != canonicalize(path) {
++		return fmt.Errorf("Git worktree root for %s is %s", path, topLevel)
++	}
++	if err := verifyInjectWorktreeRegistration(path); err != nil {
++		return err
++	}
++	return nil
++}
++
++func resolveInjectGitDir(worktreePath, markerPath string) (string, error) {
++	pointer, err := readInjectGitPathFile(markerPath)
++	if err != nil {
++		return "", fmt.Errorf("reading Git marker %s: %w", markerPath, err)
++	}
++	gitDir, ok := strings.CutPrefix(pointer, "gitdir: ")
++	if !ok || gitDir == "" {
++		return "", fmt.Errorf("malformed gitdir pointer in %s", markerPath)
++	}
++	if !filepath.IsAbs(gitDir) {
++		gitDir = filepath.Join(worktreePath, gitDir)
++	}
++	gitDir = filepath.Clean(gitDir)
++	info, err := os.Lstat(gitDir)
++	if err != nil {
++		return "", fmt.Errorf("resolving Git directory for %s: %w", worktreePath, err)
++	}
++	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
++		return "", fmt.Errorf("Git directory %s for %s is not a directory", gitDir, worktreePath)
++	}
++	return gitDir, nil
++}
++
++func verifyInjectGitBackpointer(worktreePath, markerPath, gitDir string) error {
++	backpointerPath := filepath.Join(gitDir, "gitdir")
++	backpointer, err := readInjectGitPathFile(backpointerPath)
++	if err != nil {
++		return fmt.Errorf("reading Git worktree backpointer for %s: %w", worktreePath, err)
++	}
++	if !filepath.IsAbs(backpointer) {
++		backpointer = filepath.Join(gitDir, backpointer)
++	}
++	backpointer = filepath.Clean(backpointer)
++	info, err := os.Lstat(backpointer)
++	if err != nil {
++		return fmt.Errorf("resolving Git worktree backpointer for %s: %w", worktreePath, err)
++	}
++	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
++		return fmt.Errorf("Git worktree backpointer for %s does not name a regular .git file", worktreePath)
++	}
++	if canonicalize(backpointer) != canonicalize(markerPath) {
++		return fmt.Errorf("Git worktree backpointer for %s names %s", worktreePath, backpointer)
++	}
++	return nil
++}
++
++func verifyInjectCommonDir(worktreePath, gitDir string) error {
++	commonDirPath := filepath.Join(gitDir, "commondir")
++	commonDir, err := readInjectGitPathFile(commonDirPath)
++	if err != nil {
++		return fmt.Errorf("reading Git common directory for %s: %w", worktreePath, err)
++	}
++	if !filepath.IsAbs(commonDir) {
++		commonDir = filepath.Join(gitDir, commonDir)
++	}
++	commonDir = filepath.Clean(commonDir)
++	info, err := os.Lstat(commonDir)
++	if err != nil {
++		return fmt.Errorf("resolving Git common directory for %s: %w", worktreePath, err)
++	}
++	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
++		return fmt.Errorf("Git common directory %s for %s is not a directory", commonDir, worktreePath)
++	}
++	return nil
++}
++
++func verifyInjectWorktreeRegistration(worktreePath string) error {
++	cmd := exec.Command("git", "-C", worktreePath, "worktree", "list", "--porcelain", "-z")
++	var stderr bytes.Buffer
++	cmd.Stderr = &stderr
++	out, err := cmd.Output()
++	if err != nil {
++		message := strings.TrimSpace(stderr.String())
++		if message == "" {
++			return fmt.Errorf("listing registered Git worktrees for %s: %w", worktreePath, err)
++		}
++		return fmt.Errorf("listing registered Git worktrees for %s: %w: %s", worktreePath, err, message)
++	}
++
++	want := canonicalize(worktreePath)
++	inBlock := false
++	found := false
++	for _, field := range bytes.Split(out, []byte{0}) {
++		if len(field) == 0 {
++			inBlock = false
+ 			continue
+ 		}
+-		wtPath := filepath.Join(wtDir, e.Name())
+-		if err := InjectFiles(featurePath, wtPath, injectInto); err != nil {
+-			fmt.Printf("  Warning: inject failed for %s: %v\n", e.Name(), err)
+-		} else {
+-			count++
++		if bytes.HasPrefix(field, []byte("worktree ")) {
++			if inBlock {
++				return fmt.Errorf("malformed Git worktree inventory for %s: duplicate worktree field", worktreePath)
++			}
++			rawPath := string(bytes.TrimPrefix(field, []byte("worktree ")))
++			if rawPath == "" {
++				return fmt.Errorf("malformed Git worktree inventory for %s: empty worktree path", worktreePath)
++			}
++			inBlock = true
++			if canonicalize(rawPath) == want {
++				found = true
++			}
++			continue
++		}
++		if !inBlock {
++			return fmt.Errorf("malformed Git worktree inventory for %s: field before worktree path", worktreePath)
++		}
++	}
++	if !found {
++		return fmt.Errorf("%s is not registered in the Git worktree inventory", worktreePath)
++	}
++	return nil
++}
++
++func readInjectGitPathFile(path string) (string, error) {
++	info, err := os.Lstat(path)
++	if err != nil {
++		return "", err
++	}
++	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
++		return "", fmt.Errorf("%s is not a regular file", path)
++	}
++	if info.Size() > injectGitPathReadCap {
++		return "", fmt.Errorf("%s exceeds %d bytes", path, injectGitPathReadCap)
++	}
++	data, err := os.ReadFile(path)
++	if err != nil {
++		return "", err
++	}
++	// Git control files accept CRLF; command stdout may instead contain a
++	// pathname ending in CR followed by its single LF terminator.
++	if bytes.HasSuffix(data, []byte("\r\n")) {
++		data = data[:len(data)-2]
++	}
++	return injectGitPath(data)
++}
++
++func injectGitPath(data []byte) (string, error) {
++	if len(data) == 0 {
++		return "", errors.New("empty Git path")
++	}
++	if bytes.IndexByte(data, 0) >= 0 {
++		return "", errors.New("Git path contains NUL")
++	}
++	if data[len(data)-1] == '\n' {
++		data = data[:len(data)-1]
++	}
++	if len(data) == 0 {
++		return "", errors.New("empty Git path")
++	}
++	return string(data), nil
++}
++
++func rejectInjectPathSymlinks(root, target string) error {
++	rootInfo, err := os.Lstat(root)
++	if err != nil {
++		return err
++	}
++	if rootInfo.Mode()&os.ModeSymlink != 0 || !rootInfo.IsDir() {
++		return fmt.Errorf("worktrees path %s is not a directory", root)
++	}
++
++	rel, err := filepath.Rel(root, target)
++	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
++		return fmt.Errorf("worktree path %s escapes %s", target, root)
++	}
++	current := root
++	for _, part := range strings.Split(rel, string(filepath.Separator)) {
++		current = filepath.Join(current, part)
++		info, err := os.Lstat(current)
++		if err != nil {
++			return err
++		}
++		if info.Mode()&os.ModeSymlink != 0 {
++			return fmt.Errorf("worktree path %s contains symlink component %s", target, current)
++		}
++	}
++	return nil
++}
++
++func gitPathOutput(path string, args ...string) (string, error) {
++	cmd := exec.Command("git", append([]string{"-C", path}, args...)...)
++	var stderr bytes.Buffer
++	cmd.Stderr = &stderr
++	out, err := cmd.Output()
++	if err != nil {
++		message := strings.TrimSpace(stderr.String())
++		if message == "" {
++			return "", err
+ 		}
++		return "", fmt.Errorf("%w: %s", err, message)
+ 	}
+-	return count, nil
++	return injectGitPath(out)
+ }
+ 
+ // ResolveInjectInto returns the inject target from the flag or config.
+diff --git a/internal/inject_test.go b/internal/inject_test.go
+new file mode 100644
+index 0000000..1bdd2b5
+--- /dev/null
++++ b/internal/inject_test.go
+@@ -0,0 +1,63 @@
++package internal
++
++import (
++	"os"
++	"path/filepath"
++	"testing"
++)
++
++func TestInjectGitPathPreservesMeaningfulWhitespace(t *testing.T) {
++	tests := []struct {
++		name string
++		data string
++		want string
++	}{
++		{name: "trailing spaces", data: "/tmp/review/entry  \n", want: "/tmp/review/entry  "},
++		{name: "tab", data: "/tmp/review/\tentry\n", want: "/tmp/review/\tentry"},
++		{name: "internal newline", data: "/tmp/review/line\nentry\n", want: "/tmp/review/line\nentry"},
++		{name: "trailing carriage return", data: "/tmp/review/entry \r\n", want: "/tmp/review/entry \r"},
++	}
++	for _, tc := range tests {
++		t.Run(tc.name, func(t *testing.T) {
++			got, err := injectGitPath([]byte(tc.data))
++			if err != nil {
++				t.Fatal(err)
++			}
++			if got != tc.want {
++				t.Fatalf("path = %q, want %q", got, tc.want)
++			}
++		})
++	}
++}
++
++func TestInjectGitPathFileAcceptsCRLF(t *testing.T) {
++	path := filepath.Join(t.TempDir(), "gitdir")
++	if err := os.WriteFile(path, []byte("/tmp/review/entry \r\n"), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	got, err := readInjectGitPathFile(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got != "/tmp/review/entry " {
++		t.Fatalf("Git control file path = %q, want CRLF terminator removed", got)
++	}
++}
++
++func TestGitPathOutputSeparatesStderr(t *testing.T) {
++	binDir := t.TempDir()
++	gitPath := filepath.Join(binDir, "git")
++	script := "#!/bin/sh\nprintf '/tmp/review/entry  \\n'\nprintf 'warning: diagnostic only\\n' >&2\n"
++	if err := os.WriteFile(gitPath, []byte(script), 0755); err != nil {
++		t.Fatal(err)
++	}
++	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
++
++	got, err := gitPathOutput("/ignored", "rev-parse", "--show-toplevel")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got != "/tmp/review/entry  " {
++		t.Fatalf("path = %q, want trailing spaces preserved and stderr excluded", got)
++	}
++}

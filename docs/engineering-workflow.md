@@ -64,11 +64,11 @@ Current shipped checkout slices:
 The opt-in global workspace registry is also shipped for stable cross-repository
 discovery, health checks, and moved-target repair.
 
-Next roadmap work: **ordinary sync safety (issue #4)** — reproduce both reported
-defects on released v1.2.17 and resolve any remaining rollback/cutoff defect
-before injection correctness (#1), scoped status projection (#3), and role-aware
-templates (#2). Keep the existing tpatch features separate rather than combining
-the queue into one implementation.
+Next roadmap work: **slash-containing worktree injection (issue #1)**. Ordinary
+sync safety (#4) is fully released and verified in `v1.2.18-rc.2`; preserve
+that sync/reparent/session behavior while correcting external linked-worktree
+discovery and explicitly refusing checkout injection. Scoped status projection
+(#3) and role-aware templates (#2) remain later, separate tpatch boundaries.
 See [`roadmap.md`](roadmap.md).
 
 ## Tpatch workflow

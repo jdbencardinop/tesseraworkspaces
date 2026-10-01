@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Slash-safe external context injection** — feature-wide `tws inject` now
+  resolves complete logical worktree names at arbitrary depth, verifies each
+  destination against its exact Git admin backpointer and byte-safe registered
+  worktree inventory, and never writes into intermediate directories or copied,
+  stale, or mismatched `.git` markers. Decoupled Git branch names and meaningful
+  whitespace in worktree paths are preserved. Checkout mode continues to
+  refuse both feature-wide and branch-specific injection explicitly.
 - **Ordinary-sync cutoff integrity** — newly created external and checkout
   branches record the exact full creation commit, and every selected sync row
   freezes a repository-bound parent/child preimage plus an effective replay

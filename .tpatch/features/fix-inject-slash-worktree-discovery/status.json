@@ -2,12 +2,17 @@
   "id": "fix-inject-slash-worktree-discovery",
   "slug": "fix-inject-slash-worktree-discovery",
   "title": "Fix GitHub issue #1: feature-wide 'tws inject \u003cfeature\u003e' must discover every materialized worktree when a logical entry name contains '/' instead of treating the first path segment as the worktree root. Resolve worktree targets from stack.yaml and the mode-aware layout (or verified recursive .git markers), never inject into intermediate directories, preserve single-segment behavior, and add external/checkout coverage for slash-containing logical names and decoupled Git branches.",
-  "state": "requested",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-09-12T15:42:23Z",
-  "updated_at": "2026-09-12T15:42:23Z",
-  "last_command": "add",
-  "apply": {},
+  "updated_at": "2026-10-01T18:31:23Z",
+  "last_command": "record",
+  "notes": "landed at 2026-10-01T18:31:23Z",
+  "apply": {
+    "completed_at": "2026-10-01T18:21:52Z",
+    "base_commit": "03cdd3d3a3be4defe9017372f5f7fcbcbf2176b1",
+    "has_patch": true
+  },
   "reconcile": {},
   "depends_on": [
     {

@@ -122,8 +122,8 @@ func TestSyncPlanDocs_FlagWorkflowSurfacesCarryAllFiveLiterals(t *testing.T) {
 // own rule: neither file may carry any of the five flag literals.
 //
 // Released safety features stay in the shipped list. Post-release
-// prioritization makes ordinary sync safety the current target; the negative
-// flag-literal contract is unchanged.
+// prioritization advances to injection correctness after ordinary sync safety
+// ships; the negative flag-literal contract is unchanged.
 func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t *testing.T) {
 	literals := []string{"--plan", "--max-replay-per-entry", "--max-replay-total", "--approve-plan", "plan-guard:"}
 
@@ -155,8 +155,11 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 		}
 
 		targetTail := ci[targetIdx : targetIdx+min(80, len(ci)-targetIdx)]
-		if !strings.Contains(targetTail, "ordinary sync safety (issue #4)") {
-			t.Fatalf(`docs/roadmap.md's "Current target:" sentence must name ordinary sync safety (#4), got: %q`, targetTail)
+		if !strings.Contains(targetTail, "slash-containing worktree injection (issue #1)") {
+			t.Fatalf(`docs/roadmap.md's "Current target:" sentence must name injection correctness (#1), got: %q`, targetTail)
+		}
+		if !strings.Contains(normalizeProse(content), "ordinary sync safety (#4) is fully released and verified in v1.2.18-rc.2") {
+			t.Fatal("docs/roadmap.md must retain the verified ordinary-sync release milestone before advancing the target")
 		}
 		previous := backlogIdx
 		for _, issue := range []string{"[#4:", "[#1:", "[#3:", "[#2:"} {
@@ -214,8 +217,11 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 		}
 
 		nextTail := ci[nextFeatureIdx : nextFeatureIdx+min(80, len(ci)-nextFeatureIdx)]
-		if !strings.Contains(nextTail, "ordinary sync safety (issue #4)") {
-			t.Fatalf(`docs/engineering-workflow.md's "Next roadmap work:" sentence must name ordinary sync safety (#4), got: %q`, nextTail)
+		if !strings.Contains(nextTail, "slash-containing worktree injection (issue #1)") {
+			t.Fatalf(`docs/engineering-workflow.md's "Next roadmap work:" sentence must name injection correctness (#1), got: %q`, nextTail)
+		}
+		if !strings.Contains(normalizeProse(content), "ordinary sync safety (#4) is fully released and verified in v1.2.18-rc.2") {
+			t.Fatal("docs/engineering-workflow.md must retain the verified ordinary-sync release milestone before advancing the target")
 		}
 
 		assertNoFlagLiteral(t, "docs/engineering-workflow.md", content)

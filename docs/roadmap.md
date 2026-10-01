@@ -84,10 +84,12 @@ Shipped foundations:
   reconstructs only the matching recovery reservation. v1.2.16 only fails closed for same-feature sync after envelope
   birth; do not use an older tws while any reparent is active or recoverable.
 
-Current target: **ordinary sync safety (issue #4)** — reproduce both reported
-defects against released v1.2.17, then prioritize any remaining anchor-rollback
-or replay-cutoff defect. Safe reparent/restack is a separate command and does
-not establish that ordinary sync is fixed.
+Current target: **slash-containing worktree injection (issue #1)** — discover
+the actual external linked-worktree roots for complete logical names such as
+`review/pr-123`, never inject into intermediate directories, and explicitly
+refuse both checkout injection forms. Ordinary sync safety (#4) is fully
+released and verified in `v1.2.18-rc.2`; the release receipt records passing
+main/tag CI, exact binaries, and a clean published tree.
 
 The approved delivery order is **#4, #1, #3, #2**. Keep each existing tpatch
 feature as its own implementation boundary; the issue-to-feature mapping below
@@ -137,12 +139,10 @@ For decoupled names, `StackEntry.Name` identifies the tws worktree while `StackE
 | 3 | P1: scoped-status reliability | [#3: avoid building unrelated feature status](https://github.com/jdbencardinop/tesseraworkspaces/issues/3) | [`scoped-status-projection`](../.tpatch/features/scoped-status-projection/request.md) |
 | 4 | P2: workflow enhancement | [#2: role-aware templates](https://github.com/jdbencardinop/tesseraworkspaces/issues/2) | [`named-feature-templates`](../.tpatch/features/named-feature-templates/request.md), [`template-conflict-resolution`](../.tpatch/features/template-conflict-resolution/request.md) |
 
-The v1.2.17 baseline reproduction confirms incomplete anchor rollback in both
-workspace modes. A controlled stale-cutoff fixture also replays upstream history
-and fails, while the correct-cutoff control succeeds; the origin of the stale
-metadata remains under investigation. Start with
-[`sync-transactional-abort`](../.tpatch/features/sync-transactional-abort/analysis.md),
-then [`sync-cutoff-integrity`](../.tpatch/features/sync-cutoff-integrity/analysis.md).
+Issue #4's transactional abort and cutoff fixes are shipped and verified in
+`v1.2.18-rc.2`. The current implementation boundary is only
+[`fix-inject-slash-worktree-discovery`](../.tpatch/features/fix-inject-slash-worktree-discovery/request.md);
+do not combine it with scoped status or template work.
 
 Nonblocking reparent follow-up:
 [`fix-reparent-completion-context`](../.tpatch/features/fix-reparent-completion-context/request.md)

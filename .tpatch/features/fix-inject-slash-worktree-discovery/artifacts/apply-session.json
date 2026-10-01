@@ -1,0 +1,6 @@
+{
+  "slug": "fix-inject-slash-worktree-discovery",
+  "completed_at": "2026-10-01T18:21:52Z",
+  "base_commit": "03cdd3d3a3be4defe9017372f5f7fcbcbf2176b1",
+  "has_patch": true
+}

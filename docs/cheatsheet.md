@@ -362,12 +362,16 @@ tws close auth auth-models   # kill tmux session for a worktree
 ## Context injection
 
 ```sh
-# Files in inject/ are symlinked into every worktree
+# External mode: files in inject/ are symlinked into every linked worktree
 ls ../myapp.tws/auth/inject/       # CLAUDE.local.md, .claude/skills/, etc.
 
 # Re-sync after adding new files to inject/
-tws inject auth                    # all worktrees
-tws inject auth auth-models        # single worktree
+tws inject auth                    # all materialized logical entries
+tws inject auth review/pr-123      # one slash-containing logical entry
+tws inject auth --into .context    # preserve layout under a target directory
+
+# Checkout mode has no linked worktrees; both forms refuse explicitly.
+# Existing destination files are never overwritten.
 
 # Backfill templates into existing features
 tws template sync auth --template ~/templates/base

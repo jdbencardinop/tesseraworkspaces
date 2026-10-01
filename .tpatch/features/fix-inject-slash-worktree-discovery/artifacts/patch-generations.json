@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "feature": "fix-inject-slash-worktree-discovery",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_d374731f93ed",
+      "kind": "record",
+      "patch_sha256": "921e63c04fd8b9f83646b7404cf627ee8b9c756a6814ce4da18194f446ac6501",
+      "git_patch_id": "1a59162250d3b769a5cb188d8e0d560b8ae36d22",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "22da83d7ef1082bc70d6094023d231c3b51472362169f019e2a03ad0e3d9e59e",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "",
+      "base_commit": "03cdd3d3a3be4defe9017372f5f7fcbcbf2176b1",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "CHANGELOG.md",
+        "README.md",
+        "assets/skills/claude/tesseraworkspaces/SKILL.md",
+        "assets/skills/copilot/tws.prompt.md",
+        "docs/cheatsheet.md",
+        "docs/engineering-workflow.md",
+        "docs/roadmap.md",
+        "internal/cli/checkout_lifecycle_test.go",
+        "internal/cli/external_feature_dir_test.go",
+        "internal/cli/importcmd.go",
+        "internal/cli/inject.go",
+        "internal/cli/inject_test.go",
+        "internal/cli/sync_plan_docs_test.go",
+        "internal/inject.go",
+        "internal/inject_test.go"
+      ],
+      "dependencies": [
+        {
+          "slug": "branch-name-decoupling",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "worktree-context-injection",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        }
+      ],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}

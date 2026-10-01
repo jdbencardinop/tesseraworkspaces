@@ -1034,14 +1034,19 @@ func TestInject_PropagatesAmbiguity(t *testing.T) {
 		}
 	}
 
-	root := buildTestRoot()
-	root.SetArgs([]string{"inject", "ambig-feat"})
-	err := root.Execute()
-	if err == nil {
-		t.Fatal("expected ambiguity error from inject")
-	}
-	if !strings.Contains(err.Error(), "ambiguous") {
-		t.Errorf("expected ambiguous error, got: %v", err)
+	for _, args := range [][]string{
+		{"inject", "ambig-feat"},
+		{"inject", "ambig-feat", "review/pr-123"},
+	} {
+		root := buildTestRoot()
+		root.SetArgs(args)
+		err := root.Execute()
+		if err == nil {
+			t.Fatalf("expected ambiguity error from inject %v", args)
+		}
+		if !strings.Contains(err.Error(), "ambiguous") {
+			t.Errorf("expected ambiguous error from inject %v, got: %v", args, err)
+		}
 	}
 }
 

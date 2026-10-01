@@ -1,0 +1,15 @@
+ .../status.json                                    |  13 +-
+ CHANGELOG.md                                       |   7 +
+ README.md                                          |  14 +-
+ assets/skills/claude/tesseraworkspaces/SKILL.md    |  17 +-
+ assets/skills/copilot/tws.prompt.md                |  12 +-
+ docs/cheatsheet.md                                 |  10 +-
+ docs/engineering-workflow.md                       |  10 +-
+ docs/roadmap.md                                    |  20 +-
+ internal/cli/checkout_lifecycle_test.go            |  21 +-
+ internal/cli/external_feature_dir_test.go          |  10 +
+ internal/cli/importcmd.go                          |   5 +-
+ internal/cli/inject.go                             |  23 +-
+ internal/cli/sync_plan_docs_test.go                |  18 +-
+ internal/inject.go                                 | 478 ++++++++++++++++++++-
+ 14 files changed, 593 insertions(+), 65 deletions(-)

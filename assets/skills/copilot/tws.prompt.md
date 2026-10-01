@@ -32,7 +32,7 @@ You are working in a project that uses `tws` for feature-scoped workspaces with 
 - `tws decide <feature> "<summary>" [--type T] [--to B]` — Record a decision
 - `tws decisions show [feature] [--mine] [--all]` — View decisions (auto-detects feature)
 - `tws decisions ack [feature]` — Mark all decisions as read
-- `tws inject <feature> [branch] [--into <path>]` — Sync inject/ files into worktrees
+- `tws inject <feature> [branch] [--into <path>]` — Sync inject/ files into external linked worktrees
 - `tws hooks install/remove [feature]` — Manage agent hooks
 - `tws registry add/list/show/check/...` — Manage opt-in global workspace discovery
 - `tws space add/list/show/remove` — Link and discover tool-owned sibling spaces
@@ -79,8 +79,14 @@ v1.2.16 only fails closed for same-feature sync after the compatibility envelope
 
 ## Context Injection
 
-Files in `inject/` are symlinked into every worktree. Edit once, all worktrees see changes.
-Injected files appear as untracked in git — add them to `.gitignore` or use an ignored subfolder.
+In external mode, files in `inject/` are symlinked into every materialized
+linked worktree. Complete logical names such as `review/pr-123` are supported;
+intermediate directories are never injection targets, and existing files are
+preserved. Injected files appear as untracked in git — add them to `.gitignore`
+or use an ignored subfolder.
+
+Checkout mode has no linked worktrees, so both feature-wide and
+branch-specific `tws inject` refuse explicitly.
 
 ## Decisions
 

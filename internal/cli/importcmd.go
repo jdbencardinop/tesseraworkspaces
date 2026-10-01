@@ -334,7 +334,10 @@ func recreateExternal(export internal.WorkspaceExport, injectSrc string) error {
 	}
 
 	target := internal.ResolveInjectInto("")
-	count, _ := internal.InjectFilesForFeature(featurePath, target)
+	count, err := internal.InjectFilesForFeature(featurePath, target)
+	if err != nil {
+		return fmt.Errorf("injecting restored files: %w", err)
+	}
 	if count > 0 {
 		fmt.Printf("  Injected files into %d worktree(s)\n", count)
 	}
