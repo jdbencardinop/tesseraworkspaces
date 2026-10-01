@@ -1,0 +1,23 @@
+{
+  "id": "fix-cutoff-test-git-identity",
+  "slug": "fix-cutoff-test-git-identity",
+  "title": "Make the checkout creation-ref race regression fixture-local and independent of host Git identity so Ubuntu CI cannot fail with Author identity unknown.",
+  "state": "applied",
+  "compatibility": "unknown",
+  "requested_at": "2026-10-01T05:30:45Z",
+  "updated_at": "2026-10-01T06:14:16Z",
+  "last_command": "record",
+  "notes": "landed at 2026-10-01T06:14:16Z",
+  "apply": {
+    "completed_at": "2026-10-01T06:13:10Z",
+    "base_commit": "1f6cd54e6cacf21e66f7e2f650185c8427e199b2",
+    "has_patch": true
+  },
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "sync-cutoff-integrity",
+      "kind": "hard"
+    }
+  ]
+}

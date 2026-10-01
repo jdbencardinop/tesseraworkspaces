@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "feature": "fix-cutoff-test-git-identity",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_a69be56751a9",
+      "kind": "record",
+      "patch_sha256": "16d080a593aceaf8d8f052e7be2ba4ead7cb8217007b8182e25c80c27b767d8f",
+      "git_patch_id": "88cd7ff82cd5d3f647e807d973b30336fbfc96e7",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "75272fadb020de65e78b93dba20c53bbb6445cee9772247c28106bdb410d4d62",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "",
+      "base_commit": "1f6cd54e6cacf21e66f7e2f650185c8427e199b2",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "internal/cli/checkout_lifecycle_test.go"
+      ],
+      "dependencies": [
+        {
+          "slug": "sync-cutoff-integrity",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "3070a6d4b0d07d189e47cd35248e7376d32104df6086541d7c1294dd01adc91e",
+          "parent_recipe_sha256": "31ae794e8bef3fe75ea4f2cc92a81f23c867ff77c28b61ab9b72f2b8d3856e8e"
+        }
+      ],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}

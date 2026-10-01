@@ -1,0 +1,2 @@
+ internal/cli/checkout_lifecycle_test.go | 42 ++++++++++++++++++++++++++++++++-
+ 1 file changed, 41 insertions(+), 1 deletion(-)
