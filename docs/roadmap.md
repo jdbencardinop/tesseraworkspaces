@@ -84,17 +84,20 @@ Shipped foundations:
   reconstructs only the matching recovery reservation. v1.2.16 only fails closed for same-feature sync after envelope
   birth; do not use an older tws while any reparent is active or recoverable.
 
-Current target: **slash-containing worktree injection (issue #1)** — discover
-the actual external linked-worktree roots for complete logical names such as
-`review/pr-123`, never inject into intermediate directories, and explicitly
-refuse both checkout injection forms. Ordinary sync safety (#4) is fully
-released and verified in `v1.2.18-rc.2`; the release receipt records passing
-main/tag CI, exact binaries, and a clean published tree.
+Current target: **scoped status projection (issue #3)** — build only the
+requested feature plus necessary workspace-level evidence instead of scanning
+unrelated features, and bound status subprocess probes while preserving the
+versioned output contract. Ordinary sync safety (#4) is fully released and
+verified in `v1.2.18-rc.2`. Slash-containing worktree injection (#1) is fully
+released and verified in `v1.2.18-rc.3`, including verified external worktree
+discovery and explicit checkout injection refusal. Both milestones have
+successful main/tag CI.
 
 The approved delivery order is **#4, #1, #3, #2**. Keep each existing tpatch
 feature as its own implementation boundary; the issue-to-feature mapping below
-is the queue, not permission to combine unrelated fixes. Lane B coordination
-is handled in its separate thread.
+is the queue, not permission to combine unrelated fixes. Lane B runtime-boundary
+coordination is complete; its remaining provider PRDs do not block this
+tws-local status feature.
 
 Follow-ups explicitly owned by later features rather than by `tws status`:
 
@@ -134,15 +137,16 @@ For decoupled names, `StackEntry.Name` identifies the tws worktree while `StackE
 
 | Order | Priority | GitHub issue | Existing tpatch features |
 |---|---|---|---|
-| 1 | P0: reproduce, then resolve remaining safety defects | [#4: ordinary sync rollback and replay cutoff](https://github.com/jdbencardinop/tesseraworkspaces/issues/4) | [`sync-transactional-abort`](../.tpatch/features/sync-transactional-abort/request.md), [`sync-cutoff-integrity`](../.tpatch/features/sync-cutoff-integrity/request.md) |
-| 2 | P1: correctness | [#1: slash-containing worktree injection](https://github.com/jdbencardinop/tesseraworkspaces/issues/1) | [`fix-inject-slash-worktree-discovery`](../.tpatch/features/fix-inject-slash-worktree-discovery/request.md) |
-| 3 | P1: scoped-status reliability | [#3: avoid building unrelated feature status](https://github.com/jdbencardinop/tesseraworkspaces/issues/3) | [`scoped-status-projection`](../.tpatch/features/scoped-status-projection/request.md) |
+| 1 | Shipped: v1.2.18-rc.2 | [#4: ordinary sync rollback and replay cutoff](https://github.com/jdbencardinop/tesseraworkspaces/issues/4) | [`sync-transactional-abort`](../.tpatch/features/sync-transactional-abort/request.md), [`sync-cutoff-integrity`](../.tpatch/features/sync-cutoff-integrity/request.md) |
+| 2 | Shipped: v1.2.18-rc.3 | [#1: slash-containing worktree injection](https://github.com/jdbencardinop/tesseraworkspaces/issues/1) | [`fix-inject-slash-worktree-discovery`](../.tpatch/features/fix-inject-slash-worktree-discovery/request.md) |
+| 3 | Current: scoped-status reliability | [#3: avoid building unrelated feature status](https://github.com/jdbencardinop/tesseraworkspaces/issues/3) | [`scoped-status-projection`](../.tpatch/features/scoped-status-projection/request.md) |
 | 4 | P2: workflow enhancement | [#2: role-aware templates](https://github.com/jdbencardinop/tesseraworkspaces/issues/2) | [`named-feature-templates`](../.tpatch/features/named-feature-templates/request.md), [`template-conflict-resolution`](../.tpatch/features/template-conflict-resolution/request.md) |
 
-Issue #4's transactional abort and cutoff fixes are shipped and verified in
-`v1.2.18-rc.2`. The current implementation boundary is only
-[`fix-inject-slash-worktree-discovery`](../.tpatch/features/fix-inject-slash-worktree-discovery/request.md);
-do not combine it with scoped status or template work.
+Issues #4 and #1 are closed after their verified releases. The current
+implementation boundary is only
+[`scoped-status-projection`](../.tpatch/features/scoped-status-projection/request.md);
+do not combine it with provider integration, template work, or changes to
+mutation safety.
 
 Nonblocking reparent follow-up:
 [`fix-reparent-completion-context`](../.tpatch/features/fix-reparent-completion-context/request.md)
