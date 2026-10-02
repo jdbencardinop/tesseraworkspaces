@@ -5,7 +5,8 @@
   "candidate": "v4",
   "product_file_count": 20,
   "product_manifest_sha256": "85e0c5750f95e9aee220a337072c364a01f13a579da24fd93357f717ae9f47f3",
-  "recipe_sha256": "432006c54ec63eecd978057f8c13d803d662419fc5287e7d6d3f32f5e0687b0a",
+  "recipe_sha256": "8530e4c8da4bb4cd79cfaab255b891173f48a7bcf7ee91b01d4ad7734af03cdd",
+  "recipe_normalization": "The current verifier rejects the documented version wrapper accepted by execute. Replaced only that wrapper with the current feature field, verified parsing, and replayed the normalized recipe twice against fresh exact bases. Product bytes and canonical patch are unchanged; re-attestation is metadata-only, without amending the implementation commit.",
   "review": {
     "model": "gpt-5.6-sol",
     "verdicts": {

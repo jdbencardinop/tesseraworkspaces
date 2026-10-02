@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "feature": "scoped-status-projection",
   "operations": [
     {
       "type": "replace-in-file",
