@@ -88,7 +88,17 @@ exit: 0
       "sync": null
     }
   ],
-  "issues": [],
+  "issues": [
+    {
+      "code": "git-probe-unavailable",
+      "feature": null,
+      "guidance": "verify the repository and retry status",
+      "message": "dirty state could not be determined for \u003cREPO\u003e: git failed: exit status 128",
+      "name": null,
+      "scope": "workspace",
+      "severity": "warning"
+    }
+  ],
   "schema_version": 1,
   "summary": {
     "active": 0,
@@ -96,28 +106,30 @@ exit: 0
     "errors": 0,
     "features": 1,
     "idle": 2,
-    "issues": 0,
+    "issues": 1,
     "needs_attention": 0,
     "runtime_absent": 2,
     "runtime_present": 0,
     "runtime_stale": 0,
     "runtime_unknown": 0,
-    "warnings": 0
+    "warnings": 1
   },
   "workspace": {
     "active_git_op": null,
     "agent_state": "unknown",
     "attention": {
-      "codes": [],
-      "issue_count": 0,
-      "status": "idle"
+      "codes": [
+        "git-probe-unavailable"
+      ],
+      "issue_count": 1,
+      "status": "needs_attention"
     },
     "branch": "main",
     "checkout_session": null,
     "degraded": false,
     "degraded_reason": null,
     "detached": false,
-    "dirty": false,
+    "dirty": null,
     "metadata_root": "\u003cMETA\u003e",
     "mode": "checkout",
     "repo_root": "\u003cREPO\u003e",

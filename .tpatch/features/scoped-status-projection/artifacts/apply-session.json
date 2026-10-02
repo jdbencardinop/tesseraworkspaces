@@ -1,0 +1,8 @@
+{
+  "slug": "scoped-status-projection",
+  "completed_at": "2026-10-02T07:24:05Z",
+  "base_commit": "8d0e4bc12b00326e4f5aa419939de7b8f64001ef",
+  "has_patch": true,
+  "validation_status": "passed",
+  "validation_notes": "Exact v4 product manifest approved by three gpt-5.6-sol reviewers, replayed twice byte-identically, and passed full gates on replay"
+}

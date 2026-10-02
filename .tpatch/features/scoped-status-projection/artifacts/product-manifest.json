@@ -1,0 +1,22 @@
+{
+  "CHANGELOG.md": "78a23193ccb83f20093c55d1baefbd58785392875ca6ae3f2f747c00de9f3397",
+  "README.md": "0885f05f456d1bf1a221020ed0ab16141edc24ba0ad3af44c6aea15d4c0527af",
+  "assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md": "1a56e97063a3c4222d7e1b099ea7887d4e0148d98624700655221e43bb02a876",
+  "assets/skills/claude/tesseraworkspaces/SKILL.md": "e4a56bc8938d5689cabcf11482a6b3da213fd5b4d6e62c19ad902b38597eb4ab",
+  "assets/skills/copilot/tws.prompt.md": "731ac891d54b9f4a633e51e6ccbf7b96ac145b3a65f71007393b368aa401ab44",
+  "docs/cheatsheet.md": "967596db9918ff2bf508bb5c0ddd3c4ac0d23ccd94b21ee3f14bedef1c48d534",
+  "internal/agent_status.go": "0e878e1bdfb7b21316bf619597bd38ef0594bbe727920bfc48c7ce9419f24002",
+  "internal/agent_status_test.go": "9bd28287bad5b57393295428003cc85adc46b3e54cbc6980a4ab3d6b936018f0",
+  "internal/checkout_health.go": "04d3bddd740ed0da4d77a2fa7d9b5d4177485123b46fb9a9e765a8de47571565",
+  "internal/cli/reparent_exclusion_test.go": "fc574ed5e7aa6a1c087d9544ff3f2bd215b8d00d7f7dd0332dea5ac1c0c3cd88",
+  "internal/cli/status.go": "bbfb5a4632c74d985651466195e3b4a0daf1a326c2fbfb97185955320dc84eaa",
+  "internal/cli/status_test.go": "e739a2037efc03fda5534a3862204533e81b88e0d55b62f6ee815dcbc0bffdf8",
+  "internal/cli/testdata/existing_commands/checkout-bare/status.json": "c7f29d44079eb899281e10e7d04ed37488bbe52bab7f6c6d8302f8dfec7030a8",
+  "internal/cli/testdata/existing_commands/checkout-bare/status.txt": "eb1d114af2904ac734af3264af1f6c05dc08d0809d74faac9a3095ae1c3fb606",
+  "internal/cli/testdata/existing_commands/external-bare/status.json": "4abdd4d3918d904cb84249495a906f593f6b943e8a7ccee4c597cc7efacff815",
+  "internal/cli/testdata/existing_commands/external-bare/status.txt": "0d9852ef33181729e565013aa8fc1711512db09a82f5e24eb7e406777bfc92a5",
+  "internal/status_probe.go": "0faf27134e18176f8f7cd96cfdb3870aea1185565008a899bc85ccd83db836fb",
+  "internal/status_probe_test.go": "1e07342841302b64d354bf8361f227b1ea096865237ea7eb605b5bf91644b5f3",
+  "internal/status_process_other.go": "b757ca1b2ad61dc07cbe7623dc70f7e3565f375874a3cfc96f27a7cdc8166399",
+  "internal/status_process_unix.go": "faa37a07d56605d90f8486cdea45cff951f79e26c7c6fea3daf23bd693cddc6a"
+}

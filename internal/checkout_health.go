@@ -829,10 +829,6 @@ func buildOneFeatureEntry(feature string, se StackEntry, edge StackEdge, current
 	return e
 }
 
-func gitRefExists(repo, ref string) bool {
-	return exec.Command("git", "-C", repo, "rev-parse", "--verify", "--quiet", ref).Run() == nil
-}
-
 // ---------- Context Links ----------
 
 func buildContextLinks(ws Workspace) []CheckoutContextLinkReport {

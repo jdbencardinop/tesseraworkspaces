@@ -37,7 +37,7 @@ You are working in a project that uses `tws` for feature-scoped workspaces with 
 - `tws registry add/list/show/check/...` — Manage opt-in global workspace discovery
 - `tws space add/list/show/remove` — Link and discover tool-owned sibling spaces
 - `tws doctor [feature]` — Run health checks, including stack ancestry per configured parent-child edge
-- `tws status [feature] [--json]` — Agent work status per branch (always workspace-wide unless filtered)
+- `tws status [feature] [--json]` — Global status without an argument; selected-feature projection with a feature
 - `tws rename feature/branch` — Rename feature or branch
 - `tws config show/set/get` — Manage configuration
 - `tws close <feature> <branch>` — Close a session: refuses while a direct record is live, then kills tmux
@@ -198,7 +198,9 @@ Use the `resolved_path` field of the JSON output. `status: missing` and `scope_s
 
 ## Agent Work Status
 
-`tws status [feature] [--json]` projects what tws knows about each logical branch. With no argument it always covers every feature in the resolved workspace, from any working directory.
+`tws status [feature] [--json]` projects what tws knows about each logical branch. With no argument it builds every feature in the resolved workspace, from any working directory. With a feature argument it builds only that feature plus genuine workspace evidence, including the shared checkout session even when it belongs to another feature; unrelated feature stacks, worktrees, and external session records are not read.
+
+Git/tmux subprocesses are read-only, capped at five seconds each, and share a thirty-second budget beginning with workspace/config resolution. Failed or timed-out facts are `null`/`unknown` with issues rather than clean or absent. Ordinary filesystem reads cannot be interrupted by that subprocess budget.
 
 Two axes are never collapsed: `runtime_presence` (`present|absent|stale|unknown`) answers "is a tws-owned runtime alive?", and `agent_state` (`working|ready|blocked|done|unknown`) answers "what is the agent doing?". **`agent_state` is always `unknown` at this version; use `needs_attention`.** **`attention.status` inherits upward: a workspace or feature can be `needs_attention` with `issue_count: 0` because a child is — read `report.issues[]` for the detail.** **A `present` from tws means a process with that PID exists, not that that exact process exists.**
 

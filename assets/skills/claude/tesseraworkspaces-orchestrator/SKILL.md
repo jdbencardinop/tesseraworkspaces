@@ -260,7 +260,12 @@ tws export <feature> --to-repo    # save to repo for sharing
    read `report.issues[]` for the detail.** **A `present` from tws means a
    process with that PID exists, not that that exact process exists.** The
    command exits 0 whenever a report was produced, so a non-zero exit means the
-   workspace itself could not be read.
+   workspace itself could not be read. Use `tws status <feature> --json` when
+   coordinating one feature: it builds only that feature plus workspace
+   evidence (including the shared checkout session), while the no-argument form
+   remains global. Git/tmux subprocesses are capped at 5 seconds each and share
+   a 30-second budget; failed facts are `null`/`unknown` with issues. Filesystem
+   reads are not interruptible by that subprocess budget.
 1. **Start**: Run `tws list` and `tws stack <feature>` to understand current state
 2. **Check decisions**: Run `tws decisions show` for any updates from worktree agents
 3. **Plan**: Based on the stack and decisions, decide what each branch should work on

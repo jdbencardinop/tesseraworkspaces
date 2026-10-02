@@ -1,0 +1,48 @@
+{
+  "feature": "scoped-status-projection",
+  "base_commit": "8d0e4bc12b00326e4f5aa419939de7b8f64001ef",
+  "product_baseline": "v1.2.18-rc.3",
+  "candidate": "v4",
+  "product_file_count": 20,
+  "product_manifest_sha256": "85e0c5750f95e9aee220a337072c364a01f13a579da24fd93357f717ae9f47f3",
+  "recipe_sha256": "432006c54ec63eecd978057f8c13d803d662419fc5287e7d6d3f32f5e0687b0a",
+  "review": {
+    "model": "gpt-5.6-sol",
+    "verdicts": {
+      "process_lifetime_and_errors": "approved",
+      "scope_and_compatibility": "approved",
+      "cli_and_documentation": "approved"
+    },
+    "verified_manifest_before_and_after_each_review": true,
+    "resolved_findings": [
+      "Do not interpret partial no-server output as a completed observation.",
+      "Drain and terminate owned probe children even when the parent exits nonzero.",
+      "Keep status deadlines out of the legacy reparent tmux preflight.",
+      "Treat inaccessible tmux sockets as unavailable, not absent.",
+      "Skip unused worktree inventory for scoped checkout reports.",
+      "Reject joined cancellation, deadline, and drain failures before classifying exit code one as a missing ref."
+    ]
+  },
+  "recipe_replay": {
+    "fresh_detached_worktrees": 2,
+    "base_commit": "8d0e4bc12b00326e4f5aa419939de7b8f64001ef",
+    "exact_product_files_in_each": 20,
+    "verdict": "passed"
+  },
+  "replayed_candidate_gates": {
+    "format": "passed",
+    "focused_status_and_reparent_regressions": "passed",
+    "go test ./... -count=1 -timeout=30m": "passed",
+    "full_test_duration_seconds": 834.53,
+    "go vet ./...": "passed",
+    "golangci-lint run ./...": "passed",
+    "make build": "passed",
+    "git diff --check": "passed",
+    "tpatch feature deps --validate-all": "passed",
+    "product_manifest_unchanged": true
+  },
+  "runner_limit_note": "The first candidate's full CLI suite exceeded Go's default 10-minute package limit; the active test passed alone. Full runs use a 30-minute test-runner limit, not a change to the product's 5-second per-process and 30-second invocation budgets.",
+  "platform_note": "No Windows support is introduced. The unchanged baseline Windows build fails because the registry/spaces flock helpers are Unix-only.",
+  "global_followup": "The existing no-argument report remains global. Controlled external fixture counts were 7/9/9 scoped Git calls from repo/workspace/feature versus 10 for the global repo view, with zero unrelated billing probes in scoped runs. These are fixture counts, not a large-repository latency promise.",
+  "publication": "not authorized by this validation receipt"
+}

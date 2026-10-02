@@ -292,6 +292,22 @@ tws init --agent claude             # Claude only
 tws init --register --register-alias myapp   # also enroll in the global registry
 ```
 
+## Agent work status
+
+`tws status --json` remains the global view and builds every feature in the
+resolved workspace. `tws status <feature> --json` is a true scoped projection:
+it reads and probes only the requested feature plus workspace-level evidence.
+That workspace evidence includes the single shared checkout session even when
+it belongs to another feature; unrelated external session records are not
+included.
+
+Status Git/tmux commands are read-only, limited to five seconds each, and share
+a thirty-second subprocess budget beginning with workspace/config resolution.
+Failed or timed-out facts are `null`/`unknown` with issues such as
+`git-probe-unavailable` or `status-probe-exhausted`, never fabricated as clean,
+missing, or absent. The budget cannot interrupt an operating-system filesystem
+read. No timeout flags are added.
+
 ## All Commands
 
 | Command | Description |

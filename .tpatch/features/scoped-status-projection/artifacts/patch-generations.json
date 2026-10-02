@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "feature": "scoped-status-projection",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_7a42b4f2f8b4",
+      "kind": "record",
+      "patch_sha256": "325e3518a4aafde8106692218f49f0d3266a574be21f1cc4ffe2cedb3771192e",
+      "git_patch_id": "8e440b76c51c951a5d2f68869b356c97f86f8b60",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "432006c54ec63eecd978057f8c13d803d662419fc5287e7d6d3f32f5e0687b0a",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "",
+      "base_commit": "8d0e4bc12b00326e4f5aa419939de7b8f64001ef",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "CHANGELOG.md",
+        "README.md",
+        "assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md",
+        "assets/skills/claude/tesseraworkspaces/SKILL.md",
+        "assets/skills/copilot/tws.prompt.md",
+        "docs/cheatsheet.md",
+        "internal/agent_status.go",
+        "internal/agent_status_test.go",
+        "internal/checkout_health.go",
+        "internal/cli/reparent_exclusion_test.go",
+        "internal/cli/status.go",
+        "internal/cli/status_test.go",
+        "internal/cli/testdata/existing_commands/checkout-bare/status.json",
+        "internal/cli/testdata/existing_commands/checkout-bare/status.txt",
+        "internal/cli/testdata/existing_commands/external-bare/status.json",
+        "internal/cli/testdata/existing_commands/external-bare/status.txt",
+        "internal/status_probe.go",
+        "internal/status_probe_test.go",
+        "internal/status_process_other.go",
+        "internal/status_process_unix.go"
+      ],
+      "dependencies": [
+        {
+          "slug": "agent-work-status-dashboard",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "f716dce956c72183a941298e02943478812f9293872e3ab85220f67f8a2fca9a",
+          "parent_recipe_sha256": "3aec279ef97d08eaeb2b668e849039c46d2c091a44e350a67dbccab8a1708d1d"
+        }
+      ],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}

@@ -390,8 +390,16 @@ In checkout mode, `tws list` shows:
 
 `tws status [feature] [--json]` is the read-only projection of what tws knows
 about each logical branch. With no argument it always covers every feature in
-the resolved workspace, from any working directory; pass a feature name to
-filter. It works in both workspace modes.
+the resolved workspace, from any working directory. With a feature argument it
+builds only that feature plus genuine workspace evidence; it does not read or
+probe sibling feature stacks, worktrees, or external session records. The
+single shared checkout session remains visible at workspace scope even when it
+belongs to another feature. It works in both workspace modes.
+
+Git/tmux subprocesses are capped at five seconds each and share a thirty-second
+budget beginning with workspace/config resolution. A failed or timed-out fact
+is `null`/`unknown` with an issue, never clean or absent. Ordinary filesystem
+reads are synchronous and cannot be interrupted by that subprocess budget.
 
 Two axes are never collapsed:
 

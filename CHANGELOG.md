@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **Scoped and bounded `tws status <feature>`** — named status now selects the
+  requested feature before inventories and builds only that feature plus
+  genuine workspace evidence. It no longer reads or probes unrelated stacks,
+  worktrees, sync/reparent state, or external session records; the single
+  checkout session remains workspace-visible even when it belongs to another
+  feature. No-argument status remains global. Git/tmux subprocesses are
+  read-only, capped at five seconds each, and share one thirty-second budget
+  beginning with workspace/config resolution. Failed or timed-out Git facts
+  remain `null`/`unknown` and emit scoped diagnostics instead of becoming
+  clean, missing, or absent; partial tmux session evidence is retained. The
+  budget stops owned subprocess groups and inherited pipes, but does not claim
+  to interrupt ordinary filesystem reads. Schema version 1, keys, types, and
+  healthy global output remain compatible; no timeout flags were added.
 - **Slash-safe external context injection** — feature-wide `tws inject` now
   resolves complete logical worktree names at arbitrary depth, verifies each
   destination against its exact Git admin backpointer and byte-safe registered

@@ -1,0 +1,3024 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 49d792c..064fc91 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,6 +2,19 @@
+ 
+ ## Unreleased
+ 
++- **Scoped and bounded `tws status <feature>`** — named status now selects the
++  requested feature before inventories and builds only that feature plus
++  genuine workspace evidence. It no longer reads or probes unrelated stacks,
++  worktrees, sync/reparent state, or external session records; the single
++  checkout session remains workspace-visible even when it belongs to another
++  feature. No-argument status remains global. Git/tmux subprocesses are
++  read-only, capped at five seconds each, and share one thirty-second budget
++  beginning with workspace/config resolution. Failed or timed-out Git facts
++  remain `null`/`unknown` and emit scoped diagnostics instead of becoming
++  clean, missing, or absent; partial tmux session evidence is retained. The
++  budget stops owned subprocess groups and inherited pipes, but does not claim
++  to interrupt ordinary filesystem reads. Schema version 1, keys, types, and
++  healthy global output remain compatible; no timeout flags were added.
+ - **Slash-safe external context injection** — feature-wide `tws inject` now
+   resolves complete logical worktree names at arbitrary depth, verifies each
+   destination against its exact Git admin backpointer and byte-safe registered
+diff --git a/README.md b/README.md
+index dbee385..0aec64c 100644
+--- a/README.md
++++ b/README.md
+@@ -292,6 +292,22 @@ tws init --agent claude             # Claude only
+ tws init --register --register-alias myapp   # also enroll in the global registry
+ ```
+ 
++## Agent work status
++
++`tws status --json` remains the global view and builds every feature in the
++resolved workspace. `tws status <feature> --json` is a true scoped projection:
++it reads and probes only the requested feature plus workspace-level evidence.
++That workspace evidence includes the single shared checkout session even when
++it belongs to another feature; unrelated external session records are not
++included.
++
++Status Git/tmux commands are read-only, limited to five seconds each, and share
++a thirty-second subprocess budget beginning with workspace/config resolution.
++Failed or timed-out facts are `null`/`unknown` with issues such as
++`git-probe-unavailable` or `status-probe-exhausted`, never fabricated as clean,
++missing, or absent. The budget cannot interrupt an operating-system filesystem
++read. No timeout flags are added.
++
+ ## All Commands
+ 
+ | Command | Description |
+diff --git a/assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md b/assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md
+index 0de75ab..8ea76ee 100644
+--- a/assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md
++++ b/assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md
+@@ -260,7 +260,12 @@ tws export <feature> --to-repo    # save to repo for sharing
+    read `report.issues[]` for the detail.** **A `present` from tws means a
+    process with that PID exists, not that that exact process exists.** The
+    command exits 0 whenever a report was produced, so a non-zero exit means the
+-   workspace itself could not be read.
++   workspace itself could not be read. Use `tws status <feature> --json` when
++   coordinating one feature: it builds only that feature plus workspace
++   evidence (including the shared checkout session), while the no-argument form
++   remains global. Git/tmux subprocesses are capped at 5 seconds each and share
++   a 30-second budget; failed facts are `null`/`unknown` with issues. Filesystem
++   reads are not interruptible by that subprocess budget.
+ 1. **Start**: Run `tws list` and `tws stack <feature>` to understand current state
+ 2. **Check decisions**: Run `tws decisions show` for any updates from worktree agents
+ 3. **Plan**: Based on the stack and decisions, decide what each branch should work on
+diff --git a/assets/skills/claude/tesseraworkspaces/SKILL.md b/assets/skills/claude/tesseraworkspaces/SKILL.md
+index ee8c3df..e2142e3 100644
+--- a/assets/skills/claude/tesseraworkspaces/SKILL.md
++++ b/assets/skills/claude/tesseraworkspaces/SKILL.md
+@@ -390,8 +390,16 @@ In checkout mode, `tws list` shows:
+ 
+ `tws status [feature] [--json]` is the read-only projection of what tws knows
+ about each logical branch. With no argument it always covers every feature in
+-the resolved workspace, from any working directory; pass a feature name to
+-filter. It works in both workspace modes.
++the resolved workspace, from any working directory. With a feature argument it
++builds only that feature plus genuine workspace evidence; it does not read or
++probe sibling feature stacks, worktrees, or external session records. The
++single shared checkout session remains visible at workspace scope even when it
++belongs to another feature. It works in both workspace modes.
++
++Git/tmux subprocesses are capped at five seconds each and share a thirty-second
++budget beginning with workspace/config resolution. A failed or timed-out fact
++is `null`/`unknown` with an issue, never clean or absent. Ordinary filesystem
++reads are synchronous and cannot be interrupted by that subprocess budget.
+ 
+ Two axes are never collapsed:
+ 
+diff --git a/assets/skills/copilot/tws.prompt.md b/assets/skills/copilot/tws.prompt.md
+index 5a48743..ddf1bd1 100644
+--- a/assets/skills/copilot/tws.prompt.md
++++ b/assets/skills/copilot/tws.prompt.md
+@@ -37,7 +37,7 @@ You are working in a project that uses `tws` for feature-scoped workspaces with
+ - `tws registry add/list/show/check/...` — Manage opt-in global workspace discovery
+ - `tws space add/list/show/remove` — Link and discover tool-owned sibling spaces
+ - `tws doctor [feature]` — Run health checks, including stack ancestry per configured parent-child edge
+-- `tws status [feature] [--json]` — Agent work status per branch (always workspace-wide unless filtered)
++- `tws status [feature] [--json]` — Global status without an argument; selected-feature projection with a feature
+ - `tws rename feature/branch` — Rename feature or branch
+ - `tws config show/set/get` — Manage configuration
+ - `tws close <feature> <branch>` — Close a session: refuses while a direct record is live, then kills tmux
+@@ -198,7 +198,9 @@ Use the `resolved_path` field of the JSON output. `status: missing` and `scope_s
+ 
+ ## Agent Work Status
+ 
+-`tws status [feature] [--json]` projects what tws knows about each logical branch. With no argument it always covers every feature in the resolved workspace, from any working directory.
++`tws status [feature] [--json]` projects what tws knows about each logical branch. With no argument it builds every feature in the resolved workspace, from any working directory. With a feature argument it builds only that feature plus genuine workspace evidence, including the shared checkout session even when it belongs to another feature; unrelated feature stacks, worktrees, and external session records are not read.
++
++Git/tmux subprocesses are read-only, capped at five seconds each, and share a thirty-second budget beginning with workspace/config resolution. Failed or timed-out facts are `null`/`unknown` with issues rather than clean or absent. Ordinary filesystem reads cannot be interrupted by that subprocess budget.
+ 
+ Two axes are never collapsed: `runtime_presence` (`present|absent|stale|unknown`) answers "is a tws-owned runtime alive?", and `agent_state` (`working|ready|blocked|done|unknown`) answers "what is the agent doing?". **`agent_state` is always `unknown` at this version; use `needs_attention`.** **`attention.status` inherits upward: a workspace or feature can be `needs_attention` with `issue_count: 0` because a child is — read `report.issues[]` for the detail.** **A `present` from tws means a process with that PID exists, not that that exact process exists.**
+ 
+diff --git a/docs/cheatsheet.md b/docs/cheatsheet.md
+index f3515f4..0532d62 100644
+--- a/docs/cheatsheet.md
++++ b/docs/cheatsheet.md
+@@ -131,10 +131,18 @@ that tws does not probe.
+ 
+ ```sh
+ tws status                   # every feature, from any directory
+-tws status auth              # filter to one feature
++tws status auth              # build only auth + workspace-level evidence
+ tws status --json | jq '.issues[] | select(.severity=="warning")'
+ ```
+ 
++The named form does not read or probe sibling feature stacks, worktrees, or
++external session records. A shared checkout session remains workspace-visible
++even when it belongs to another feature. The no-argument form remains global.
++Git/tmux probes are read-only, capped at 5 seconds each, and share a 30-second
++subprocess budget beginning with workspace/config resolution. Failed facts are
++`null`/`unknown` with explicit issues; ordinary filesystem reads are not
++interruptible by that budget.
++
+ `needs_attention` is the authoritative field and inherits upward: a workspace or
+ feature can be `needs_attention` with `issue_count: 0` because a child is — read
+ `report.issues[]` for the detail. The human view prints the workspace verdict in
+diff --git a/internal/agent_status.go b/internal/agent_status.go
+index cefb274..8b01196 100644
+--- a/internal/agent_status.go
++++ b/internal/agent_status.go
+@@ -1,6 +1,8 @@
+ package internal
+ 
+ import (
++	"bytes"
++	"context"
+ 	"encoding/json"
+ 	"errors"
+ 	"fmt"
+@@ -98,6 +100,9 @@ const (
+ 	IssueRepoGitOp                  = "repo-git-op"
+ 	IssueTmuxMissing                = "tmux-missing"
+ 	IssueTmuxUnverifiable           = "tmux-unverifiable"
++	IssueGitProbeUnavailable        = "git-probe-unavailable"
++	IssueStatusProbeExhausted       = "status-probe-exhausted"
++	IssueSessionOffScopeUnhealthy   = "session-off-scope-unhealthy"
+ )
+ 
+ // Feature-scoped codes. IssueTmuxPathMismatch and IssueTmuxPanesUnverified are
+@@ -157,6 +162,9 @@ var AgentStatusIssueCodes = []string{
+ 	IssueRepoGitOp,
+ 	IssueTmuxMissing,
+ 	IssueTmuxUnverifiable,
++	IssueGitProbeUnavailable,
++	IssueStatusProbeExhausted,
++	IssueSessionOffScopeUnhealthy,
+ 	IssueStackMissing,
+ 	IssueStackInvalid,
+ 	IssueSyncInProgress,
+@@ -394,15 +402,16 @@ type AgentStatusReport struct {
+ // no working-directory option: nothing in the builder may observe the process
+ // working directory.
+ type AgentStatusOpts struct {
+-	Proc ProcessProber
+-	Tmux TmuxInventoryProbe
+-	Now  func() time.Time
++	Proc                ProcessProber
++	Tmux                TmuxInventoryProbe
++	Now                 func() time.Time
++	Budget              *StatusProbeBudget
++	ResolveReparentPath func(feature, ordinaryPath string) (string, error)
+ }
+ 
+ func defaultAgentStatusOpts() AgentStatusOpts {
+ 	return AgentStatusOpts{
+ 		Proc: realProcessChecker{},
+-		Tmux: RealTmuxInventory{},
+ 		Now:  time.Now,
+ 	}
+ }
+@@ -423,6 +432,7 @@ type TmuxSnapshot struct {
+ 	Sessions       map[string]bool
+ 	Panes          []TmuxPane
+ 	PanesAvailable bool
++	PanesErr       error
+ 	Err            error
+ }
+ 
+@@ -431,23 +441,64 @@ type TmuxInventoryProbe interface {
+ 	Snapshot() TmuxSnapshot
+ }
+ 
+-// RealTmuxInventory shells out to tmux exactly twice per invocation.
+-type RealTmuxInventory struct{}
++// RealTmuxInventory shells out to tmux exactly twice per invocation. A zero
++// value preserves the legacy unbounded behavior used by mutation callers;
++// status injects its own bounded budget.
++type RealTmuxInventory struct {
++	budget *StatusProbeBudget
++}
+ 
+-func (RealTmuxInventory) Snapshot() TmuxSnapshot {
++func (r RealTmuxInventory) Snapshot() TmuxSnapshot {
+ 	snap := TmuxSnapshot{Sessions: map[string]bool{}}
+ 	if _, err := exec.LookPath("tmux"); err != nil {
+ 		return snap
+ 	}
+ 	snap.Available = true
+ 
+-	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").CombinedOutput()
++	if r.budget == nil {
++		return snapshotTmux(snap, runTmuxUnbounded, false)
++	}
++	return snapshotTmux(snap, func(args ...string) ([]byte, []byte, error) {
++		return r.budget.run("tmux", args...)
++	}, true)
++}
++
++type tmuxInventoryRunner func(args ...string) ([]byte, []byte, error)
++
++func runTmuxUnbounded(args ...string) ([]byte, []byte, error) {
++	cmd := exec.Command("tmux", args...)
++	var stdout, stderr bytes.Buffer
++	cmd.Stdout = &stdout
++	cmd.Stderr = &stderr
++	err := cmd.Run()
++	return stdout.Bytes(), stderr.Bytes(), err
++}
++
++func snapshotTmux(snap TmuxSnapshot, run tmuxInventoryRunner, boundedStatus bool) TmuxSnapshot {
++	out, stderr, err := run("list-sessions", "-F", "#{session_name}")
+ 	if err != nil {
+-		text := strings.ToLower(string(out))
+-		if strings.Contains(text, "no server running") || strings.Contains(text, "error connecting to") {
++		combined := append(append([]byte{}, out...), stderr...)
++		noServer := completedLegacyTmuxNoServerFailure(err, combined)
++		if boundedStatus {
++			noServer = completedTmuxNoServerFailure(err, combined)
++		}
++		if noServer {
+ 			return snap
+ 		}
+-		snap.Err = fmt.Errorf("tmux list-sessions: %s: %w", strings.TrimSpace(string(out)), err)
++		detail := strings.TrimSpace(string(combined))
++		if boundedStatus {
++			problem := statusProbeProblem(err)
++			if detail == "" {
++				detail = problem
++			} else {
++				detail = problem + "; output: " + detail
++			}
++			snap.Err = fmt.Errorf("tmux list-sessions: %s", detail)
++		} else if detail == "" {
++			snap.Err = fmt.Errorf("tmux list-sessions: %w", err)
++		} else {
++			snap.Err = fmt.Errorf("tmux list-sessions: %s: %w", detail, err)
++		}
+ 		return snap
+ 	}
+ 	snap.ServerRunning = true
+@@ -457,8 +508,11 @@ func (RealTmuxInventory) Snapshot() TmuxSnapshot {
+ 		}
+ 	}
+ 
+-	panes, paneErr := exec.Command("tmux", "list-panes", "-a", "-F", "#{session_name}\t#{pane_current_path}").Output()
++	panes, _, paneErr := run("list-panes", "-a", "-F", "#{session_name}\t#{pane_current_path}")
+ 	if paneErr != nil {
++		if boundedStatus {
++			snap.PanesErr = fmt.Errorf("tmux list-panes: %s", statusProbeProblem(paneErr))
++		}
+ 		return snap
+ 	}
+ 	snap.PanesAvailable = true
+@@ -476,6 +530,28 @@ func (RealTmuxInventory) Snapshot() TmuxSnapshot {
+ 	return snap
+ }
+ 
++func completedLegacyTmuxNoServerFailure(err error, output []byte) bool {
++	if err == nil {
++		return false
++	}
++	text := strings.ToLower(string(output))
++	return strings.Contains(text, "no server running") || strings.Contains(text, "error connecting to")
++}
++
++func completedTmuxNoServerFailure(err error, output []byte) bool {
++	exitErr := completedStatusExit(err)
++	if exitErr == nil || exitErr.ExitCode() <= 0 {
++		return false
++	}
++	text := strings.ToLower(string(output))
++	if strings.Contains(text, "no server running") {
++		return true
++	}
++	return strings.Contains(text, "error connecting to") &&
++		(strings.Contains(text, "no such file or directory") ||
++			strings.Contains(text, "connection refused"))
++}
++
+ // ---------- worktree inventory ----------
+ 
+ // WorktreeRecord is one `git worktree list --porcelain` block. Object IDs are
+@@ -544,6 +620,24 @@ func BuildWorktreeInventory(repoRoot string) WorktreeInventory {
+ }
+ 
+ func parseWorktreeInventory(out []byte) WorktreeInventory {
++	return parseWorktreeInventoryWith(out, canonicalize)
++}
++
++func buildStatusWorktreeInventory(repoRoot string, budget *StatusProbeBudget, scoped bool) WorktreeInventory {
++	if repoRoot == "" {
++		return worktreeInventoryUnavailable(errors.New("worktree inventory requires a non-empty repository root"))
++	}
++	out, _, err := budget.run("git", "-C", repoRoot, "worktree", "list", "--porcelain")
++	if err != nil {
++		return worktreeInventoryUnavailable(err)
++	}
++	if scoped {
++		return parseWorktreeInventoryWith(out, cleanAbsolute)
++	}
++	return parseWorktreeInventory(out)
++}
++
++func parseWorktreeInventoryWith(out []byte, normalizePath func(string) string) WorktreeInventory {
+ 	inv := WorktreeInventory{
+ 		ByBranch: map[string]string{},
+ 		Prunable: map[string]bool{},
+@@ -609,7 +703,7 @@ func parseWorktreeInventory(out []byte) WorktreeInventory {
+ 				failure = errors.New("worktree inventory: block has no worktree line")
+ 				continue
+ 			}
+-			rec.Path = canonicalize(rawPath)
++			rec.Path = normalizePath(rawPath)
+ 		case strings.HasPrefix(line, "HEAD "):
+ 			head := strings.TrimPrefix(line, "HEAD ")
+ 			if !stackStatusObjectID.MatchString(head) {
+@@ -658,6 +752,44 @@ func parseWorktreeInventory(out []byte) WorktreeInventory {
+ 	return inv
+ }
+ 
++// excludeStatusReparentScratchWorktrees keeps named status from resolving
++// unrelated worktree paths merely to compare them with the selected feature's
++// scratch path.
++func excludeStatusReparentScratchWorktrees(inv WorktreeInventory, scratchPaths ...string) WorktreeInventory {
++	if !inv.Available || len(scratchPaths) == 0 {
++		return inv
++	}
++	active := map[string]bool{}
++	for _, path := range scratchPaths {
++		if strings.TrimSpace(path) != "" {
++			active[cleanAbsolute(path)] = true
++		}
++	}
++	filtered := WorktreeInventory{
++		Available: true,
++		ByBranch:  map[string]string{},
++		Prunable:  map[string]bool{},
++		ByPath:    map[string]WorktreeRecord{},
++	}
++	for _, rec := range inv.Records {
++		if active[cleanAbsolute(rec.Path)] {
++			continue
++		}
++		filtered.Records = append(filtered.Records, rec)
++		filtered.ByPath[rec.Path] = rec
++		if rec.BranchRef == nil {
++			continue
++		}
++		short := strings.TrimPrefix(*rec.BranchRef, "refs/heads/")
++		if rec.Prunable {
++			filtered.Prunable[short] = true
++		} else {
++			filtered.ByBranch[short] = rec.Path
++		}
++	}
++	return filtered
++}
++
+ // ---------- rollups ----------
+ 
+ // RollupPresence folds observations with the precedence
+@@ -706,54 +838,6 @@ func anyWarningOrError(issues []AgentStatusIssue) bool {
+ 	return false
+ }
+ 
+-// ---------- workspace resolution ----------
+-
+-// ResolveStatusWorkspace resolves the workspace the same way RequireWorkspace
+-// does, with one difference: an external workspace root whose source
+-// repository cannot be inferred yields a degraded workspace plus a reason
+-// instead of an error, so a report can still be produced.
+-//
+-// Both roots are canonicalized so the document is byte-identical from every
+-// supported working directory.
+-func ResolveStatusWorkspace() (Workspace, string, error) {
+-	cfg := LoadConfig()
+-	if repoRoot, err := MainRepoRoot(); err == nil {
+-		ws, wsErr := ResolveCurrentWorkspaceE(repoRoot, cfg)
+-		if wsErr != nil {
+-			return Workspace{}, "", wsErr
+-		}
+-		ws.MetadataRoot = canonicalize(ws.MetadataRoot)
+-		return ws, "", nil
+-	}
+-
+-	cwd, err := os.Getwd()
+-	if err != nil {
+-		return Workspace{}, "", err
+-	}
+-	metadataRoot := DetectWorkspaceRoot(cwd, cfg)
+-	if metadataRoot == "" || !metadataRootExists(metadataRoot) {
+-		return Workspace{}, "", fmt.Errorf("not inside a git repository or tws workspace")
+-	}
+-	repoRoot, inferErr := inferExternalRepoRoot(metadataRoot, cfg)
+-	if inferErr != nil {
+-		return Workspace{
+-			RepoRoot:     "",
+-			Mode:         ModeExternal,
+-			MetadataRoot: canonicalize(metadataRoot),
+-			StableID:     "",
+-			Caps:         capsFor(ModeExternal),
+-		}, inferErr.Error(), nil
+-	}
+-	canonRepo := canonicalize(repoRoot)
+-	return Workspace{
+-		RepoRoot:     canonRepo,
+-		Mode:         ModeExternal,
+-		MetadataRoot: canonicalize(metadataRoot),
+-		StableID:     stableID(canonRepo),
+-		Caps:         capsFor(ModeExternal),
+-	}, "", nil
+-}
+-
+ // ---------- builder ----------
+ 
+ type pendingEntryIssue struct {
+@@ -766,11 +850,15 @@ type pendingEntryIssue struct {
+ }
+ 
+ type statusBuilder struct {
+-	ws     Workspace
+-	opts   AgentStatusOpts
+-	report *AgentStatusReport
+-	tmux   TmuxSnapshot
+-	wt     WorktreeInventory
++	ws              Workspace
++	opts            AgentStatusOpts
++	report          *AgentStatusReport
++	tmux            TmuxSnapshot
++	wt              WorktreeInventory
++	scopedFeature   string
++	featurePaths    map[string]string
++	reparentPaths   map[string]string
++	budgetIssueSeen bool
+ 
+ 	// checkout session state carried from projection (phase A) to
+ 	// attribution (phase B). Phase B performs no I/O.
+@@ -820,9 +908,23 @@ func (b *statusBuilder) issue(code string, sev CheckoutSeverity, scope IssueScop
+ 	b.report.Issues = append(b.report.Issues, iss)
+ }
+ 
+-// BuildAgentStatus produces the whole status report. It is strictly
+-// read-only: it never mutates a lock, a record, a stack, or Git state.
+ func BuildAgentStatus(ws Workspace, degradedReason string, opts *AgentStatusOpts) (*AgentStatusReport, error) {
++	return buildAgentStatus(ws, degradedReason, "", opts)
++}
++
++// BuildAgentStatusScoped produces a selected-feature report without reading
++// any other feature's stack or runtime records. Workspace-scoped checkout
++// session evidence is deliberately retained.
++func BuildAgentStatusScoped(ws Workspace, degradedReason, feature string, opts *AgentStatusOpts) (*AgentStatusReport, error) {
++	if feature == "" {
++		return nil, errors.New("scoped status requires a feature")
++	}
++	return buildAgentStatus(ws, degradedReason, feature, opts)
++}
++
++// buildAgentStatus is strictly read-only: it never mutates a lock, a record,
++// a stack, or Git state.
++func buildAgentStatus(ws Workspace, degradedReason, scopedFeature string, opts *AgentStatusOpts) (*AgentStatusReport, error) {
+ 	resolved := defaultAgentStatusOpts()
+ 	if opts != nil {
+ 		if opts.Proc != nil {
+@@ -834,6 +936,23 @@ func BuildAgentStatus(ws Workspace, degradedReason string, opts *AgentStatusOpts
+ 		if opts.Now != nil {
+ 			resolved.Now = opts.Now
+ 		}
++		if opts.Budget != nil {
++			resolved.Budget = opts.Budget
++		}
++		if opts.ResolveReparentPath != nil {
++			resolved.ResolveReparentPath = opts.ResolveReparentPath
++		}
++	}
++	ownedBudget := false
++	if resolved.Budget == nil {
++		resolved.Budget = NewStatusProbeBudget(context.Background())
++		ownedBudget = true
++	}
++	if ownedBudget {
++		defer resolved.Budget.Close()
++	}
++	if resolved.Tmux == nil {
++		resolved.Tmux = RealTmuxInventory{budget: resolved.Budget}
+ 	}
+ 
+ 	// 1. Metadata-root precondition. ListFeaturesResolved swallows its
+@@ -850,22 +969,39 @@ func BuildAgentStatus(ws Workspace, degradedReason string, opts *AgentStatusOpts
+ 		return nil, fmt.Errorf("workspace metadata root unreadable: %s: %w", ws.MetadataRoot, err)
+ 	}
+ 
+-	// 2. Topology listing. An untrusted spaces.yaml is fatal here.
+-	features, err := ws.ListFeaturesResolved()
+-	if err != nil {
+-		return nil, err
++	// 2. Select a named feature before inventories, or list globally. An
++	// untrusted spaces.yaml and selected-layout ambiguity remain fatal.
++	var features []string
++	featurePaths := map[string]string{}
++	if scopedFeature != "" {
++		path, err := selectStatusFeature(ws, scopedFeature)
++		if err != nil {
++			return nil, err
++		}
++		features = []string{scopedFeature}
++		featurePaths[scopedFeature] = path
++	} else {
++		var err error
++		features, err = ws.ListFeaturesResolved()
++		if err != nil {
++			return nil, err
++		}
+ 	}
+ 
+ 	b := &statusBuilder{
+-		ws:   ws,
+-		opts: resolved,
++		ws:            ws,
++		opts:          resolved,
++		scopedFeature: scopedFeature,
++		featurePaths:  featurePaths,
++		reparentPaths: map[string]string{},
+ 		report: &AgentStatusReport{
+ 			SchemaVersion: agentStatusSchema,
+ 			GeneratedAt:   resolved.Now().UTC().Format(time.RFC3339),
+ 		},
+ 	}
+ 
+-	// 3/4. One tmux snapshot and one worktree inventory per invocation.
++	// 3/4. One tmux snapshot and, when materialization needs it, one worktree
++	// inventory per invocation.
+ 	b.tmux = resolved.Tmux.Snapshot()
+ 	// §14.2a: a reparent run's own computation worktree is tool-owned scratch,
+ 	// not a materialization of any logical branch. Filtering it here — never
+@@ -874,19 +1010,39 @@ func BuildAgentStatus(ws Workspace, degradedReason string, opts *AgentStatusOpts
+ 	var activeScratch []string
+ 	if ws.Mode == ModeExternal {
+ 		for _, feature := range features {
+-			featurePath, resolveErr := ws.ResolveFeaturePath(feature)
++			featurePath, resolveErr := b.featurePath(feature)
+ 			if resolveErr != nil {
+ 				continue
+ 			}
+-			if path := ActiveReparentScratchPath(ReparentLocationFor(ws, feature, featurePath)); path != "" {
++			reparentPath := b.reparentPath(feature, featurePath)
++			if path := ActiveReparentScratchPath(ReparentLocationFor(ws, feature, reparentPath)); path != "" {
+ 				activeScratch = append(activeScratch, path)
+ 			}
+ 		}
+ 	}
+-	b.wt = ExcludeReparentScratchWorktrees(BuildWorktreeInventory(ws.RepoRoot), activeScratch...)
++	if scopedFeature != "" && ws.Mode == ModeCheckout {
++		// Checkout entries are refs in one physical checkout; their scoped
++		// projection does not consume worktree inventory.
++		b.wt = WorktreeInventory{
++			Available: true,
++			ByBranch:  map[string]string{},
++			Prunable:  map[string]bool{},
++			ByPath:    map[string]WorktreeRecord{},
++		}
++	} else {
++		b.wt = buildStatusWorktreeInventory(ws.RepoRoot, resolved.Budget, scopedFeature != "")
++		if scopedFeature != "" {
++			b.wt = excludeStatusReparentScratchWorktrees(b.wt, activeScratch...)
++		} else {
++			b.wt = ExcludeReparentScratchWorktrees(b.wt, activeScratch...)
++		}
++	}
+ 
+ 	// 5. Workspace header and the issues those fields alone determine.
+ 	b.buildWorkspaceHeader(degradedReason)
++	if ws.RepoRoot != "" && !b.wt.Available {
++		b.gitProbeIssue(ScopeWorkspace, "", "", "worktree inventory", ws.RepoRoot, b.wt.Err)
++	}
+ 
+ 	// 6. Checkout session, phase A: projection.
+ 	if ws.Mode == ModeCheckout {
+@@ -910,12 +1066,57 @@ func BuildAgentStatus(ws Workspace, degradedReason string, opts *AgentStatusOpts
+ 	}
+ 
+ 	// 9-10. Rollups then counters.
++	b.emitBudgetIssue()
+ 	recomputeAgentStatusRollups(b.report)
+ 	recomputeAgentStatusSummary(b.report)
+ 	NormalizeAgentStatus(b.report)
+ 	return b.report, nil
+ }
+ 
++func (b *statusBuilder) featurePath(feature string) (string, error) {
++	if path := b.featurePaths[feature]; path != "" {
++		return path, nil
++	}
++	path, err := b.ws.ResolveFeaturePath(feature)
++	if err == nil {
++		b.featurePaths[feature] = path
++	}
++	return path, err
++}
++
++func (b *statusBuilder) reparentPath(feature, ordinaryPath string) string {
++	if path := b.reparentPaths[feature]; path != "" {
++		return path
++	}
++	path := ordinaryPath
++	if b.opts.ResolveReparentPath != nil {
++		if resolved, err := b.opts.ResolveReparentPath(feature, ordinaryPath); err == nil && resolved != "" {
++			path = resolved
++		}
++	}
++	b.reparentPaths[feature] = path
++	return path
++}
++
++func (b *statusBuilder) emitBudgetIssue() {
++	if b.budgetIssueSeen || b.opts.Budget == nil || !b.opts.Budget.Stopped() {
++		return
++	}
++	b.budgetIssueSeen = true
++	b.issue(IssueStatusProbeExhausted, SeverityWarning, ScopeWorkspace, "", "",
++		"status subprocess probing stopped because the invocation budget or caller context expired",
++		"retry status after the slow or blocked Git/tmux command is resolved")
++}
++
++func (b *statusBuilder) gitProbeIssue(scope IssueScope, feature, name, fact, path string, err error) {
++	if err == nil {
++		return
++	}
++	b.issue(IssueGitProbeUnavailable, SeverityWarning, scope, feature, name,
++		fmt.Sprintf("%s could not be determined for %s: %s", fact, path, statusProbeProblem(err)),
++		"verify the repository and retry status")
++}
++
+ func (b *statusBuilder) buildWorkspaceHeader(degradedReason string) {
+ 	ws := b.ws
+ 	w := AgentStatusWorkspace{
+@@ -952,19 +1153,27 @@ func (b *statusBuilder) buildWorkspaceHeader(degradedReason string) {
+ 		return
+ 	}
+ 
+-	branch, detached := healthCurrentBranch(ws.RepoRoot)
++	branch, detached, branchErr := statusCurrentBranch(ws.RepoRoot, b.opts.Budget)
+ 	if branch != "" {
+ 		b.report.Workspace.Branch = strPtr(branch)
+ 	}
+-	b.report.Workspace.Detached = boolPtr(detached)
+-	b.report.Workspace.Dirty = boolPtr(gitDirty(ws.RepoRoot))
+-	if op := gitActiveOp(ws.RepoRoot); op != "" {
++	b.report.Workspace.Detached = detached
++	b.gitProbeIssue(ScopeWorkspace, "", "", "current branch", ws.RepoRoot, branchErr)
++
++	dirty, dirtyErr := statusDirty(ws.RepoRoot, b.opts.Budget)
++	b.report.Workspace.Dirty = dirty
++	b.gitProbeIssue(ScopeWorkspace, "", "", "dirty state", ws.RepoRoot, dirtyErr)
++
++	op, opErr := probeActiveGitOp(ws.RepoRoot)
++	if opErr != nil {
++		b.gitProbeIssue(ScopeWorkspace, "", "", "active Git operation", ws.RepoRoot, opErr)
++	} else if op != StackStatusOpNone {
+ 		b.report.Workspace.ActiveGitOp = strPtr(op)
+ 		b.issue(IssueRepoGitOp, SeverityWarning, ScopeWorkspace, "", "",
+ 			fmt.Sprintf("a %s is in progress in %s", op, ws.RepoRoot),
+ 			"finish or abort the in-progress git operation")
+ 	}
+-	if detached {
++	if detached != nil && *detached {
+ 		b.issue(IssueRepoDetached, SeverityInfo, ScopeWorkspace, "", "",
+ 			fmt.Sprintf("HEAD is detached in %s", ws.RepoRoot), "")
+ 	}
+@@ -988,6 +1197,10 @@ func (b *statusBuilder) emitTmuxWorkspaceIssue() {
+ 		b.issue(IssueTmuxUnverifiable, SeverityWarning, ScopeWorkspace, "", "",
+ 			"tmux inventory unavailable: "+b.tmux.Err.Error(),
+ 			"start tmux or run: tws close")
++	case b.tmux.PanesErr != nil:
++		b.issue(IssueTmuxUnverifiable, SeverityWarning, ScopeWorkspace, "", "",
++			"tmux pane inventory unavailable: "+b.tmux.PanesErr.Error(),
++			"check tmux and retry status")
+ 	}
+ }
+ 
+@@ -997,7 +1210,14 @@ func (b *statusBuilder) tmuxUsable() bool { return b.tmux.Available && b.tmux.Er
+ // verifyTmuxName checks a session name against the inventory and a canonical
+ // target directory. It returns nil when there is no evidence at all.
+ func (b *statusBuilder) verifyTmuxName(name, targetPath string) (presence RuntimePresence, issueCode, detail string, found bool) {
+-	if !b.tmuxUsable() || !b.tmux.Sessions[name] {
++	if !b.tmux.Available {
++		return "", "", "", false
++	}
++	if b.tmux.Err != nil {
++		return PresenceUnknown, IssueTmuxPanesUnverified,
++			fmt.Sprintf("tmux session %q could not be checked because the session inventory is unavailable", name), true
++	}
++	if !b.tmux.Sessions[name] {
+ 		return "", "", "", false
+ 	}
+ 	if !b.tmux.PanesAvailable {
+@@ -1249,6 +1469,15 @@ func (b *statusBuilder) attributeCheckoutSession() {
+ 			"run: tws close")
+ 		return
+ 	}
++	if b.scopedFeature != "" && b.sessionFeature != b.scopedFeature {
++		if p := b.sessionPending; p != nil {
++			b.issue(IssueSessionOffScopeUnhealthy, SeverityWarning, ScopeWorkspace, "", "",
++				fmt.Sprintf("checkout session for off-scope %s/%s needs attention: %s",
++					b.sessionFeature, b.sessionName, p.message),
++				p.guidance)
++		}
++		return
++	}
+ 	for fi := range b.report.Features {
+ 		f := &b.report.Features[fi]
+ 		if f.Feature != b.sessionFeature {
+@@ -1278,7 +1507,7 @@ func (b *statusBuilder) sessionObsMissing() bool {
+ // ---------- features ----------
+ 
+ func (b *statusBuilder) buildFeature(feature string) (AgentStatusFeature, error) {
+-	featurePath, err := b.ws.ResolveFeaturePath(feature)
++	featurePath, err := b.featurePath(feature)
+ 	if err != nil {
+ 		// Ambiguous topology is fatal: reporting other features while
+ 		// silently picking one of two candidate directories would make the
+@@ -1312,7 +1541,8 @@ func (b *statusBuilder) buildFeature(feature string) (AgentStatusFeature, error)
+ 	// the compatibility-hint suppression is already in force when the sync
+ 	// projection runs. It is strictly read-only and never evaluates the §12.3
+ 	// remote follow-up record.
+-	view.Reparent = BuildReparentProjection(ReparentLocationFor(b.ws, feature, featurePath))
++	reparentPath := b.reparentPath(feature, featurePath)
++	view.Reparent = BuildReparentProjection(ReparentLocationFor(b.ws, feature, reparentPath))
+ 	b.reparentActive = view.Reparent != nil
+ 
+ 	syncView, external := b.buildFeatureSync(feature, featurePath)
+@@ -1752,9 +1982,13 @@ func (b *statusBuilder) buildCheckoutMaterialization(entry *AgentStatusEntry, se
+ 		return
+ 	}
+ 
+-	exists := gitRefExists(b.ws.RepoRoot, entry.GitBranch)
+-	entry.Materialization.RefExists = boolPtr(exists)
+-	if exists {
++	exists, refErr := statusRefExists(b.ws.RepoRoot, entry.GitBranch, b.opts.Budget)
++	entry.Materialization.RefExists = exists
++	if refErr != nil {
++		b.gitProbeIssue(ScopeEntry, entry.Feature, entry.Name, "branch ref", b.ws.RepoRoot, refErr)
++		return
++	}
++	if exists != nil && *exists {
+ 		entry.Materialization.State = MaterializedPresent
+ 		return
+ 	}
+@@ -1801,7 +2035,9 @@ func (b *statusBuilder) buildExternalMaterialization(entry *AgentStatusEntry, fe
+ 		return
+ 	}
+ 
+-	entry.Materialization.RefExists = boolPtr(gitRefExists(b.ws.RepoRoot, entry.GitBranch))
++	exists, refErr := statusRefExists(b.ws.RepoRoot, entry.GitBranch, b.opts.Budget)
++	entry.Materialization.RefExists = exists
++	b.gitProbeIssue(ScopeEntry, feature, se.Name, "branch ref", b.ws.RepoRoot, refErr)
+ 
+ 	info, statErr := os.Stat(wtPath)
+ 	switch {
+@@ -1832,18 +2068,16 @@ func (b *statusBuilder) buildExternalMaterialization(entry *AgentStatusEntry, fe
+ 	b.appendBranchTmux(entry, wtPath)
+ }
+ 
+-// probeWorktree fills checked_out_branch and dirty for a present worktree.
+-// Both helpers swallow their errors, so the dirty probe is gated on a
+-// successful branch probe: otherwise a broken checkout reads as clean.
++// probeWorktree fills checked_out_branch and dirty for a present worktree,
++// retaining each independently measured fact when another probe fails.
+ func (b *statusBuilder) probeWorktree(entry *AgentStatusEntry, wtPath string, external *SyncState) {
+-	branch, detached := healthCurrentBranch(wtPath)
+-	if branch == "" {
++	branch, detached, branchErr := statusCurrentBranch(wtPath, b.opts.Budget)
++	if branchErr != nil {
+ 		b.issue(IssueWorktreeUnreadable, SeverityWarning, ScopeEntry, entry.Feature, entry.Name,
+-			fmt.Sprintf("could not read the checked-out branch in %s", wtPath),
++			fmt.Sprintf("could not read the checked-out branch in %s: %s", wtPath, statusProbeProblem(branchErr)),
+ 			"inspect "+wtPath)
+-		return
+ 	}
+-	if !detached {
++	if branch != "" && detached != nil && !*detached {
+ 		entry.Materialization.CheckedOutBranch = strPtr(branch)
+ 		if entry.GitBranch != "" && branch != entry.GitBranch {
+ 			b.issue(IssueWorktreeWrongBranch, SeverityWarning, ScopeEntry, entry.Feature, entry.Name,
+@@ -1852,9 +2086,13 @@ func (b *statusBuilder) probeWorktree(entry *AgentStatusEntry, wtPath string, ex
+ 		}
+ 	}
+ 
+-	dirty := gitDirty(wtPath)
+-	entry.Materialization.Dirty = boolPtr(dirty)
+-	if !dirty {
++	dirty, dirtyErr := statusDirty(wtPath, b.opts.Budget)
++	entry.Materialization.Dirty = dirty
++	if dirtyErr != nil {
++		b.gitProbeIssue(ScopeEntry, entry.Feature, entry.Name, "dirty state", wtPath, dirtyErr)
++		return
++	}
++	if dirty == nil || !*dirty {
+ 		return
+ 	}
+ 	if syncWantsBranch(external, entry.Name) {
+diff --git a/internal/agent_status_test.go b/internal/agent_status_test.go
+index b33a283..e42cdf5 100644
+--- a/internal/agent_status_test.go
++++ b/internal/agent_status_test.go
+@@ -2,9 +2,11 @@ package internal
+ 
+ import (
+ 	"bytes"
++	"context"
+ 	"encoding/json"
+ 	"fmt"
+ 	"os"
++	"os/exec"
+ 	"path/filepath"
+ 	"sort"
+ 	"strconv"
+@@ -152,8 +154,13 @@ func TestAgentStatusIssueCodeClosure(t *testing.T) {
+ 		}
+ 		seen[code] = true
+ 	}
+-	if len(AgentStatusIssueCodes) != 45 {
+-		t.Fatalf("issue code table has %d entries, want 45", len(AgentStatusIssueCodes))
++	if len(AgentStatusIssueCodes) != 48 {
++		t.Fatalf("issue code table has %d entries, want 48", len(AgentStatusIssueCodes))
++	}
++	for _, added := range []string{IssueGitProbeUnavailable, IssueStatusProbeExhausted, IssueSessionOffScopeUnhealthy} {
++		if !seen[added] {
++			t.Fatalf("new status reliability code %q is missing", added)
++		}
+ 	}
+ 	for _, removed := range []string{"sync-lock-invalid", "feature-tmux-unknown"} {
+ 		if seen[removed] {
+@@ -969,8 +976,12 @@ func TestAgentStatusTmuxTable(t *testing.T) {
+ 		if hasIssue(r, IssueTmuxUnverifiable) == nil {
+ 			t.Fatalf("expected tmux-unverifiable, got %v", issueCodes(r))
+ 		}
+-		if len(findEntry(t, r, "auth", "api").Sessions) != 0 {
+-			t.Fatal("an unusable inventory produces no per-branch observation")
++		api := findEntry(t, r, "auth", "api")
++		if len(api.Sessions) != 1 || api.Sessions[0].Presence != PresenceUnknown {
++			t.Fatalf("a failed inventory must not claim absence: %+v", api.Sessions)
++		}
++		if hasIssue(r, IssueTmuxPanesUnverified) == nil {
++			t.Fatalf("expected a scoped unknown-runtime issue, got %v", issueCodes(r))
+ 		}
+ 	})
+ 
+@@ -2346,3 +2357,314 @@ func TestBuildWorktreeInventory_FailClosed(t *testing.T) {
+ 		t.Fatalf("an empty repo root yields an unavailable inventory with a cause: %+v", empty)
+ 	}
+ }
++
++func TestAgentStatusScopedBuildIgnoresUnrelatedCheckoutAmbiguity(t *testing.T) {
++	dir, ws := setupHealthTestRepo(t)
++	addFeatureToRepo(t, ws, "auth", "api", "main")
++	gitInTest(t, dir, "branch", "api")
++
++	for _, path := range []string{
++		filepath.Join(ws.MetadataRoot, "features", "billing"),
++		filepath.Join(ws.MetadataRoot, "billing"),
++	} {
++		if err := os.MkdirAll(path, 0o755); err != nil {
++			t.Fatal(err)
++		}
++		if err := SaveStack(path, Stack{Branches: []StackEntry{{Name: "pay", Base: "main"}}}); err != nil {
++			t.Fatal(err)
++		}
++	}
++
++	report, err := BuildAgentStatusScoped(ws, "", "auth", statusOpts(nil, nil))
++	if err != nil {
++		t.Fatalf("unrelated checkout ambiguity must not abort scoped status: %v", err)
++	}
++	if len(report.Features) != 1 || report.Features[0].Feature != "auth" {
++		t.Fatalf("scoped features = %+v", report.Features)
++	}
++	if report.Summary.Features != 1 || report.Summary.Entries != 1 {
++		t.Fatalf("scoped summary = %+v", report.Summary)
++	}
++	if _, err := BuildAgentStatus(ws, "", statusOpts(nil, nil)); err == nil {
++		t.Fatal("the unchanged global builder must still fail on ambiguous topology")
++	}
++}
++
++func TestAgentStatusScopedBuildIgnoresUnrelatedMalformedStack(t *testing.T) {
++	entries := []StackEntry{{Name: "api", Base: "main"}}
++	ws, featurePath := setupExternalStatusWorkspace(t, "auth", entries)
++	addExternalWorktree(t, ws, featurePath, entries[0])
++	billing := filepath.Join(ws.MetadataRoot, "billing")
++	if err := os.MkdirAll(filepath.Join(billing, "worktrees"), 0o755); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(StackPath(billing), []byte("branches: [\n"), 0o600); err != nil {
++		t.Fatal(err)
++	}
++
++	report, err := BuildAgentStatusScoped(ws, "", "auth", statusOpts(nil, nil))
++	if err != nil {
++		t.Fatalf("unrelated malformed stack must not abort scoped status: %v", err)
++	}
++	if len(report.Features) != 1 || report.Features[0].Feature != "auth" {
++		t.Fatalf("scoped features = %+v", report.Features)
++	}
++	for _, issue := range report.Issues {
++		if issue.Feature != nil && *issue.Feature == "billing" {
++			t.Fatalf("unrelated feature issue leaked into scoped report: %+v", issue)
++		}
++	}
++}
++
++func TestAgentStatusScopedGitProbeFailuresStayUnknown(t *testing.T) {
++	entries := []StackEntry{{Name: "api", Base: "main"}}
++	ws, featurePath := setupExternalStatusWorkspace(t, "auth", entries)
++	addExternalWorktree(t, ws, featurePath, entries[0])
++
++	realGit, err := exec.LookPath("git")
++	if err != nil {
++		t.Fatal(err)
++	}
++	shimDir := t.TempDir()
++	shim := filepath.Join(shimDir, "git")
++	script := `#!/bin/sh
++case " $* " in
++  *" status --porcelain "*) exit 42 ;;
++esac
++exec "$STATUS_REAL_GIT" "$@"
++`
++	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
++		t.Fatal(err)
++	}
++	t.Setenv("STATUS_REAL_GIT", realGit)
++	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
++
++	report, err := BuildAgentStatusScoped(ws, "", "auth", statusOpts(nil, nil))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if report.Workspace.Dirty != nil {
++		t.Fatalf("failed workspace dirty probe must be null, got %v", *report.Workspace.Dirty)
++	}
++	entry := findEntry(t, report, "auth", "api")
++	if entry.Materialization.Dirty != nil {
++		t.Fatalf("failed entry dirty probe must be null, got %v", *entry.Materialization.Dirty)
++	}
++	if entry.Materialization.CheckedOutBranch == nil || *entry.Materialization.CheckedOutBranch != "api" {
++		t.Fatalf("independent branch fact must survive dirty failure: %+v", entry.Materialization)
++	}
++	var workspaceIssue, entryIssue bool
++	for _, issue := range report.Issues {
++		if issue.Code != IssueGitProbeUnavailable {
++			continue
++		}
++		workspaceIssue = workspaceIssue || issue.Scope == ScopeWorkspace
++		entryIssue = entryIssue || issue.Scope == ScopeEntry && issue.Feature != nil && *issue.Feature == "auth"
++	}
++	if !workspaceIssue || !entryIssue {
++		t.Fatalf("failed probes need scoped issues, got %+v", report.Issues)
++	}
++}
++
++func TestAgentStatusScopedRefProbeFailureIsNotMissing(t *testing.T) {
++	dir, ws := setupHealthTestRepo(t)
++	addFeatureToRepo(t, ws, "auth", "api", "main")
++	gitInTest(t, dir, "branch", "api")
++
++	realGit, err := exec.LookPath("git")
++	if err != nil {
++		t.Fatal(err)
++	}
++	shimDir := t.TempDir()
++	shim := filepath.Join(shimDir, "git")
++	script := `#!/bin/sh
++case " $* " in
++  *" rev-parse --verify --quiet "*) exit 42 ;;
++esac
++exec "$STATUS_REAL_GIT" "$@"
++`
++	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
++		t.Fatal(err)
++	}
++	t.Setenv("STATUS_REAL_GIT", realGit)
++	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
++
++	report, err := BuildAgentStatusScoped(ws, "", "auth", statusOpts(nil, nil))
++	if err != nil {
++		t.Fatal(err)
++	}
++	entry := findEntry(t, report, "auth", "api")
++	if entry.Materialization.RefExists != nil || entry.Materialization.State != MaterializedUnknown {
++		t.Fatalf("unavailable ref probe = %+v", entry.Materialization)
++	}
++	if hasIssue(report, IssueRefMissing) != nil || hasIssue(report, IssueRefMissingArchived) != nil {
++		t.Fatalf("an unavailable ref is not a verified missing ref: %v", issueCodes(report))
++	}
++	if hasIssue(report, IssueGitProbeUnavailable) == nil {
++		t.Fatalf("missing probe issue: %v", issueCodes(report))
++	}
++}
++
++func TestAgentStatusScopedBudgetExhaustionReturnsPartialReport(t *testing.T) {
++	entries := []StackEntry{{Name: "api", Base: "main"}}
++	ws, featurePath := setupExternalStatusWorkspace(t, "auth", entries)
++	addExternalWorktree(t, ws, featurePath, entries[0])
++
++	logPath := filepath.Join(t.TempDir(), "git.log")
++	shimDir := t.TempDir()
++	shim := filepath.Join(shimDir, "git")
++	script := `#!/bin/sh
++printf 'git\n' >> "$STATUS_GIT_LOG"
++sleep 30
++`
++	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
++		t.Fatal(err)
++	}
++	t.Setenv("STATUS_GIT_LOG", logPath)
++	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
++
++	budget := newStatusProbeBudget(context.Background(), time.Second, 250*time.Millisecond)
++	defer budget.Close()
++	opts := statusOpts(nil, nil)
++	opts.Budget = budget
++	report, err := BuildAgentStatusScoped(ws, "", "auth", opts)
++	if err != nil {
++		t.Fatalf("established topology must yield a partial report: %v", err)
++	}
++	if hasIssue(report, IssueStatusProbeExhausted) == nil {
++		t.Fatalf("budget exhaustion issue missing: %v", issueCodes(report))
++	}
++	if report.Workspace.Branch != nil || report.Workspace.Detached != nil || report.Workspace.Dirty != nil {
++		t.Fatalf("unmeasured workspace facts must stay null: %+v", report.Workspace)
++	}
++	entry := findEntry(t, report, "auth", "api")
++	if entry.Materialization.RefExists != nil || entry.Materialization.CheckedOutBranch != nil ||
++		entry.Materialization.Dirty != nil {
++		t.Fatalf("unmeasured entry facts must stay null: %+v", entry.Materialization)
++	}
++	if budget.launchedCount() != 1 {
++		t.Fatalf("launched commands = %d, want 1", budget.launchedCount())
++	}
++	data, err := os.ReadFile(logPath)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if strings.Count(string(data), "git\n") != 1 {
++		t.Fatalf("actual dispatch log = %q", data)
++	}
++}
++
++func TestAgentStatusScopedCheckoutSessionOffScope(t *testing.T) {
++	cases := []struct {
++		name         string
++		liveness     ProcessLiveness
++		wantPresence RuntimePresence
++		wantWarning  bool
++	}{
++		{name: "live", liveness: ProcessLive, wantPresence: PresencePresent},
++		{name: "dead", liveness: ProcessDead, wantPresence: PresenceStale, wantWarning: true},
++		{name: "unknown", liveness: ProcessUnknown, wantPresence: PresenceUnknown, wantWarning: true},
++	}
++	for i, tc := range cases {
++		t.Run(tc.name, func(t *testing.T) {
++			dir, ws := setupHealthTestRepo(t)
++			addFeatureToRepo(t, ws, "auth", "api", "main")
++			addFeatureToRepo(t, ws, "billing", "pay", "main")
++			gitInTest(t, dir, "branch", "api")
++			gitInTest(t, dir, "branch", "pay")
++			pid := 910100 + i
++			writeCheckoutSessionState(t, ws, fmt.Sprintf(
++				`{"schema_version":1,"workspace_id":%q,"feature":"billing","name":"pay","mode":"direct","pid":%d,"stage":"agent"}`,
++				ws.StableID, pid))
++			writeCheckoutSessionLock(t, ws)
++			opts := statusOpts(fakeProcessProber{probe: map[int]ProcessLiveness{pid: tc.liveness}}, nil)
++
++			report, err := BuildAgentStatusScoped(ws, "", "auth", opts)
++			if err != nil {
++				t.Fatal(err)
++			}
++			if report.Workspace.CheckoutSession == nil || report.Workspace.CheckoutSession.Presence != tc.wantPresence {
++				t.Fatalf("off-scope session = %+v", report.Workspace.CheckoutSession)
++			}
++			if len(report.Features) != 1 || report.Features[0].Feature != "auth" {
++				t.Fatalf("scoped features = %+v", report.Features)
++			}
++			if hasIssue(report, IssueSessionUnattributed) != nil {
++				t.Fatal("an excluded but valid feature must not be called unattributed")
++			}
++			gotWarning := hasIssue(report, IssueSessionOffScopeUnhealthy) != nil
++			if gotWarning != tc.wantWarning {
++				t.Fatalf("off-scope warning = %v, want %v; issues=%v", gotWarning, tc.wantWarning, issueCodes(report))
++			}
++		})
++	}
++
++	dir, ws := setupHealthTestRepo(t)
++	addFeatureToRepo(t, ws, "auth", "api", "main")
++	addFeatureToRepo(t, ws, "billing", "pay", "main")
++	gitInTest(t, dir, "branch", "api")
++	gitInTest(t, dir, "branch", "pay")
++	writeCheckoutSessionState(t, ws, fmt.Sprintf(
++		`{"schema_version":1,"workspace_id":%q,"feature":"billing","name":"pay","mode":"direct","pid":910200,"stage":"agent"}`,
++		ws.StableID))
++	writeCheckoutSessionLock(t, ws)
++	global := buildStatus(t, ws, statusOpts(fakeProcessProber{probe: map[int]ProcessLiveness{910200: ProcessDead}}, nil))
++	if hasIssue(global, IssueSessionOffScopeUnhealthy) != nil {
++		t.Fatal("global attribution must retain its existing entry-scoped behavior")
++	}
++	if hasIssue(global, IssueSessionOwnerDead) == nil {
++		t.Fatalf("global report must attribute the stale session: %v", issueCodes(global))
++	}
++	if sessions := findEntry(t, global, "billing", "pay").Sessions; len(sessions) != 1 {
++		t.Fatalf("global billing session attribution = %+v", sessions)
++	}
++}
++
++func TestAgentStatusScopedSelectedSessionMissingEntryIsDiagnosed(t *testing.T) {
++	dir, ws := setupHealthTestRepo(t)
++	addFeatureToRepo(t, ws, "auth", "api", "main")
++	gitInTest(t, dir, "branch", "api")
++	writeCheckoutSessionState(t, ws, fmt.Sprintf(
++		`{"schema_version":1,"workspace_id":%q,"feature":"auth","name":"missing","mode":"direct","pid":910300,"stage":"agent"}`,
++		ws.StableID))
++	writeCheckoutSessionLock(t, ws)
++
++	report, err := BuildAgentStatusScoped(ws, "", "auth",
++		statusOpts(fakeProcessProber{probe: map[int]ProcessLiveness{910300: ProcessDead}}, nil))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if hasIssue(report, IssueSessionUnattributed) == nil {
++		t.Fatalf("a missing entry inside the selected feature remains diagnosed: %v", issueCodes(report))
++	}
++}
++
++func TestAgentStatusScopedTmuxFailureDoesNotClaimAbsence(t *testing.T) {
++	entries := []StackEntry{{Name: "api", Base: "main"}}
++	ws, featurePath := setupExternalStatusWorkspace(t, "auth", entries)
++	addExternalWorktree(t, ws, featurePath, entries[0])
++
++	dir := t.TempDir()
++	shim := filepath.Join(dir, "tmux")
++	if err := os.WriteFile(shim, []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
++		t.Fatal(err)
++	}
++	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
++	budget := newStatusProbeBudget(context.Background(), 250*time.Millisecond, 3*time.Second)
++	defer budget.Close()
++	opts := statusOpts(nil, RealTmuxInventory{budget: budget})
++	opts.Budget = budget
++
++	report, err := BuildAgentStatusScoped(ws, "", "auth", opts)
++	if err != nil {
++		t.Fatal(err)
++	}
++	entry := findEntry(t, report, "auth", "api")
++	if entry.RuntimePresence != PresenceUnknown || len(entry.Sessions) != 1 ||
++		entry.Sessions[0].Presence != PresenceUnknown {
++		t.Fatalf("failed tmux observation = %+v", entry)
++	}
++	if hasIssue(report, IssueTmuxUnverifiable) == nil || hasIssue(report, IssueTmuxPanesUnverified) == nil {
++		t.Fatalf("tmux failure issues = %v", issueCodes(report))
++	}
++}
+diff --git a/internal/checkout_health.go b/internal/checkout_health.go
+index 945c105..8839a25 100644
+--- a/internal/checkout_health.go
++++ b/internal/checkout_health.go
+@@ -829,10 +829,6 @@ func buildOneFeatureEntry(feature string, se StackEntry, edge StackEdge, current
+ 	return e
+ }
+ 
+-func gitRefExists(repo, ref string) bool {
+-	return exec.Command("git", "-C", repo, "rev-parse", "--verify", "--quiet", ref).Run() == nil
+-}
+-
+ // ---------- Context Links ----------
+ 
+ func buildContextLinks(ws Workspace) []CheckoutContextLinkReport {
+diff --git a/internal/cli/reparent_exclusion_test.go b/internal/cli/reparent_exclusion_test.go
+index 991e366..c5d25ea 100644
+--- a/internal/cli/reparent_exclusion_test.go
++++ b/internal/cli/reparent_exclusion_test.go
+@@ -23,6 +23,36 @@ type reparentTmuxProbe struct{ snapshot internal.TmuxSnapshot }
+ 
+ func (p reparentTmuxProbe) Snapshot() internal.TmuxSnapshot { return p.snapshot }
+ 
++func TestReparentDefaultTmuxInventoryHasNoStatusTimeout(t *testing.T) {
++	dir := t.TempDir()
++	shim := filepath.Join(dir, "tmux")
++	session := internal.ExternalTmuxSessionName("feature", "pr2")
++	script := `#!/bin/sh
++case "$1" in
++  list-sessions)
++    sleep 6
++    printf '%s\n' "$REPARENT_TMUX_SESSION"
++    ;;
++  list-panes)
++    exit 0
++    ;;
++esac
++`
++	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
++		t.Fatal(err)
++	}
++	t.Setenv("REPARENT_TMUX_SESSION", session)
++	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
++
++	names, err := reparentExternalLiveSessions(t.TempDir(), "feature", []string{"pr2"}, nil)
++	if err != nil {
++		t.Fatalf("default reparent tmux inventory inherited a status timeout: %v", err)
++	}
++	if strings.Join(names, ",") != "pr2" {
++		t.Fatalf("default reparent tmux inventory = %v, want pr2", names)
++	}
++}
++
+ // Acceptance criteria carried by this file's cells: AC-038 (the scope
+ // refusals), AC-039 and AC-040 (same-parent no-work and the stale-edge
+ // guidance), AC-068 (the session launch exclusion), AC-079 (sync <-> reparent
+diff --git a/internal/cli/status.go b/internal/cli/status.go
+index 9fac2b2..c8f5177 100644
+--- a/internal/cli/status.go
++++ b/internal/cli/status.go
+@@ -18,10 +18,13 @@ func statusCmd() *cobra.Command {
+ whether a tws-launched session is running, and whether anything needs
+ attention.
+ 
+-Scope. With no argument the report always covers every feature in the resolved
+-workspace, from any working directory. It is never scoped by your current
+-location — pass a feature name to filter. (This deliberately differs from
+-'tws space list', which is cwd-scoped.)
++Scope. With no argument the report always builds every feature in the resolved
++workspace. With a feature argument it builds only that feature plus genuine
++workspace evidence, including a shared checkout session even when that session
++belongs to another feature. It does not read or probe other feature stacks,
++worktrees, or session records. Scope is never inferred from your current
++location. (This deliberately differs from 'tws space list', which is
++cwd-scoped.)
+ 
+ Your working directory selects which workspace is resolved; it never changes
+ what the report says about that workspace. Run from the repository, from a
+@@ -38,6 +41,12 @@ Exit status is 0 whenever a report was produced, including when branches need
+ attention or operational state is stale or corrupt. A non-zero exit means no
+ report could be produced at all.
+ 
++Git and tmux subprocesses are limited to five seconds each and share one
++thirty-second invocation budget beginning with workspace resolution. A failed
++or timed-out observation is reported as null/unknown with an issue, never as
++clean or absent. Ordinary filesystem reads are synchronous and are not
++interruptible by that subprocess budget.
++
+ --json prints one versioned document with a stable key set; absent values are
+ null and lists are never null.`,
+ 		Args: cobra.MaximumNArgs(1),
+@@ -52,34 +61,31 @@ null and lists are never null.`,
+ 			// failure must not spray usage into a polled surface's output.
+ 			cmd.SilenceUsage = true
+ 
+-			ws, degradedReason, err := internal.ResolveStatusWorkspace()
+-			if err != nil {
+-				return err
+-			}
+-
+ 			feature := ""
+ 			if len(args) == 1 {
+ 				feature = args[0]
+-				// Guard the caller-supplied name against a registered space
+-				// before any path join, stat, record read, or tmux probe. The
+-				// guard root is the root the subsequent reads join against.
+-				if gerr := internal.GuardFeatureName(ws.MetadataRoot, feature); gerr != nil {
+-					return gerr
+-				}
+ 			}
+ 
+-			report, err := internal.BuildAgentStatus(ws, degradedReason, nil)
++			budget := internal.NewStatusProbeBudget(cmd.Context())
++			defer budget.Close()
++			ws, degradedReason, err := internal.ResolveStatusWorkspaceWithBudget(feature, budget)
+ 			if err != nil {
+ 				return err
+ 			}
+-			for i := range report.Features {
+-				f := &report.Features[i]
+-				f.Reparent = reparentProjectionFor(ws, f.Feature, f.Path)
++			opts := &internal.AgentStatusOpts{
++				Budget: budget,
++				ResolveReparentPath: func(feature, ordinaryPath string) (string, error) {
++					return reparentFeaturePathFor(ws, feature)
++				},
+ 			}
++			var report *internal.AgentStatusReport
+ 			if feature != "" {
+-				if ferr := report.FilterFeature(feature); ferr != nil {
+-					return ferr
+-				}
++				report, err = internal.BuildAgentStatusScoped(ws, degradedReason, feature, opts)
++			} else {
++				report, err = internal.BuildAgentStatus(ws, degradedReason, opts)
++			}
++			if err != nil {
++				return err
+ 			}
+ 			// §11.10 rule 1: the anchored line precedes every stdout write.
+ 			// The report itself is already built read-only; this is a pure
+diff --git a/internal/cli/status_test.go b/internal/cli/status_test.go
+index cf79896..5370a8a 100644
+--- a/internal/cli/status_test.go
++++ b/internal/cli/status_test.go
+@@ -2,12 +2,15 @@ package cli
+ 
+ import (
+ 	"bytes"
++	"context"
+ 	"encoding/json"
++	"errors"
+ 	"os"
+ 	"os/exec"
+ 	"path/filepath"
+ 	"strings"
+ 	"testing"
++	"time"
+ 
+ 	"github.com/jdbencardinop/tesseraworkspaces/internal"
+ 	"github.com/spf13/pflag"
+@@ -67,6 +70,92 @@ func withoutTmuxOnPath(t *testing.T) {
+ 	}
+ }
+ 
++func withStatusGitRecorder(t *testing.T) string {
++	t.Helper()
++	realGit, err := exec.LookPath("git")
++	if err != nil {
++		t.Fatal(err)
++	}
++	dir := t.TempDir()
++	logPath := filepath.Join(dir, "git.log")
++	shim := filepath.Join(dir, "git")
++	script := `#!/bin/sh
++{
++  printf 'begin\n'
++  printf 'locks\t%s\n' "${GIT_OPTIONAL_LOCKS-}"
++  for arg in "$@"; do printf 'arg\t%s\n' "$arg"; done
++  printf 'end\n'
++} >> "$STATUS_GIT_LOG"
++is_status=0
++probe_path=
++previous=
++for arg in "$@"; do
++  if [ "$arg" = "status" ]; then is_status=1; fi
++  if [ "$previous" = "-C" ]; then probe_path=$arg; fi
++  previous=$arg
++done
++if [ "${STATUS_DELAY_GIT_PATH-}" = "$probe_path" ] && [ "$is_status" = "1" ]; then
++  sleep 2
++fi
++if [ "${STATUS_FAIL_GIT_PATH-}" = "$probe_path" ] && [ "$is_status" = "1" ]; then
++  exit 42
++fi
++if [ "${STATUS_FAIL_GIT_STATUS-}" = "1" ] && [ "$is_status" = "1" ]; then
++  exit 42
++fi
++case " $* " in
++  *" worktree list --porcelain "*)
++    if [ "${STATUS_FAIL_WORKTREE_LIST-}" = "1" ]; then exit 42; fi
++    ;;
++esac
++exec "$STATUS_REAL_GIT" "$@"
++`
++	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
++		t.Fatal(err)
++	}
++	t.Setenv("STATUS_GIT_LOG", logPath)
++	t.Setenv("STATUS_REAL_GIT", realGit)
++	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
++	return logPath
++}
++
++func withStatusTmuxRecorder(t *testing.T) string {
++	t.Helper()
++	dir := t.TempDir()
++	logPath := filepath.Join(dir, "tmux.log")
++	shim := filepath.Join(dir, "tmux")
++	script := `#!/bin/sh
++printf 'tmux\n' >> "$STATUS_TMUX_LOG"
++echo 'no server running' >&2
++exit 1
++`
++	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
++		t.Fatal(err)
++	}
++	t.Setenv("STATUS_TMUX_LOG", logPath)
++	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
++	return logPath
++}
++
++func readStatusLog(t *testing.T, path string) string {
++	t.Helper()
++	data, err := os.ReadFile(path)
++	if errors.Is(err, os.ErrNotExist) {
++		return ""
++	}
++	if err != nil {
++		t.Fatal(err)
++	}
++	return string(data)
++}
++
++func clearStatusLog(t *testing.T, path string) {
++	t.Helper()
++	if err := os.WriteFile(path, nil, 0o600); err != nil {
++		t.Fatal(err)
++	}
++}
++
+ func runStatus(t *testing.T, args ...string) (string, string, error) {
+ 	t.Helper()
+ 	cmd := statusCmd()
+@@ -90,7 +179,7 @@ func TestStatusHelpSurface(t *testing.T) {
+ 	if cmd.Short != "Show agent work status for every logical branch" {
+ 		t.Fatalf("Short = %q", cmd.Short)
+ 	}
+-	for _, want := range []string{"always covers every feature", "agent_state", "needs_attention"} {
++	for _, want := range []string{"always builds every feature", "builds only that feature", "five seconds", "agent_state", "needs_attention"} {
+ 		if !strings.Contains(cmd.Long, want) {
+ 			t.Fatalf("Long text is missing %q", want)
+ 		}
+@@ -368,3 +457,405 @@ func TestStatusReportsTmuxMissingWhenTmuxIsAbsent(t *testing.T) {
+ 		t.Fatalf("an info issue must not make the workspace need attention: %v", attention)
+ 	}
+ }
++
++func TestStatusScopedDoesNotProbeUnrelatedFeatureAndGlobalStillDoes(t *testing.T) {
++	repo := setupGitRepo(t, "main")
++	root := withUnifiedWorkspaceEnv(t, repo)
++	captureStdout(t, func() {
++		if err := addExternal("auth", nil, "api", "main", false, false, false); err != nil {
++			t.Fatal(err)
++		}
++		if err := addExternal("billing", nil, "pay", "main", false, false, false); err != nil {
++			t.Fatal(err)
++		}
++	})
++	withIdleTmuxOnPath(t)
++	logPath := withStatusGitRecorder(t)
++	billingPath := filepath.Join(root, "billing")
++	billingWorktree := filepath.Join(billingPath, "worktrees", "pay")
++	t.Setenv("STATUS_DELAY_GIT_PATH", billingWorktree)
++	t.Setenv("STATUS_FAIL_GIT_PATH", billingWorktree)
++	var scopedCounts []int
++
++	for _, location := range []string{repo, root, filepath.Join(root, "auth")} {
++		chdirForTest(t, location)
++		clearStatusLog(t, logPath)
++		start := time.Now()
++		out, _, err := runStatus(t, "auth", "--json")
++		if err != nil {
++			t.Fatalf("%s: %v", location, err)
++		}
++		if elapsed := time.Since(start); elapsed >= 1500*time.Millisecond {
++			t.Fatalf("%s: scoped status was delayed by the unrelated worktree: %s", location, elapsed)
++		}
++		var report internal.AgentStatusReport
++		if err := json.Unmarshal([]byte(out), &report); err != nil {
++			t.Fatal(err)
++		}
++		if len(report.Features) != 1 || report.Features[0].Feature != "auth" {
++			t.Fatalf("%s: scoped features = %+v", location, report.Features)
++		}
++		logged := readStatusLog(t, logPath)
++		if strings.Contains(logged, billingPath) || strings.Contains(logged, "arg\tpay\n") {
++			t.Fatalf("%s: scoped Git argv touched billing:\n%s", location, logged)
++		}
++		if strings.Count(logged, "locks\t0\n") != strings.Count(logged, "begin\n") {
++			t.Fatalf("%s: status Git probe omitted GIT_OPTIONAL_LOCKS=0:\n%s", location, logged)
++		}
++		scopedCounts = append(scopedCounts, strings.Count(logged, "begin\n"))
++	}
++
++	t.Setenv("STATUS_DELAY_GIT_PATH", "")
++	t.Setenv("STATUS_FAIL_GIT_PATH", "")
++	chdirForTest(t, repo)
++	clearStatusLog(t, logPath)
++	if _, _, err := runStatus(t, "--json"); err != nil {
++		t.Fatal(err)
++	}
++	globalLog := readStatusLog(t, logPath)
++	if !strings.Contains(globalLog, billingPath) {
++		t.Fatalf("the unchanged global report must probe billing:\n%s", globalLog)
++	}
++	globalCount := strings.Count(globalLog, "begin\n")
++
++	clearStatusLog(t, logPath)
++	if _, _, err := runStatus(t, "auth", "--json"); err != nil {
++		t.Fatal(err)
++	}
++	scopedCount := strings.Count(readStatusLog(t, logPath), "begin\n")
++	if scopedCount >= globalCount {
++		t.Fatalf("actual Git invocation counts: scoped=%d global=%d", scopedCount, globalCount)
++	}
++	t.Logf("actual Git invocations: scoped repo/workspace/feature=%v, global repo=%d", scopedCounts, globalCount)
++}
++
++func TestStatusMissingStopsBeforeInventories(t *testing.T) {
++	repo := setupGitRepo(t, "main")
++	root := withUnifiedWorkspaceEnv(t, repo)
++	if err := os.MkdirAll(root, 0o755); err != nil {
++		t.Fatal(err)
++	}
++	if err := internal.EnsureExternalWorkspaceMarker(root); err != nil {
++		t.Fatal(err)
++	}
++	gitLog := withStatusGitRecorder(t)
++	tmuxLog := withStatusTmuxRecorder(t)
++
++	for _, location := range []string{repo, root} {
++		chdirForTest(t, location)
++		clearStatusLog(t, gitLog)
++		clearStatusLog(t, tmuxLog)
++		out, _, err := runStatus(t, "missing", "--json")
++		if err == nil || !strings.Contains(err.Error(), "feature not found: missing") {
++			t.Fatalf("%s: err = %v", location, err)
++		}
++		if out != "" {
++			t.Fatalf("%s: stdout = %q", location, out)
++		}
++		logged := readStatusLog(t, gitLog)
++		for _, forbidden := range []string{"arg\tstatus\n", "arg\tworktree\n", "arg\t--verify\n"} {
++			if strings.Contains(logged, forbidden) {
++				t.Fatalf("%s: missing feature dispatched %q:\n%s", location, forbidden, logged)
++			}
++		}
++		if got := readStatusLog(t, tmuxLog); got != "" {
++			t.Fatalf("%s: tmux ran before selected-feature validation: %q", location, got)
++		}
++	}
++}
++
++func TestStatusGitProbeFailureProjectsUnknown(t *testing.T) {
++	repo := setupGitRepo(t, "main")
++	withUnifiedWorkspaceEnv(t, repo)
++	withIdleTmuxOnPath(t)
++	captureStdout(t, func() {
++		if err := addExternal("auth", nil, "api", "main", false, false, false); err != nil {
++			t.Fatal(err)
++		}
++	})
++	withStatusGitRecorder(t)
++	t.Setenv("STATUS_FAIL_GIT_STATUS", "1")
++
++	out, _, err := runStatus(t, "auth", "--json")
++	if err != nil {
++		t.Fatalf("a failed observation still produces a report: %v", err)
++	}
++	var doc map[string]any
++	if err := json.Unmarshal([]byte(out), &doc); err != nil {
++		t.Fatal(err)
++	}
++	workspace := doc["workspace"].(map[string]any)
++	if workspace["dirty"] != nil {
++		t.Fatalf("workspace dirty = %v, want null", workspace["dirty"])
++	}
++	feature := doc["features"].([]any)[0].(map[string]any)
++	entry := feature["entries"].([]any)[0].(map[string]any)
++	materialization := entry["materialization"].(map[string]any)
++	if materialization["dirty"] != nil {
++		t.Fatalf("entry dirty = %v, want null", materialization["dirty"])
++	}
++	foundWorkspace, foundEntry := false, false
++	for _, raw := range doc["issues"].([]any) {
++		issue := raw.(map[string]any)
++		if issue["code"] != "git-probe-unavailable" {
++			continue
++		}
++		foundWorkspace = foundWorkspace || issue["scope"] == "workspace"
++		foundEntry = foundEntry || issue["scope"] == "entry"
++	}
++	if !foundWorkspace || !foundEntry {
++		t.Fatalf("probe issues = %v", doc["issues"])
++	}
++}
++
++func TestStatusScopedIgnoresUnrelatedCheckoutAmbiguity(t *testing.T) {
++	repo := setupGitRepoCheckout(t)
++	withCheckoutEnv(t, repo)
++	withIdleTmuxOnPath(t)
++	authPath := filepath.Join(repo, ".tws", "features", "auth")
++	for _, path := range []string{
++		authPath,
++		filepath.Join(repo, ".tws", "features", "billing"),
++		filepath.Join(repo, ".tws", "billing"),
++	} {
++		if err := os.MkdirAll(path, 0o755); err != nil {
++			t.Fatal(err)
++		}
++	}
++	if err := internal.SaveStack(authPath, internal.Stack{Branches: []internal.StackEntry{{Name: "api", Base: "main"}}}); err != nil {
++		t.Fatal(err)
++	}
++	for _, path := range []string{
++		filepath.Join(repo, ".tws", "features", "billing"),
++		filepath.Join(repo, ".tws", "billing"),
++	} {
++		if err := internal.SaveStack(path, internal.Stack{Branches: []internal.StackEntry{{Name: "pay", Base: "main"}}}); err != nil {
++			t.Fatal(err)
++		}
++	}
++	gitInDir(t, repo, "branch", "api")
++
++	out, _, err := runStatus(t, "auth", "--json")
++	if err != nil {
++		t.Fatalf("unrelated checkout ambiguity must not abort auth: %v", err)
++	}
++	var report internal.AgentStatusReport
++	if err := json.Unmarshal([]byte(out), &report); err != nil {
++		t.Fatal(err)
++	}
++	if len(report.Features) != 1 || report.Features[0].Feature != "auth" {
++		t.Fatalf("features = %+v", report.Features)
++	}
++
++	if out, _, err := runStatus(t, "--json"); err == nil || !strings.Contains(err.Error(), "ambiguous feature") {
++		t.Fatalf("global topology failure = %v, stdout=%q", err, out)
++	}
++}
++
++func TestStatusScopedCwdEquivalence(t *testing.T) {
++	repo := setupGitRepo(t, "main")
++	root := withUnifiedWorkspaceEnv(t, repo)
++	withIdleTmuxOnPath(t)
++	captureStdout(t, func() {
++		if err := addExternal("auth", nil, "api", "main", false, false, false); err != nil {
++			t.Fatal(err)
++		}
++	})
++	worktree := filepath.Join(root, "auth", "worktrees", "api")
++	nestedWorktree := filepath.Join(worktree, "nested")
++	nestedFeature := filepath.Join(root, "auth", "notes")
++	for _, dir := range []string{nestedWorktree, nestedFeature} {
++		if err := os.MkdirAll(dir, 0o755); err != nil {
++			t.Fatal(err)
++		}
++	}
++	locations := []string{repo, worktree, nestedWorktree, root, filepath.Join(root, "auth"), nestedFeature}
++
++	var reference string
++	for _, location := range locations {
++		chdirForTest(t, location)
++		out, _, err := runStatus(t, "auth", "--json")
++		if err != nil {
++			t.Fatalf("%s: %v", location, err)
++		}
++		var doc map[string]any
++		if err := json.Unmarshal([]byte(out), &doc); err != nil {
++			t.Fatal(err)
++		}
++		delete(doc, "generated_at")
++		normalized, err := json.Marshal(doc)
++		if err != nil {
++			t.Fatal(err)
++		}
++		if reference == "" {
++			reference = string(normalized)
++		} else if string(normalized) != reference {
++			t.Fatalf("%s produced a different scoped document", location)
++		}
++	}
++}
++
++func TestStatusScopedCheckoutLegacyCwdEquivalence(t *testing.T) {
++	repo := setupGitRepoCheckout(t)
++	withCheckoutEnv(t, repo)
++	withIdleTmuxOnPath(t)
++	featurePath := filepath.Join(repo, ".tws", "auth")
++	nested := filepath.Join(featurePath, "notes")
++	if err := os.MkdirAll(nested, 0o755); err != nil {
++		t.Fatal(err)
++	}
++	if err := internal.SaveStack(featurePath, internal.Stack{Branches: []internal.StackEntry{{Name: "api", Base: "main"}}}); err != nil {
++		t.Fatal(err)
++	}
++	gitInDir(t, repo, "branch", "api")
++
++	var reference string
++	for _, location := range []string{repo, featurePath, nested} {
++		chdirForTest(t, location)
++		out, _, err := runStatus(t, "auth", "--json")
++		if err != nil {
++			t.Fatalf("%s: %v", location, err)
++		}
++		var doc map[string]any
++		if err := json.Unmarshal([]byte(out), &doc); err != nil {
++			t.Fatal(err)
++		}
++		delete(doc, "generated_at")
++		normalized, err := json.Marshal(doc)
++		if err != nil {
++			t.Fatal(err)
++		}
++		if reference == "" {
++			reference = string(normalized)
++		} else if string(normalized) != reference {
++			t.Fatalf("%s produced a different checkout scoped document", location)
++		}
++	}
++}
++
++func TestStatusScopedCheckoutSkipsWorktreeInventory(t *testing.T) {
++	repo := setupGitRepoCheckout(t)
++	withCheckoutEnv(t, repo)
++	withIdleTmuxOnPath(t)
++	ws, err := internal.RequireWorkspace()
++	if err != nil {
++		t.Fatal(err)
++	}
++	featurePath := ws.FeaturePath("auth")
++	nested := filepath.Join(featurePath, "notes")
++	if err := os.MkdirAll(nested, 0o755); err != nil {
++		t.Fatal(err)
++	}
++	if err := internal.SaveStack(featurePath, internal.Stack{
++		Branches: []internal.StackEntry{{Name: "api", Base: "main"}},
++	}); err != nil {
++		t.Fatal(err)
++	}
++	gitInDir(t, repo, "branch", "api")
++	if err := internal.SaveCheckoutAgentSession(ws, &internal.CheckoutAgentSession{
++		SchemaVersion: 1,
++		WorkspaceID:   ws.StableID,
++		Feature:       "auth",
++		Name:          "api",
++		GitBranch:     "api",
++		Mode:          internal.AgentSessionDirect,
++		PID:           os.Getpid(),
++		Stage:         internal.DirectStageAgent,
++		RepoDir:       repo,
++		LockToken:     "status-test",
++	}); err != nil {
++		t.Fatal(err)
++	}
++	lockDir := internal.CheckoutSessionIntentDir(ws)
++	if err := os.MkdirAll(lockDir, 0o700); err != nil {
++		t.Fatal(err)
++	}
++	owner, err := json.Marshal(map[string]any{
++		"token":      "status-test",
++		"pid":        os.Getpid(),
++		"created_at": "2026-10-01T00:00:00Z",
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(filepath.Join(lockDir, "owner.json"), owner, 0o600); err != nil {
++		t.Fatal(err)
++	}
++
++	logPath := withStatusGitRecorder(t)
++	t.Setenv("STATUS_FAIL_WORKTREE_LIST", "1")
++	for _, location := range []string{repo, nested} {
++		chdirForTest(t, location)
++		clearStatusLog(t, logPath)
++		out, _, err := runStatus(t, "auth", "--json")
++		if err != nil {
++			t.Fatalf("%s: %v", location, err)
++		}
++		if logged := readStatusLog(t, logPath); strings.Contains(logged, "arg\tworktree\n") {
++			t.Fatalf("%s: checkout scoped status dispatched worktree inventory:\n%s", location, logged)
++		}
++		var report internal.AgentStatusReport
++		if err := json.Unmarshal([]byte(out), &report); err != nil {
++			t.Fatal(err)
++		}
++		if len(report.Features) != 1 || len(report.Features[0].Entries) != 1 {
++			t.Fatalf("%s: scoped report = %+v", location, report.Features)
++		}
++		entry := report.Features[0].Entries[0]
++		if entry.Materialization.RefExists == nil || !*entry.Materialization.RefExists ||
++			entry.Materialization.State != internal.MaterializedPresent {
++			t.Fatalf("%s: selected ref projection = %+v", location, entry.Materialization)
++		}
++		if report.Workspace.CheckoutSession == nil ||
++			report.Workspace.CheckoutSession.Presence != internal.PresencePresent ||
++			len(entry.Sessions) != 1 {
++			t.Fatalf("%s: selected session projection = workspace=%+v entry=%+v",
++				location, report.Workspace.CheckoutSession, entry.Sessions)
++		}
++		for _, issue := range report.Issues {
++			if issue.Code == internal.IssueGitProbeUnavailable &&
++				strings.Contains(issue.Message, "worktree inventory") {
++				t.Fatalf("%s: skipped inventory produced an issue: %+v", location, issue)
++			}
++		}
++	}
++}
++
++func TestStatusParentCancellationStopsResolution(t *testing.T) {
++	repo := setupGitRepo(t, "main")
++	withUnifiedWorkspaceEnv(t, repo)
++	realGit, err := exec.LookPath("git")
++	if err != nil {
++		t.Fatal(err)
++	}
++	dir := t.TempDir()
++	shim := filepath.Join(dir, "git")
++	script := `#!/bin/sh
++case " $* " in
++  *" rev-parse --git-common-dir "*) sleep 30 ;;
++esac
++exec "$STATUS_REAL_GIT" "$@"
++`
++	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
++		t.Fatal(err)
++	}
++	t.Setenv("STATUS_REAL_GIT", realGit)
++	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
++
++	ctx, cancel := context.WithTimeout(context.Background(), 70*time.Millisecond)
++	defer cancel()
++	cmd := statusCmd()
++	cmd.SetContext(ctx)
++	cmd.SetArgs([]string{"auth", "--json"})
++	var out, errOut bytes.Buffer
++	cmd.SetOut(&out)
++	cmd.SetErr(&errOut)
++	start := time.Now()
++	err = cmd.Execute()
++	if err == nil || out.Len() != 0 {
++		t.Fatalf("canceled status: err=%v stdout=%q stderr=%q", err, out.String(), errOut.String())
++	}
++	if elapsed := time.Since(start); elapsed > time.Second {
++		t.Fatalf("parent cancellation took %s", elapsed)
++	}
++}
+diff --git a/internal/cli/testdata/existing_commands/checkout-bare/status.json b/internal/cli/testdata/existing_commands/checkout-bare/status.json
+index c3bf354..8f0ec9f 100644
+--- a/internal/cli/testdata/existing_commands/checkout-bare/status.json
++++ b/internal/cli/testdata/existing_commands/checkout-bare/status.json
+@@ -88,7 +88,17 @@ exit: 0
+       "sync": null
+     }
+   ],
+-  "issues": [],
++  "issues": [
++    {
++      "code": "git-probe-unavailable",
++      "feature": null,
++      "guidance": "verify the repository and retry status",
++      "message": "dirty state could not be determined for \u003cREPO\u003e: git failed: exit status 128",
++      "name": null,
++      "scope": "workspace",
++      "severity": "warning"
++    }
++  ],
+   "schema_version": 1,
+   "summary": {
+     "active": 0,
+@@ -96,28 +106,30 @@ exit: 0
+     "errors": 0,
+     "features": 1,
+     "idle": 2,
+-    "issues": 0,
++    "issues": 1,
+     "needs_attention": 0,
+     "runtime_absent": 2,
+     "runtime_present": 0,
+     "runtime_stale": 0,
+     "runtime_unknown": 0,
+-    "warnings": 0
++    "warnings": 1
+   },
+   "workspace": {
+     "active_git_op": null,
+     "agent_state": "unknown",
+     "attention": {
+-      "codes": [],
+-      "issue_count": 0,
+-      "status": "idle"
++      "codes": [
++        "git-probe-unavailable"
++      ],
++      "issue_count": 1,
++      "status": "needs_attention"
+     },
+     "branch": "main",
+     "checkout_session": null,
+     "degraded": false,
+     "degraded_reason": null,
+     "detached": false,
+-    "dirty": false,
++    "dirty": null,
+     "metadata_root": "\u003cMETA\u003e",
+     "mode": "checkout",
+     "repo_root": "\u003cREPO\u003e",
+diff --git a/internal/cli/testdata/existing_commands/checkout-bare/status.txt b/internal/cli/testdata/existing_commands/checkout-bare/status.txt
+index 78c8ee3..412096e 100644
+--- a/internal/cli/testdata/existing_commands/checkout-bare/status.txt
++++ b/internal/cli/testdata/existing_commands/checkout-bare/status.txt
+@@ -1,6 +1,6 @@
+ exit: 0
+ Workspace: <META> (mode: checkout)
+-  Attention: [ok] idle
++  Attention: [!] needs_attention
+   ID:        <STABLE_ID>
+   Repo:      <REPO>
+   tmux:      available (no server)
+@@ -9,4 +9,7 @@ STATUS     BRANCH       PRESENCE  AGENT    SESSIONS  DETAIL
+ [ok] idle  auth/models  absent    unknown  0/0       -
+ [ok] idle  auth/api     absent    unknown  0/0       -
+ 
+-2 branch(es): 0 active, 2 idle, 0 needs attention. 0 issue(s).
++Workspace:
++  [!] git-probe-unavailable: dirty state could not be determined for <REPO>: git failed: exit status 128; verify the repository and retry status
++
++2 branch(es): 0 active, 2 idle, 0 needs attention. 1 issue(s).
+diff --git a/internal/cli/testdata/existing_commands/external-bare/status.json b/internal/cli/testdata/existing_commands/external-bare/status.json
+index 8da1523..531c843 100644
+--- a/internal/cli/testdata/existing_commands/external-bare/status.json
++++ b/internal/cli/testdata/existing_commands/external-bare/status.json
+@@ -88,7 +88,17 @@ exit: 0
+       "sync": null
+     }
+   ],
+-  "issues": [],
++  "issues": [
++    {
++      "code": "git-probe-unavailable",
++      "feature": null,
++      "guidance": "verify the repository and retry status",
++      "message": "dirty state could not be determined for \u003cREPO\u003e: git failed: exit status 128",
++      "name": null,
++      "scope": "workspace",
++      "severity": "warning"
++    }
++  ],
+   "schema_version": 1,
+   "summary": {
+     "active": 0,
+@@ -96,28 +106,30 @@ exit: 0
+     "errors": 0,
+     "features": 1,
+     "idle": 2,
+-    "issues": 0,
++    "issues": 1,
+     "needs_attention": 0,
+     "runtime_absent": 2,
+     "runtime_present": 0,
+     "runtime_stale": 0,
+     "runtime_unknown": 0,
+-    "warnings": 0
++    "warnings": 1
+   },
+   "workspace": {
+     "active_git_op": null,
+     "agent_state": "unknown",
+     "attention": {
+-      "codes": [],
+-      "issue_count": 0,
+-      "status": "idle"
++      "codes": [
++        "git-probe-unavailable"
++      ],
++      "issue_count": 1,
++      "status": "needs_attention"
+     },
+     "branch": "main",
+     "checkout_session": null,
+     "degraded": false,
+     "degraded_reason": null,
+     "detached": false,
+-    "dirty": false,
++    "dirty": null,
+     "metadata_root": "\u003cMETA\u003e",
+     "mode": "external",
+     "repo_root": "\u003cREPO\u003e",
+diff --git a/internal/cli/testdata/existing_commands/external-bare/status.txt b/internal/cli/testdata/existing_commands/external-bare/status.txt
+index 437f26d..be64063 100644
+--- a/internal/cli/testdata/existing_commands/external-bare/status.txt
++++ b/internal/cli/testdata/existing_commands/external-bare/status.txt
+@@ -1,6 +1,6 @@
+ exit: 0
+ Workspace: <META> (mode: external)
+-  Attention: [ok] idle
++  Attention: [!] needs_attention
+   ID:        <STABLE_ID>
+   Repo:      <REPO>
+   tmux:      available (no server)
+@@ -9,4 +9,7 @@ STATUS     BRANCH       PRESENCE  AGENT    SESSIONS  DETAIL
+ [ok] idle  auth/models  absent    unknown  0/0       -
+ [ok] idle  auth/api     absent    unknown  0/0       -
+ 
+-2 branch(es): 0 active, 2 idle, 0 needs attention. 0 issue(s).
++Workspace:
++  [!] git-probe-unavailable: dirty state could not be determined for <REPO>: git failed: exit status 128; verify the repository and retry status
++
++2 branch(es): 0 active, 2 idle, 0 needs attention. 1 issue(s).
+diff --git a/internal/status_probe.go b/internal/status_probe.go
+new file mode 100644
+index 0000000..0318be7
+--- /dev/null
++++ b/internal/status_probe.go
+@@ -0,0 +1,483 @@
++package internal
++
++import (
++	"bytes"
++	"context"
++	"errors"
++	"fmt"
++	"io"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"sort"
++	"strings"
++	"sync"
++	"time"
++)
++
++const (
++	statusSubprocessTimeout = 5 * time.Second
++	statusInvocationTimeout = 30 * time.Second
++	statusProcessWaitDelay  = 250 * time.Millisecond
++)
++
++// StatusProbeBudget owns the subprocess lifetime of one status invocation.
++// Filesystem reads remain synchronous and are intentionally outside this
++// cancellation contract.
++type StatusProbeBudget struct {
++	ctx      context.Context
++	cancel   context.CancelFunc
++	deadline time.Time
++	perProbe time.Duration
++
++	mu       sync.Mutex
++	launched int
++}
++
++func NewStatusProbeBudget(parent context.Context) *StatusProbeBudget {
++	return newStatusProbeBudget(parent, statusSubprocessTimeout, statusInvocationTimeout)
++}
++
++func newStatusProbeBudget(parent context.Context, perProbe, total time.Duration) *StatusProbeBudget {
++	if parent == nil {
++		parent = context.Background()
++	}
++	ctx, cancel := context.WithTimeout(parent, total)
++	deadline, _ := ctx.Deadline()
++	return &StatusProbeBudget{
++		ctx:      ctx,
++		cancel:   cancel,
++		deadline: deadline,
++		perProbe: perProbe,
++	}
++}
++
++func (b *StatusProbeBudget) Close() {
++	if b != nil && b.cancel != nil {
++		b.cancel()
++	}
++}
++
++func (b *StatusProbeBudget) Stopped() bool {
++	if b == nil {
++		return false
++	}
++	return b.ctx.Err() != nil || time.Until(b.deadline) <= 0
++}
++
++func (b *StatusProbeBudget) launchedCount() int {
++	if b == nil {
++		return 0
++	}
++	b.mu.Lock()
++	defer b.mu.Unlock()
++	return b.launched
++}
++
++type statusProbeError struct {
++	command     string
++	err         error
++	timedOut    bool
++	canceled    bool
++	pipeExpired bool
++}
++
++func (e *statusProbeError) Error() string {
++	switch {
++	case e.timedOut:
++		return e.command + " timed out"
++	case e.canceled:
++		return e.command + " canceled"
++	case e.pipeExpired:
++		return fmt.Sprintf("%s output pipe cleanup timed out: %v", e.command, e.err)
++	default:
++		return fmt.Sprintf("%s failed: %v", e.command, e.err)
++	}
++}
++
++func (e *statusProbeError) Unwrap() error { return e.err }
++
++func completedStatusExit(err error) *exec.ExitError {
++	var probeErr *statusProbeError
++	if !errors.As(err, &probeErr) || probeErr.timedOut || probeErr.canceled || probeErr.pipeExpired {
++		return nil
++	}
++	// A joined drain or context failure is not a completed observation,
++	// even when it also contains a normal process exit code.
++	exitErr, _ := probeErr.err.(*exec.ExitError)
++	return exitErr
++}
++
++func statusProbeProblem(err error) string {
++	var probeErr *statusProbeError
++	if errors.As(err, &probeErr) {
++		switch {
++		case probeErr.timedOut:
++			return "timed out"
++		case probeErr.canceled:
++			return "was canceled"
++		}
++	}
++	return err.Error()
++}
++
++func (b *StatusProbeBudget) run(name string, args ...string) ([]byte, []byte, error) {
++	if b == nil {
++		owned := NewStatusProbeBudget(context.Background())
++		defer owned.Close()
++		return owned.run(name, args...)
++	}
++	if err := b.ctx.Err(); err != nil {
++		return nil, nil, &statusProbeError{command: name, err: err, timedOut: errors.Is(err, context.DeadlineExceeded), canceled: !errors.Is(err, context.DeadlineExceeded)}
++	}
++
++	remaining := time.Until(b.deadline)
++	if remaining <= 0 {
++		return nil, nil, &statusProbeError{command: name, err: context.DeadlineExceeded, timedOut: true}
++	}
++	limit := b.perProbe
++	if remaining < limit {
++		limit = remaining
++	}
++	probeCtx, cancel := context.WithTimeout(b.ctx, limit)
++	defer cancel()
++
++	cmd := exec.CommandContext(probeCtx, name, args...)
++	configureStatusCommand(cmd)
++	cmd.WaitDelay = statusProcessWaitDelay
++	if name == "git" {
++		cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
++	}
++	stdoutReader, stdoutWriter, err := os.Pipe()
++	if err != nil {
++		return nil, nil, &statusProbeError{command: name, err: err}
++	}
++	stderrReader, stderrWriter, err := os.Pipe()
++	if err != nil {
++		_ = stdoutReader.Close()
++		_ = stdoutWriter.Close()
++		return nil, nil, &statusProbeError{command: name, err: err}
++	}
++	closePipes := func() {
++		_ = stdoutReader.Close()
++		_ = stdoutWriter.Close()
++		_ = stderrReader.Close()
++		_ = stderrWriter.Close()
++	}
++	var stdout, stderr bytes.Buffer
++	cmd.Stdout = stdoutWriter
++	cmd.Stderr = stderrWriter
++
++	b.mu.Lock()
++	if b.ctx.Err() != nil || time.Until(b.deadline) <= 0 {
++		b.mu.Unlock()
++		closePipes()
++		err := b.ctx.Err()
++		if err == nil {
++			err = context.DeadlineExceeded
++		}
++		return nil, nil, &statusProbeError{command: name, err: err, timedOut: errors.Is(err, context.DeadlineExceeded), canceled: !errors.Is(err, context.DeadlineExceeded)}
++	}
++	b.mu.Unlock()
++
++	if err := cmd.Start(); err != nil {
++		closePipes()
++		return nil, nil, &statusProbeError{command: name, err: err}
++	}
++	b.mu.Lock()
++	b.launched++
++	b.mu.Unlock()
++	_ = stdoutWriter.Close()
++	_ = stderrWriter.Close()
++
++	type pipeResult struct{ err error }
++	drained := make(chan pipeResult, 2)
++	go func() {
++		_, copyErr := io.Copy(&stdout, stdoutReader)
++		drained <- pipeResult{err: copyErr}
++	}()
++	go func() {
++		_, copyErr := io.Copy(&stderr, stderrReader)
++		drained <- pipeResult{err: copyErr}
++	}()
++
++	waitErr := cmd.Wait()
++	timer := time.NewTimer(statusProcessWaitDelay)
++	drainedCount := 0
++	var drainErr error
++	pipeExpired := false
++	for drainedCount < 2 {
++		select {
++		case result := <-drained:
++			drainedCount++
++			if result.err != nil {
++				drainErr = errors.Join(drainErr, result.err)
++			}
++		case <-timer.C:
++			pipeExpired = true
++			_ = terminateStatusCommand(cmd)
++			_ = stdoutReader.Close()
++			_ = stderrReader.Close()
++			for drainedCount < 2 {
++				result := <-drained
++				drainedCount++
++				if result.err != nil && !errors.Is(result.err, os.ErrClosed) {
++					drainErr = errors.Join(drainErr, result.err)
++				}
++			}
++		}
++	}
++	if !timer.Stop() && !pipeExpired {
++		<-timer.C
++	}
++	_ = stdoutReader.Close()
++	_ = stderrReader.Close()
++
++	if pipeExpired {
++		drainErr = errors.Join(drainErr, exec.ErrWaitDelay)
++	}
++	if drainErr != nil {
++		waitErr = errors.Join(waitErr, drainErr)
++	}
++	if probeCtx.Err() != nil {
++		return stdout.Bytes(), stderr.Bytes(), &statusProbeError{
++			command:     name,
++			err:         errors.Join(probeCtx.Err(), waitErr),
++			timedOut:    errors.Is(probeCtx.Err(), context.DeadlineExceeded),
++			canceled:    errors.Is(probeCtx.Err(), context.Canceled),
++			pipeExpired: pipeExpired,
++		}
++	}
++	if waitErr != nil {
++		return stdout.Bytes(), stderr.Bytes(), &statusProbeError{command: name, err: waitErr, pipeExpired: pipeExpired}
++	}
++	return stdout.Bytes(), stderr.Bytes(), nil
++}
++
++func statusMainRepoRootIn(path string, budget *StatusProbeBudget) (string, error) {
++	out, _, err := budget.run("git", "-C", path, "rev-parse", "--git-common-dir")
++	if err != nil {
++		return "", err
++	}
++	gitDir := strings.TrimSpace(string(out))
++	if !filepath.IsAbs(gitDir) {
++		gitDir = filepath.Join(path, gitDir)
++	}
++	return filepath.Dir(filepath.Clean(gitDir)), nil
++}
++
++func statusCurrentBranch(path string, budget *StatusProbeBudget) (string, *bool, error) {
++	out, _, err := budget.run("git", "-C", path, "rev-parse", "--abbrev-ref", "HEAD")
++	if err != nil {
++		return "", nil, err
++	}
++	branch := strings.TrimSpace(string(out))
++	if branch != "HEAD" {
++		return branch, boolPtr(false), nil
++	}
++	detached := boolPtr(true)
++	short, _, shortErr := budget.run("git", "-C", path, "rev-parse", "--short", "HEAD")
++	if shortErr != nil {
++		return "HEAD", detached, shortErr
++	}
++	return strings.TrimSpace(string(short)), detached, nil
++}
++
++func statusDirty(path string, budget *StatusProbeBudget) (*bool, error) {
++	out, _, err := budget.run("git", "-C", path, "status", "--porcelain")
++	if err != nil {
++		return nil, err
++	}
++	return boolPtr(len(bytes.TrimSpace(out)) > 0), nil
++}
++
++func statusRefExists(path, ref string, budget *StatusProbeBudget) (*bool, error) {
++	_, _, err := budget.run("git", "-C", path, "rev-parse", "--verify", "--quiet", ref)
++	if err == nil {
++		return boolPtr(true), nil
++	}
++	if exitErr := completedStatusExit(err); exitErr != nil && exitErr.ExitCode() == 1 {
++		return boolPtr(false), nil
++	}
++	return nil, err
++}
++
++// ResolveStatusWorkspaceWithBudget is the status-only workspace resolver. It
++// avoids LoadConfig's hidden Git call and, for named external reports, limits
++// repository inference to configured, sibling, and selected-feature evidence.
++func ResolveStatusWorkspaceWithBudget(feature string, budget *StatusProbeBudget) (Workspace, string, error) {
++	owned := false
++	if budget == nil {
++		budget = NewStatusProbeBudget(context.Background())
++		owned = true
++	}
++	if owned {
++		defer budget.Close()
++	}
++
++	cwd, err := os.Getwd()
++	if err != nil {
++		return Workspace{}, "", err
++	}
++	globalCfg := loadConfigFile(ConfigPath())
++	repoRoot, repoErr := statusMainRepoRootIn(cwd, budget)
++	if repoErr == nil {
++		cfg := mergeConfig(globalCfg, loadConfigFile(RepoConfigPathFor(repoRoot)))
++		ws, wsErr := ResolveCurrentWorkspaceE(repoRoot, cfg)
++		if wsErr != nil {
++			return Workspace{}, "", wsErr
++		}
++		ws.MetadataRoot = canonicalize(ws.MetadataRoot)
++		if feature != "" {
++			if _, selectErr := selectStatusFeature(ws, feature); selectErr != nil {
++				return Workspace{}, "", selectErr
++			}
++		}
++		return ws, "", nil
++	}
++
++	metadataRoot := DetectWorkspaceRoot(cwd, globalCfg)
++	if metadataRoot == "" || !metadataRootExists(metadataRoot) {
++		var probeErr *statusProbeError
++		if errors.As(repoErr, &probeErr) && (probeErr.timedOut || probeErr.canceled) {
++			return Workspace{}, "", fmt.Errorf("status workspace resolution failed because the Git probe %s", statusProbeProblem(repoErr))
++		}
++		if budget.Stopped() {
++			return Workspace{}, "", fmt.Errorf("status workspace resolution stopped before a workspace could be established")
++		}
++		return Workspace{}, "", fmt.Errorf("not inside a git repository or tws workspace")
++	}
++	metadataRoot = canonicalize(metadataRoot)
++	provisional := Workspace{
++		Mode:         ModeExternal,
++		MetadataRoot: metadataRoot,
++		Caps:         capsFor(ModeExternal),
++	}
++	selectedPath := ""
++	if feature != "" {
++		selectedPath, err = selectStatusFeature(provisional, feature)
++		if err != nil {
++			return Workspace{}, "", err
++		}
++	}
++
++	repoRoot, inferErr := inferStatusExternalRepoRoot(metadataRoot, globalCfg, selectedPath, budget)
++	if inferErr != nil {
++		return provisional, inferErr.Error(), nil
++	}
++	provisional.RepoRoot = canonicalize(repoRoot)
++	provisional.StableID = stableID(provisional.RepoRoot)
++	return provisional, "", nil
++}
++
++func ResolveStatusWorkspace() (Workspace, string, error) {
++	budget := NewStatusProbeBudget(context.Background())
++	defer budget.Close()
++	return ResolveStatusWorkspaceWithBudget("", budget)
++}
++
++func selectStatusFeature(ws Workspace, feature string) (string, error) {
++	if err := GuardFeatureName(ws.MetadataRoot, feature); err != nil {
++		return "", err
++	}
++	path, err := ws.ResolveFeaturePathOrLegacy(feature)
++	if err != nil {
++		return "", err
++	}
++	if path == "" {
++		return "", fmt.Errorf("feature not found: %s", feature)
++	}
++	return path, nil
++}
++
++func inferStatusExternalRepoRoot(metadataRoot string, cfg Config, selectedPath string, budget *StatusProbeBudget) (string, error) {
++	metadataRoot = canonicalize(metadataRoot)
++	candidatePaths := map[string]bool{}
++	addPath := func(path string) {
++		if strings.TrimSpace(path) != "" {
++			candidatePaths[cleanAbsolute(path)] = true
++		}
++	}
++
++	for repo, configuredRoot := range cfg.Workspaces {
++		if canonicalize(configuredRoot) == metadataRoot {
++			addPath(repo)
++		}
++	}
++	if siblingRepo, ok := strings.CutSuffix(metadataRoot, ".tws"); ok {
++		addPath(siblingRepo)
++	}
++	if selectedPath != "" {
++		if stack, err := LoadStack(selectedPath); err == nil {
++			for _, entry := range stack.Branches {
++				if entry.Repo != "" || entry.Archived {
++					continue
++				}
++				worktreePath := filepath.Join(selectedPath, "worktrees", entry.Name)
++				if info, statErr := os.Stat(worktreePath); statErr == nil && info.IsDir() {
++					addPath(worktreePath)
++				}
++			}
++		}
++	} else {
++		entries, _ := os.ReadDir(metadataRoot)
++		for _, featureEntry := range entries {
++			if !featureEntry.IsDir() || featureEntry.Name() == workspaceMarker {
++				continue
++			}
++			featurePath := filepath.Join(metadataRoot, featureEntry.Name())
++			stack, err := LoadStack(featurePath)
++			if err != nil {
++				continue
++			}
++			for _, entry := range stack.Branches {
++				if entry.Repo != "" || entry.Archived {
++					continue
++				}
++				worktreePath := filepath.Join(featurePath, "worktrees", entry.Name)
++				if info, statErr := os.Stat(worktreePath); statErr == nil && info.IsDir() {
++					addPath(worktreePath)
++				}
++			}
++		}
++	}
++
++	paths := make([]string, 0, len(candidatePaths))
++	for path := range candidatePaths {
++		paths = append(paths, path)
++	}
++	sort.Strings(paths)
++
++	roots := map[string]bool{}
++	var uncertain []string
++	for _, path := range paths {
++		root, err := statusMainRepoRootIn(path, budget)
++		if err == nil {
++			roots[canonicalize(root)] = true
++			continue
++		}
++		var probeErr *statusProbeError
++		if errors.As(err, &probeErr) && (probeErr.timedOut || probeErr.canceled) {
++			uncertain = append(uncertain, fmt.Sprintf("%s (%s)", path, statusProbeProblem(err)))
++		}
++	}
++	if len(uncertain) > 0 {
++		return "", fmt.Errorf("cannot fully validate default repository candidates for external workspace %s: %s",
++			metadataRoot, strings.Join(uncertain, ", "))
++	}
++	if len(roots) == 1 {
++		for root := range roots {
++			return root, nil
++		}
++	}
++	if len(roots) > 1 {
++		values := make([]string, 0, len(roots))
++		for root := range roots {
++			values = append(values, root)
++		}
++		sort.Strings(values)
++		return "", fmt.Errorf("external workspace %s maps to multiple default repositories (%s); run from a worktree or repository",
++			metadataRoot, strings.Join(values, ", "))
++	}
++	return "", fmt.Errorf("cannot determine source repository for external workspace %s; run from a worktree or configure the workspace path", metadataRoot)
++}
+diff --git a/internal/status_probe_test.go b/internal/status_probe_test.go
+new file mode 100644
+index 0000000..7558b89
+--- /dev/null
++++ b/internal/status_probe_test.go
+@@ -0,0 +1,440 @@
++package internal
++
++import (
++	"context"
++	"errors"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"runtime"
++	"strconv"
++	"strings"
++	"syscall"
++	"testing"
++	"time"
++)
++
++func writeStatusProbeScript(t *testing.T, body string) string {
++	t.Helper()
++	path := filepath.Join(t.TempDir(), "probe")
++	if err := os.WriteFile(path, []byte("#!/bin/sh\nset -eu\n"+body), 0o755); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.Chmod(path, 0o755); err != nil {
++		t.Fatal(err)
++	}
++	return path
++}
++
++func statusProbePIDGone(pid int) bool {
++	err := syscall.Kill(pid, syscall.Signal(0))
++	return errors.Is(err, syscall.ESRCH)
++}
++
++func waitForStatusProbePIDGone(t *testing.T, pid int) {
++	t.Helper()
++	deadline := time.Now().Add(2 * time.Second)
++	for time.Now().Before(deadline) {
++		if statusProbePIDGone(pid) {
++			return
++		}
++		time.Sleep(20 * time.Millisecond)
++	}
++	t.Fatalf("status probe child pid %d is still alive", pid)
++}
++
++func TestStatusProbeDefaultBudgets(t *testing.T) {
++	if statusSubprocessTimeout != 5*time.Second {
++		t.Fatalf("per-subprocess timeout = %s, want 5s", statusSubprocessTimeout)
++	}
++	if statusInvocationTimeout != 30*time.Second {
++		t.Fatalf("invocation timeout = %s, want 30s", statusInvocationTimeout)
++	}
++}
++
++func TestStatusProbeCompletedExitRejectsUncertainExitOne(t *testing.T) {
++	script := writeStatusProbeScript(t, "exit 1\n")
++	var exitErr *exec.ExitError
++	if err := exec.Command(script).Run(); !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
++		t.Fatalf("expected a real exit-code-one fixture, got %v", err)
++	}
++	cases := []struct {
++		name      string
++		probe     *statusProbeError
++		completed bool
++	}{
++		{"completed", &statusProbeError{err: exitErr}, true},
++		{"deadline-race", &statusProbeError{err: errors.Join(context.DeadlineExceeded, exitErr), timedOut: true}, false},
++		{"cancellation-race", &statusProbeError{err: errors.Join(context.Canceled, exitErr), canceled: true}, false},
++		{"pipe-expiry", &statusProbeError{err: errors.Join(exitErr, exec.ErrWaitDelay), pipeExpired: true}, false},
++		{"drain-failure", &statusProbeError{err: errors.Join(exitErr, os.ErrClosed)}, false},
++	}
++	for _, tc := range cases {
++		t.Run(tc.name, func(t *testing.T) {
++			if got := completedStatusExit(tc.probe) != nil; got != tc.completed {
++				t.Fatalf("completed=%v, want %v for %v", got, tc.completed, tc.probe)
++			}
++			if got := completedTmuxNoServerFailure(tc.probe, []byte("no server running")); got != tc.completed {
++				t.Fatalf("no-server=%v, want %v for %v", got, tc.completed, tc.probe)
++			}
++		})
++	}
++}
++
++func TestStatusProbeBudgetPerCommandAndTotalExpiry(t *testing.T) {
++	logPath := filepath.Join(t.TempDir(), "invocations.log")
++	t.Setenv("STATUS_PROBE_LOG", logPath)
++	slow := writeStatusProbeScript(t, "printf 'slow\\n' >> \"$STATUS_PROBE_LOG\"\nsleep 30\n")
++	fast := writeStatusProbeScript(t, "printf 'fast\\n' >> \"$STATUS_PROBE_LOG\"\n")
++
++	budget := newStatusProbeBudget(context.Background(), 250*time.Millisecond, 2*time.Second)
++	defer budget.Close()
++	if _, _, err := budget.run(slow); err == nil || !strings.Contains(err.Error(), "timed out") {
++		t.Fatalf("slow probe error = %v", err)
++	}
++	if _, _, err := budget.run(fast); err != nil {
++		t.Fatalf("a per-command timeout must not consume the remaining total budget: %v", err)
++	}
++	data, err := os.ReadFile(logPath)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got := string(data); got != "slow\nfast\n" {
++		t.Fatalf("actual dispatch log = %q", got)
++	}
++
++	totalLog := filepath.Join(t.TempDir(), "total.log")
++	t.Setenv("STATUS_PROBE_LOG", totalLog)
++	total := newStatusProbeBudget(context.Background(), time.Second, 250*time.Millisecond)
++	defer total.Close()
++	if _, _, err := total.run(slow); err == nil {
++		t.Fatal("the total budget must cancel the running probe")
++	}
++	if _, _, err := total.run(fast); err == nil {
++		t.Fatal("no command may dispatch after total expiry")
++	}
++	if total.launchedCount() != 1 {
++		t.Fatalf("launched commands = %d, want 1", total.launchedCount())
++	}
++	data, err = os.ReadFile(totalLog)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got := string(data); got != "slow\n" {
++		t.Fatalf("actual post-expiry dispatch log = %q", got)
++	}
++}
++
++func TestStatusProbeBudgetKillsChildrenHoldingPipes(t *testing.T) {
++	if runtime.GOOS == "windows" {
++		t.Skip("process-group cleanup is Unix-specific")
++	}
++	childFile := filepath.Join(t.TempDir(), "child.pid")
++	t.Setenv("STATUS_CHILD_PID_FILE", childFile)
++	script := writeStatusProbeScript(t, "sleep 30 &\nprintf '%s\\n' \"$!\" > \"$STATUS_CHILD_PID_FILE\"\nexit 0\n")
++
++	budget := newStatusProbeBudget(context.Background(), 2*time.Second, 3*time.Second)
++	defer budget.Close()
++	start := time.Now()
++	if _, _, err := budget.run(script); err == nil {
++		t.Fatal("a child-held output pipe must be surfaced as an unavailable probe")
++	}
++	if elapsed := time.Since(start); elapsed > time.Second {
++		t.Fatalf("child-held pipe cleanup took %s", elapsed)
++	}
++	data, err := os.ReadFile(childFile)
++	if err != nil {
++		t.Fatal(err)
++	}
++	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
++	if err != nil {
++		t.Fatal(err)
++	}
++	waitForStatusProbePIDGone(t, pid)
++}
++
++func TestRealTmuxInventoryNonzeroParentPipeLeakIsUnavailable(t *testing.T) {
++	if runtime.GOOS == "windows" {
++		t.Skip("process-group cleanup is Unix-specific")
++	}
++	dir := t.TempDir()
++	childFile := filepath.Join(dir, "child.pid")
++	shim := filepath.Join(dir, "tmux")
++	script := `#!/bin/sh
++echo 'no server running' >&2
++sleep 30 &
++printf '%s\n' "$!" > "$STATUS_CHILD_PID_FILE"
++exit 1
++`
++	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
++		t.Fatal(err)
++	}
++	t.Setenv("STATUS_CHILD_PID_FILE", childFile)
++	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
++	budget := newStatusProbeBudget(context.Background(), 2*time.Second, 3*time.Second)
++	defer budget.Close()
++
++	snapshot := (RealTmuxInventory{budget: budget}).Snapshot()
++	if snapshot.Err == nil || !strings.Contains(snapshot.Err.Error(), "output pipe cleanup timed out") {
++		t.Fatalf("no-server text must not hide inherited-pipe expiry: %+v", snapshot)
++	}
++	data, err := os.ReadFile(childFile)
++	if err != nil {
++		t.Fatal(err)
++	}
++	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() {
++		if process, findErr := os.FindProcess(pid); findErr == nil {
++			_ = process.Kill()
++		}
++	})
++	waitForStatusProbePIDGone(t, pid)
++}
++
++func TestStatusProbeBudgetHonorsParentCancellation(t *testing.T) {
++	script := writeStatusProbeScript(t, "sleep 30\n")
++	parent, cancel := context.WithCancel(context.Background())
++	budget := newStatusProbeBudget(parent, 5*time.Second, 30*time.Second)
++	defer budget.Close()
++	time.AfterFunc(60*time.Millisecond, cancel)
++
++	start := time.Now()
++	if _, _, err := budget.run(script); err == nil || !strings.Contains(err.Error(), "canceled") {
++		t.Fatalf("parent cancellation error = %v", err)
++	}
++	if elapsed := time.Since(start); elapsed > time.Second {
++		t.Fatalf("parent cancellation took %s", elapsed)
++	}
++	if _, _, err := budget.run(script); err == nil {
++		t.Fatal("parent cancellation must prevent later dispatch")
++	}
++	if budget.launchedCount() != 1 {
++		t.Fatalf("launched commands = %d, want 1", budget.launchedCount())
++	}
++}
++
++func TestStatusProbeTmuxNoServerTextDoesNotOverrideTimeout(t *testing.T) {
++	dir := t.TempDir()
++	marker := filepath.Join(dir, "output-written")
++	shim := filepath.Join(dir, "tmux")
++	script := `#!/bin/sh
++echo 'no server running' >&2
++printf 'written\n' > "$STATUS_TMUX_MARKER"
++sleep 30
++`
++	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
++		t.Fatal(err)
++	}
++	t.Setenv("STATUS_TMUX_MARKER", marker)
++	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
++	budget := newStatusProbeBudget(context.Background(), 500*time.Millisecond, 2*time.Second)
++	defer budget.Close()
++
++	snapshot := (RealTmuxInventory{budget: budget}).Snapshot()
++	data, err := os.ReadFile(marker)
++	if err != nil || string(data) != "written\n" {
++		t.Fatalf("tmux wrapper did not reach its no-server output marker: data=%q err=%v", data, err)
++	}
++	if snapshot.Err == nil || !strings.Contains(snapshot.Err.Error(), "timed out") {
++		t.Fatalf("timeout must remain unavailable even if partial output resembles no-server: %+v", snapshot)
++	}
++}
++
++func TestStatusTmuxPermissionFailureIsUnavailable(t *testing.T) {
++	dir := t.TempDir()
++	shim := filepath.Join(dir, "tmux")
++	if err := os.WriteFile(shim, []byte("#!/bin/sh\necho 'error connecting to /var/run/tmux/default (Permission denied)' >&2\nexit 1\n"), 0o755); err != nil {
++		t.Fatal(err)
++	}
++	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
++	budget := newStatusProbeBudget(context.Background(), time.Second, 2*time.Second)
++	defer budget.Close()
++
++	snapshot := (RealTmuxInventory{budget: budget}).Snapshot()
++	if snapshot.Err == nil {
++		t.Fatalf("an inaccessible tmux server is not proven absent: %+v", snapshot)
++	}
++}
++
++func TestRealTmuxInventoryRetainsSessionsWhenPaneProbeTimesOut(t *testing.T) {
++	dir := t.TempDir()
++	shim := filepath.Join(dir, "tmux")
++	script := `#!/bin/sh
++case "$1" in
++  list-sessions) printf 'tws-auth\n' ;;
++  list-panes) sleep 30 ;;
++esac
++`
++	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
++		t.Fatal(err)
++	}
++	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
++	budget := newStatusProbeBudget(context.Background(), 300*time.Millisecond, 2*time.Second)
++	defer budget.Close()
++
++	snapshot := (RealTmuxInventory{budget: budget}).Snapshot()
++	if !snapshot.Available || !snapshot.ServerRunning || !snapshot.Sessions["tws-auth"] {
++		t.Fatalf("session evidence was lost: %+v", snapshot)
++	}
++	if snapshot.Err != nil || snapshot.PanesErr == nil || snapshot.PanesAvailable {
++		t.Fatalf("pane timeout classification = %+v", snapshot)
++	}
++}
++
++func TestStatusWorkspaceResolutionUsesSharedBudget(t *testing.T) {
++	repo := filepath.Join(t.TempDir(), "repo")
++	if err := os.MkdirAll(repo, 0o755); err != nil {
++		t.Fatal(err)
++	}
++	gitInTest(t, filepath.Dir(repo), "init", "--initial-branch=main", repo)
++	gitInTest(t, repo, "commit", "--allow-empty", "-m", "init")
++
++	realGit, err := exec.LookPath("git")
++	if err != nil {
++		t.Fatal(err)
++	}
++	shimDir := t.TempDir()
++	shim := filepath.Join(shimDir, "git")
++	script := `#!/bin/sh
++case " $* " in
++  *" rev-parse --git-common-dir "*) sleep 30 ;;
++esac
++exec "$STATUS_REAL_GIT" "$@"
++`
++	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
++		t.Fatal(err)
++	}
++	t.Setenv("STATUS_REAL_GIT", realGit)
++	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
++	t.Setenv("HOME", t.TempDir())
++	oldCWD, _ := os.Getwd()
++	t.Cleanup(func() { _ = os.Chdir(oldCWD) })
++	if err := os.Chdir(repo); err != nil {
++		t.Fatal(err)
++	}
++
++	budget := newStatusProbeBudget(context.Background(), 250*time.Millisecond, 350*time.Millisecond)
++	defer budget.Close()
++	start := time.Now()
++	if _, _, err := ResolveStatusWorkspaceWithBudget("", budget); err == nil ||
++		!strings.Contains(err.Error(), "Git probe timed out") {
++		t.Fatalf("resolution error = %v", err)
++	}
++	if elapsed := time.Since(start); elapsed > time.Second {
++		t.Fatalf("bounded config/workspace resolution took %s", elapsed)
++	}
++}
++
++func TestStatusWorkspaceScopedInferenceUsesOnlySelectedFeature(t *testing.T) {
++	root := t.TempDir()
++	makeRepo := func(name string) string {
++		t.Helper()
++		repo := filepath.Join(root, name)
++		if err := os.MkdirAll(repo, 0o755); err != nil {
++			t.Fatal(err)
++		}
++		gitInTest(t, root, "init", "--initial-branch=main", repo)
++		gitInTest(t, repo, "commit", "--allow-empty", "-m", "init")
++		return repo
++	}
++	authRepo := makeRepo("auth-repo")
++	billingRepo := makeRepo("billing-repo")
++	workspace := filepath.Join(root, "workspace")
++	if err := os.MkdirAll(filepath.Join(workspace, workspaceMarker), 0o755); err != nil {
++		t.Fatal(err)
++	}
++	addFeature := func(feature, name, repo string) {
++		t.Helper()
++		featurePath := filepath.Join(workspace, feature)
++		worktreePath := filepath.Join(featurePath, "worktrees", name)
++		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
++			t.Fatal(err)
++		}
++		if err := SaveStack(featurePath, Stack{Branches: []StackEntry{{Name: name, Base: "main"}}}); err != nil {
++			t.Fatal(err)
++		}
++		gitInTest(t, repo, "worktree", "add", "-b", name, worktreePath)
++	}
++	addFeature("auth", "api", authRepo)
++	addFeature("billing", "pay", billingRepo)
++
++	t.Setenv("HOME", t.TempDir())
++	oldCWD, _ := os.Getwd()
++	t.Cleanup(func() { _ = os.Chdir(oldCWD) })
++	if err := os.Chdir(workspace); err != nil {
++		t.Fatal(err)
++	}
++
++	scopedBudget := NewStatusProbeBudget(context.Background())
++	defer scopedBudget.Close()
++	ws, degraded, err := ResolveStatusWorkspaceWithBudget("auth", scopedBudget)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if degraded != "" || ws.RepoRoot != canonicalize(authRepo) {
++		t.Fatalf("scoped workspace = %+v, degraded=%q", ws, degraded)
++	}
++
++	globalBudget := NewStatusProbeBudget(context.Background())
++	defer globalBudget.Close()
++	global, degraded, err := ResolveStatusWorkspaceWithBudget("", globalBudget)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if global.RepoRoot != "" || !strings.Contains(degraded, "multiple default repositories") {
++		t.Fatalf("global ambiguity = %+v, degraded=%q", global, degraded)
++	}
++}
++
++func TestStatusWorkspaceConfiguredCandidateAmbiguityIsDegraded(t *testing.T) {
++	root := t.TempDir()
++	makeRepo := func(name string) string {
++		t.Helper()
++		repo := filepath.Join(root, name)
++		if err := os.MkdirAll(repo, 0o755); err != nil {
++			t.Fatal(err)
++		}
++		gitInTest(t, root, "init", "--initial-branch=main", repo)
++		gitInTest(t, repo, "commit", "--allow-empty", "-m", "init")
++		return repo
++	}
++	siblingRepo := makeRepo("source")
++	configuredRepo := makeRepo("configured")
++	metadataRoot := siblingRepo + ".tws"
++	featurePath := filepath.Join(metadataRoot, "auth")
++	if err := os.MkdirAll(filepath.Join(metadataRoot, workspaceMarker), 0o755); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.MkdirAll(featurePath, 0o755); err != nil {
++		t.Fatal(err)
++	}
++	if err := SaveStack(featurePath, Stack{}); err != nil {
++		t.Fatal(err)
++	}
++
++	home := t.TempDir()
++	t.Setenv("HOME", home)
++	if err := SaveConfigFile(ConfigPath(), Config{Workspaces: map[string]string{configuredRepo: metadataRoot}}); err != nil {
++		t.Fatal(err)
++	}
++	oldCWD, _ := os.Getwd()
++	t.Cleanup(func() { _ = os.Chdir(oldCWD) })
++	if err := os.Chdir(metadataRoot); err != nil {
++		t.Fatal(err)
++	}
++
++	budget := NewStatusProbeBudget(context.Background())
++	defer budget.Close()
++	ws, degraded, err := ResolveStatusWorkspaceWithBudget("auth", budget)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if ws.RepoRoot != "" || !strings.Contains(degraded, "multiple default repositories") ||
++		!strings.Contains(degraded, canonicalize(siblingRepo)) ||
++		!strings.Contains(degraded, canonicalize(configuredRepo)) {
++		t.Fatalf("ambiguous configured workspace = %+v, degraded=%q", ws, degraded)
++	}
++}
+diff --git a/internal/status_process_other.go b/internal/status_process_other.go
+new file mode 100644
+index 0000000..ccd32e5
+--- /dev/null
++++ b/internal/status_process_other.go
+@@ -0,0 +1,24 @@
++//go:build !darwin && !dragonfly && !freebsd && !linux && !netbsd && !openbsd && !solaris
++
++package internal
++
++import (
++	"errors"
++	"os"
++	"os/exec"
++)
++
++func configureStatusCommand(cmd *exec.Cmd) {
++	cmd.Cancel = func() error { return terminateStatusCommand(cmd) }
++}
++
++func terminateStatusCommand(cmd *exec.Cmd) error {
++	if cmd.Process == nil {
++		return nil
++	}
++	err := cmd.Process.Kill()
++	if errors.Is(err, os.ErrProcessDone) {
++		return nil
++	}
++	return err
++}
+diff --git a/internal/status_process_unix.go b/internal/status_process_unix.go
+new file mode 100644
+index 0000000..18ae540
+--- /dev/null
++++ b/internal/status_process_unix.go
+@@ -0,0 +1,26 @@
++//go:build darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris
++
++package internal
++
++import (
++	"errors"
++	"os"
++	"os/exec"
++	"syscall"
++)
++
++func configureStatusCommand(cmd *exec.Cmd) {
++	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
++	cmd.Cancel = func() error { return terminateStatusCommand(cmd) }
++}
++
++func terminateStatusCommand(cmd *exec.Cmd) error {
++	if cmd.Process == nil {
++		return nil
++	}
++	err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
++	if errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH) {
++		return nil
++	}
++	return err
++}

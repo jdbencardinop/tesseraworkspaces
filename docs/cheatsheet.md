@@ -131,9 +131,17 @@ that tws does not probe.
 
 ```sh
 tws status                   # every feature, from any directory
-tws status auth              # filter to one feature
+tws status auth              # build only auth + workspace-level evidence
 tws status --json | jq '.issues[] | select(.severity=="warning")'
 ```
+
+The named form does not read or probe sibling feature stacks, worktrees, or
+external session records. A shared checkout session remains workspace-visible
+even when it belongs to another feature. The no-argument form remains global.
+Git/tmux probes are read-only, capped at 5 seconds each, and share a 30-second
+subprocess budget beginning with workspace/config resolution. Failed facts are
+`null`/`unknown` with explicit issues; ordinary filesystem reads are not
+interruptible by that budget.
 
 `needs_attention` is the authoritative field and inherits upward: a workspace or
 feature can be `needs_attention` with `issue_count: 0` because a child is — read

@@ -1,6 +1,8 @@
 package internal
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -98,6 +100,9 @@ const (
 	IssueRepoGitOp                  = "repo-git-op"
 	IssueTmuxMissing                = "tmux-missing"
 	IssueTmuxUnverifiable           = "tmux-unverifiable"
+	IssueGitProbeUnavailable        = "git-probe-unavailable"
+	IssueStatusProbeExhausted       = "status-probe-exhausted"
+	IssueSessionOffScopeUnhealthy   = "session-off-scope-unhealthy"
 )
 
 // Feature-scoped codes. IssueTmuxPathMismatch and IssueTmuxPanesUnverified are
@@ -157,6 +162,9 @@ var AgentStatusIssueCodes = []string{
 	IssueRepoGitOp,
 	IssueTmuxMissing,
 	IssueTmuxUnverifiable,
+	IssueGitProbeUnavailable,
+	IssueStatusProbeExhausted,
+	IssueSessionOffScopeUnhealthy,
 	IssueStackMissing,
 	IssueStackInvalid,
 	IssueSyncInProgress,
@@ -394,15 +402,16 @@ type AgentStatusReport struct {
 // no working-directory option: nothing in the builder may observe the process
 // working directory.
 type AgentStatusOpts struct {
-	Proc ProcessProber
-	Tmux TmuxInventoryProbe
-	Now  func() time.Time
+	Proc                ProcessProber
+	Tmux                TmuxInventoryProbe
+	Now                 func() time.Time
+	Budget              *StatusProbeBudget
+	ResolveReparentPath func(feature, ordinaryPath string) (string, error)
 }
 
 func defaultAgentStatusOpts() AgentStatusOpts {
 	return AgentStatusOpts{
 		Proc: realProcessChecker{},
-		Tmux: RealTmuxInventory{},
 		Now:  time.Now,
 	}
 }
@@ -423,6 +432,7 @@ type TmuxSnapshot struct {
 	Sessions       map[string]bool
 	Panes          []TmuxPane
 	PanesAvailable bool
+	PanesErr       error
 	Err            error
 }
 
@@ -431,23 +441,64 @@ type TmuxInventoryProbe interface {
 	Snapshot() TmuxSnapshot
 }
 
-// RealTmuxInventory shells out to tmux exactly twice per invocation.
-type RealTmuxInventory struct{}
+// RealTmuxInventory shells out to tmux exactly twice per invocation. A zero
+// value preserves the legacy unbounded behavior used by mutation callers;
+// status injects its own bounded budget.
+type RealTmuxInventory struct {
+	budget *StatusProbeBudget
+}
 
-func (RealTmuxInventory) Snapshot() TmuxSnapshot {
+func (r RealTmuxInventory) Snapshot() TmuxSnapshot {
 	snap := TmuxSnapshot{Sessions: map[string]bool{}}
 	if _, err := exec.LookPath("tmux"); err != nil {
 		return snap
 	}
 	snap.Available = true
 
-	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").CombinedOutput()
+	if r.budget == nil {
+		return snapshotTmux(snap, runTmuxUnbounded, false)
+	}
+	return snapshotTmux(snap, func(args ...string) ([]byte, []byte, error) {
+		return r.budget.run("tmux", args...)
+	}, true)
+}
+
+type tmuxInventoryRunner func(args ...string) ([]byte, []byte, error)
+
+func runTmuxUnbounded(args ...string) ([]byte, []byte, error) {
+	cmd := exec.Command("tmux", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	return stdout.Bytes(), stderr.Bytes(), err
+}
+
+func snapshotTmux(snap TmuxSnapshot, run tmuxInventoryRunner, boundedStatus bool) TmuxSnapshot {
+	out, stderr, err := run("list-sessions", "-F", "#{session_name}")
 	if err != nil {
-		text := strings.ToLower(string(out))
-		if strings.Contains(text, "no server running") || strings.Contains(text, "error connecting to") {
+		combined := append(append([]byte{}, out...), stderr...)
+		noServer := completedLegacyTmuxNoServerFailure(err, combined)
+		if boundedStatus {
+			noServer = completedTmuxNoServerFailure(err, combined)
+		}
+		if noServer {
 			return snap
 		}
-		snap.Err = fmt.Errorf("tmux list-sessions: %s: %w", strings.TrimSpace(string(out)), err)
+		detail := strings.TrimSpace(string(combined))
+		if boundedStatus {
+			problem := statusProbeProblem(err)
+			if detail == "" {
+				detail = problem
+			} else {
+				detail = problem + "; output: " + detail
+			}
+			snap.Err = fmt.Errorf("tmux list-sessions: %s", detail)
+		} else if detail == "" {
+			snap.Err = fmt.Errorf("tmux list-sessions: %w", err)
+		} else {
+			snap.Err = fmt.Errorf("tmux list-sessions: %s: %w", detail, err)
+		}
 		return snap
 	}
 	snap.ServerRunning = true
@@ -457,8 +508,11 @@ func (RealTmuxInventory) Snapshot() TmuxSnapshot {
 		}
 	}
 
-	panes, paneErr := exec.Command("tmux", "list-panes", "-a", "-F", "#{session_name}\t#{pane_current_path}").Output()
+	panes, _, paneErr := run("list-panes", "-a", "-F", "#{session_name}\t#{pane_current_path}")
 	if paneErr != nil {
+		if boundedStatus {
+			snap.PanesErr = fmt.Errorf("tmux list-panes: %s", statusProbeProblem(paneErr))
+		}
 		return snap
 	}
 	snap.PanesAvailable = true
@@ -474,6 +528,28 @@ func (RealTmuxInventory) Snapshot() TmuxSnapshot {
 		snap.Panes = append(snap.Panes, TmuxPane{Session: parts[0], Path: parts[1]})
 	}
 	return snap
+}
+
+func completedLegacyTmuxNoServerFailure(err error, output []byte) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(string(output))
+	return strings.Contains(text, "no server running") || strings.Contains(text, "error connecting to")
+}
+
+func completedTmuxNoServerFailure(err error, output []byte) bool {
+	exitErr := completedStatusExit(err)
+	if exitErr == nil || exitErr.ExitCode() <= 0 {
+		return false
+	}
+	text := strings.ToLower(string(output))
+	if strings.Contains(text, "no server running") {
+		return true
+	}
+	return strings.Contains(text, "error connecting to") &&
+		(strings.Contains(text, "no such file or directory") ||
+			strings.Contains(text, "connection refused"))
 }
 
 // ---------- worktree inventory ----------
@@ -544,6 +620,24 @@ func BuildWorktreeInventory(repoRoot string) WorktreeInventory {
 }
 
 func parseWorktreeInventory(out []byte) WorktreeInventory {
+	return parseWorktreeInventoryWith(out, canonicalize)
+}
+
+func buildStatusWorktreeInventory(repoRoot string, budget *StatusProbeBudget, scoped bool) WorktreeInventory {
+	if repoRoot == "" {
+		return worktreeInventoryUnavailable(errors.New("worktree inventory requires a non-empty repository root"))
+	}
+	out, _, err := budget.run("git", "-C", repoRoot, "worktree", "list", "--porcelain")
+	if err != nil {
+		return worktreeInventoryUnavailable(err)
+	}
+	if scoped {
+		return parseWorktreeInventoryWith(out, cleanAbsolute)
+	}
+	return parseWorktreeInventory(out)
+}
+
+func parseWorktreeInventoryWith(out []byte, normalizePath func(string) string) WorktreeInventory {
 	inv := WorktreeInventory{
 		ByBranch: map[string]string{},
 		Prunable: map[string]bool{},
@@ -609,7 +703,7 @@ func parseWorktreeInventory(out []byte) WorktreeInventory {
 				failure = errors.New("worktree inventory: block has no worktree line")
 				continue
 			}
-			rec.Path = canonicalize(rawPath)
+			rec.Path = normalizePath(rawPath)
 		case strings.HasPrefix(line, "HEAD "):
 			head := strings.TrimPrefix(line, "HEAD ")
 			if !stackStatusObjectID.MatchString(head) {
@@ -656,6 +750,44 @@ func parseWorktreeInventory(out []byte) WorktreeInventory {
 	}
 	inv.Available = true
 	return inv
+}
+
+// excludeStatusReparentScratchWorktrees keeps named status from resolving
+// unrelated worktree paths merely to compare them with the selected feature's
+// scratch path.
+func excludeStatusReparentScratchWorktrees(inv WorktreeInventory, scratchPaths ...string) WorktreeInventory {
+	if !inv.Available || len(scratchPaths) == 0 {
+		return inv
+	}
+	active := map[string]bool{}
+	for _, path := range scratchPaths {
+		if strings.TrimSpace(path) != "" {
+			active[cleanAbsolute(path)] = true
+		}
+	}
+	filtered := WorktreeInventory{
+		Available: true,
+		ByBranch:  map[string]string{},
+		Prunable:  map[string]bool{},
+		ByPath:    map[string]WorktreeRecord{},
+	}
+	for _, rec := range inv.Records {
+		if active[cleanAbsolute(rec.Path)] {
+			continue
+		}
+		filtered.Records = append(filtered.Records, rec)
+		filtered.ByPath[rec.Path] = rec
+		if rec.BranchRef == nil {
+			continue
+		}
+		short := strings.TrimPrefix(*rec.BranchRef, "refs/heads/")
+		if rec.Prunable {
+			filtered.Prunable[short] = true
+		} else {
+			filtered.ByBranch[short] = rec.Path
+		}
+	}
+	return filtered
 }
 
 // ---------- rollups ----------
@@ -706,54 +838,6 @@ func anyWarningOrError(issues []AgentStatusIssue) bool {
 	return false
 }
 
-// ---------- workspace resolution ----------
-
-// ResolveStatusWorkspace resolves the workspace the same way RequireWorkspace
-// does, with one difference: an external workspace root whose source
-// repository cannot be inferred yields a degraded workspace plus a reason
-// instead of an error, so a report can still be produced.
-//
-// Both roots are canonicalized so the document is byte-identical from every
-// supported working directory.
-func ResolveStatusWorkspace() (Workspace, string, error) {
-	cfg := LoadConfig()
-	if repoRoot, err := MainRepoRoot(); err == nil {
-		ws, wsErr := ResolveCurrentWorkspaceE(repoRoot, cfg)
-		if wsErr != nil {
-			return Workspace{}, "", wsErr
-		}
-		ws.MetadataRoot = canonicalize(ws.MetadataRoot)
-		return ws, "", nil
-	}
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		return Workspace{}, "", err
-	}
-	metadataRoot := DetectWorkspaceRoot(cwd, cfg)
-	if metadataRoot == "" || !metadataRootExists(metadataRoot) {
-		return Workspace{}, "", fmt.Errorf("not inside a git repository or tws workspace")
-	}
-	repoRoot, inferErr := inferExternalRepoRoot(metadataRoot, cfg)
-	if inferErr != nil {
-		return Workspace{
-			RepoRoot:     "",
-			Mode:         ModeExternal,
-			MetadataRoot: canonicalize(metadataRoot),
-			StableID:     "",
-			Caps:         capsFor(ModeExternal),
-		}, inferErr.Error(), nil
-	}
-	canonRepo := canonicalize(repoRoot)
-	return Workspace{
-		RepoRoot:     canonRepo,
-		Mode:         ModeExternal,
-		MetadataRoot: canonicalize(metadataRoot),
-		StableID:     stableID(canonRepo),
-		Caps:         capsFor(ModeExternal),
-	}, "", nil
-}
-
 // ---------- builder ----------
 
 type pendingEntryIssue struct {
@@ -766,11 +850,15 @@ type pendingEntryIssue struct {
 }
 
 type statusBuilder struct {
-	ws     Workspace
-	opts   AgentStatusOpts
-	report *AgentStatusReport
-	tmux   TmuxSnapshot
-	wt     WorktreeInventory
+	ws              Workspace
+	opts            AgentStatusOpts
+	report          *AgentStatusReport
+	tmux            TmuxSnapshot
+	wt              WorktreeInventory
+	scopedFeature   string
+	featurePaths    map[string]string
+	reparentPaths   map[string]string
+	budgetIssueSeen bool
 
 	// checkout session state carried from projection (phase A) to
 	// attribution (phase B). Phase B performs no I/O.
@@ -820,9 +908,23 @@ func (b *statusBuilder) issue(code string, sev CheckoutSeverity, scope IssueScop
 	b.report.Issues = append(b.report.Issues, iss)
 }
 
-// BuildAgentStatus produces the whole status report. It is strictly
-// read-only: it never mutates a lock, a record, a stack, or Git state.
 func BuildAgentStatus(ws Workspace, degradedReason string, opts *AgentStatusOpts) (*AgentStatusReport, error) {
+	return buildAgentStatus(ws, degradedReason, "", opts)
+}
+
+// BuildAgentStatusScoped produces a selected-feature report without reading
+// any other feature's stack or runtime records. Workspace-scoped checkout
+// session evidence is deliberately retained.
+func BuildAgentStatusScoped(ws Workspace, degradedReason, feature string, opts *AgentStatusOpts) (*AgentStatusReport, error) {
+	if feature == "" {
+		return nil, errors.New("scoped status requires a feature")
+	}
+	return buildAgentStatus(ws, degradedReason, feature, opts)
+}
+
+// buildAgentStatus is strictly read-only: it never mutates a lock, a record,
+// a stack, or Git state.
+func buildAgentStatus(ws Workspace, degradedReason, scopedFeature string, opts *AgentStatusOpts) (*AgentStatusReport, error) {
 	resolved := defaultAgentStatusOpts()
 	if opts != nil {
 		if opts.Proc != nil {
@@ -834,6 +936,23 @@ func BuildAgentStatus(ws Workspace, degradedReason string, opts *AgentStatusOpts
 		if opts.Now != nil {
 			resolved.Now = opts.Now
 		}
+		if opts.Budget != nil {
+			resolved.Budget = opts.Budget
+		}
+		if opts.ResolveReparentPath != nil {
+			resolved.ResolveReparentPath = opts.ResolveReparentPath
+		}
+	}
+	ownedBudget := false
+	if resolved.Budget == nil {
+		resolved.Budget = NewStatusProbeBudget(context.Background())
+		ownedBudget = true
+	}
+	if ownedBudget {
+		defer resolved.Budget.Close()
+	}
+	if resolved.Tmux == nil {
+		resolved.Tmux = RealTmuxInventory{budget: resolved.Budget}
 	}
 
 	// 1. Metadata-root precondition. ListFeaturesResolved swallows its
@@ -850,22 +969,39 @@ func BuildAgentStatus(ws Workspace, degradedReason string, opts *AgentStatusOpts
 		return nil, fmt.Errorf("workspace metadata root unreadable: %s: %w", ws.MetadataRoot, err)
 	}
 
-	// 2. Topology listing. An untrusted spaces.yaml is fatal here.
-	features, err := ws.ListFeaturesResolved()
-	if err != nil {
-		return nil, err
+	// 2. Select a named feature before inventories, or list globally. An
+	// untrusted spaces.yaml and selected-layout ambiguity remain fatal.
+	var features []string
+	featurePaths := map[string]string{}
+	if scopedFeature != "" {
+		path, err := selectStatusFeature(ws, scopedFeature)
+		if err != nil {
+			return nil, err
+		}
+		features = []string{scopedFeature}
+		featurePaths[scopedFeature] = path
+	} else {
+		var err error
+		features, err = ws.ListFeaturesResolved()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	b := &statusBuilder{
-		ws:   ws,
-		opts: resolved,
+		ws:            ws,
+		opts:          resolved,
+		scopedFeature: scopedFeature,
+		featurePaths:  featurePaths,
+		reparentPaths: map[string]string{},
 		report: &AgentStatusReport{
 			SchemaVersion: agentStatusSchema,
 			GeneratedAt:   resolved.Now().UTC().Format(time.RFC3339),
 		},
 	}
 
-	// 3/4. One tmux snapshot and one worktree inventory per invocation.
+	// 3/4. One tmux snapshot and, when materialization needs it, one worktree
+	// inventory per invocation.
 	b.tmux = resolved.Tmux.Snapshot()
 	// §14.2a: a reparent run's own computation worktree is tool-owned scratch,
 	// not a materialization of any logical branch. Filtering it here — never
@@ -874,19 +1010,39 @@ func BuildAgentStatus(ws Workspace, degradedReason string, opts *AgentStatusOpts
 	var activeScratch []string
 	if ws.Mode == ModeExternal {
 		for _, feature := range features {
-			featurePath, resolveErr := ws.ResolveFeaturePath(feature)
+			featurePath, resolveErr := b.featurePath(feature)
 			if resolveErr != nil {
 				continue
 			}
-			if path := ActiveReparentScratchPath(ReparentLocationFor(ws, feature, featurePath)); path != "" {
+			reparentPath := b.reparentPath(feature, featurePath)
+			if path := ActiveReparentScratchPath(ReparentLocationFor(ws, feature, reparentPath)); path != "" {
 				activeScratch = append(activeScratch, path)
 			}
 		}
 	}
-	b.wt = ExcludeReparentScratchWorktrees(BuildWorktreeInventory(ws.RepoRoot), activeScratch...)
+	if scopedFeature != "" && ws.Mode == ModeCheckout {
+		// Checkout entries are refs in one physical checkout; their scoped
+		// projection does not consume worktree inventory.
+		b.wt = WorktreeInventory{
+			Available: true,
+			ByBranch:  map[string]string{},
+			Prunable:  map[string]bool{},
+			ByPath:    map[string]WorktreeRecord{},
+		}
+	} else {
+		b.wt = buildStatusWorktreeInventory(ws.RepoRoot, resolved.Budget, scopedFeature != "")
+		if scopedFeature != "" {
+			b.wt = excludeStatusReparentScratchWorktrees(b.wt, activeScratch...)
+		} else {
+			b.wt = ExcludeReparentScratchWorktrees(b.wt, activeScratch...)
+		}
+	}
 
 	// 5. Workspace header and the issues those fields alone determine.
 	b.buildWorkspaceHeader(degradedReason)
+	if ws.RepoRoot != "" && !b.wt.Available {
+		b.gitProbeIssue(ScopeWorkspace, "", "", "worktree inventory", ws.RepoRoot, b.wt.Err)
+	}
 
 	// 6. Checkout session, phase A: projection.
 	if ws.Mode == ModeCheckout {
@@ -910,10 +1066,55 @@ func BuildAgentStatus(ws Workspace, degradedReason string, opts *AgentStatusOpts
 	}
 
 	// 9-10. Rollups then counters.
+	b.emitBudgetIssue()
 	recomputeAgentStatusRollups(b.report)
 	recomputeAgentStatusSummary(b.report)
 	NormalizeAgentStatus(b.report)
 	return b.report, nil
+}
+
+func (b *statusBuilder) featurePath(feature string) (string, error) {
+	if path := b.featurePaths[feature]; path != "" {
+		return path, nil
+	}
+	path, err := b.ws.ResolveFeaturePath(feature)
+	if err == nil {
+		b.featurePaths[feature] = path
+	}
+	return path, err
+}
+
+func (b *statusBuilder) reparentPath(feature, ordinaryPath string) string {
+	if path := b.reparentPaths[feature]; path != "" {
+		return path
+	}
+	path := ordinaryPath
+	if b.opts.ResolveReparentPath != nil {
+		if resolved, err := b.opts.ResolveReparentPath(feature, ordinaryPath); err == nil && resolved != "" {
+			path = resolved
+		}
+	}
+	b.reparentPaths[feature] = path
+	return path
+}
+
+func (b *statusBuilder) emitBudgetIssue() {
+	if b.budgetIssueSeen || b.opts.Budget == nil || !b.opts.Budget.Stopped() {
+		return
+	}
+	b.budgetIssueSeen = true
+	b.issue(IssueStatusProbeExhausted, SeverityWarning, ScopeWorkspace, "", "",
+		"status subprocess probing stopped because the invocation budget or caller context expired",
+		"retry status after the slow or blocked Git/tmux command is resolved")
+}
+
+func (b *statusBuilder) gitProbeIssue(scope IssueScope, feature, name, fact, path string, err error) {
+	if err == nil {
+		return
+	}
+	b.issue(IssueGitProbeUnavailable, SeverityWarning, scope, feature, name,
+		fmt.Sprintf("%s could not be determined for %s: %s", fact, path, statusProbeProblem(err)),
+		"verify the repository and retry status")
 }
 
 func (b *statusBuilder) buildWorkspaceHeader(degradedReason string) {
@@ -952,19 +1153,27 @@ func (b *statusBuilder) buildWorkspaceHeader(degradedReason string) {
 		return
 	}
 
-	branch, detached := healthCurrentBranch(ws.RepoRoot)
+	branch, detached, branchErr := statusCurrentBranch(ws.RepoRoot, b.opts.Budget)
 	if branch != "" {
 		b.report.Workspace.Branch = strPtr(branch)
 	}
-	b.report.Workspace.Detached = boolPtr(detached)
-	b.report.Workspace.Dirty = boolPtr(gitDirty(ws.RepoRoot))
-	if op := gitActiveOp(ws.RepoRoot); op != "" {
+	b.report.Workspace.Detached = detached
+	b.gitProbeIssue(ScopeWorkspace, "", "", "current branch", ws.RepoRoot, branchErr)
+
+	dirty, dirtyErr := statusDirty(ws.RepoRoot, b.opts.Budget)
+	b.report.Workspace.Dirty = dirty
+	b.gitProbeIssue(ScopeWorkspace, "", "", "dirty state", ws.RepoRoot, dirtyErr)
+
+	op, opErr := probeActiveGitOp(ws.RepoRoot)
+	if opErr != nil {
+		b.gitProbeIssue(ScopeWorkspace, "", "", "active Git operation", ws.RepoRoot, opErr)
+	} else if op != StackStatusOpNone {
 		b.report.Workspace.ActiveGitOp = strPtr(op)
 		b.issue(IssueRepoGitOp, SeverityWarning, ScopeWorkspace, "", "",
 			fmt.Sprintf("a %s is in progress in %s", op, ws.RepoRoot),
 			"finish or abort the in-progress git operation")
 	}
-	if detached {
+	if detached != nil && *detached {
 		b.issue(IssueRepoDetached, SeverityInfo, ScopeWorkspace, "", "",
 			fmt.Sprintf("HEAD is detached in %s", ws.RepoRoot), "")
 	}
@@ -988,6 +1197,10 @@ func (b *statusBuilder) emitTmuxWorkspaceIssue() {
 		b.issue(IssueTmuxUnverifiable, SeverityWarning, ScopeWorkspace, "", "",
 			"tmux inventory unavailable: "+b.tmux.Err.Error(),
 			"start tmux or run: tws close")
+	case b.tmux.PanesErr != nil:
+		b.issue(IssueTmuxUnverifiable, SeverityWarning, ScopeWorkspace, "", "",
+			"tmux pane inventory unavailable: "+b.tmux.PanesErr.Error(),
+			"check tmux and retry status")
 	}
 }
 
@@ -997,7 +1210,14 @@ func (b *statusBuilder) tmuxUsable() bool { return b.tmux.Available && b.tmux.Er
 // verifyTmuxName checks a session name against the inventory and a canonical
 // target directory. It returns nil when there is no evidence at all.
 func (b *statusBuilder) verifyTmuxName(name, targetPath string) (presence RuntimePresence, issueCode, detail string, found bool) {
-	if !b.tmuxUsable() || !b.tmux.Sessions[name] {
+	if !b.tmux.Available {
+		return "", "", "", false
+	}
+	if b.tmux.Err != nil {
+		return PresenceUnknown, IssueTmuxPanesUnverified,
+			fmt.Sprintf("tmux session %q could not be checked because the session inventory is unavailable", name), true
+	}
+	if !b.tmux.Sessions[name] {
 		return "", "", "", false
 	}
 	if !b.tmux.PanesAvailable {
@@ -1249,6 +1469,15 @@ func (b *statusBuilder) attributeCheckoutSession() {
 			"run: tws close")
 		return
 	}
+	if b.scopedFeature != "" && b.sessionFeature != b.scopedFeature {
+		if p := b.sessionPending; p != nil {
+			b.issue(IssueSessionOffScopeUnhealthy, SeverityWarning, ScopeWorkspace, "", "",
+				fmt.Sprintf("checkout session for off-scope %s/%s needs attention: %s",
+					b.sessionFeature, b.sessionName, p.message),
+				p.guidance)
+		}
+		return
+	}
 	for fi := range b.report.Features {
 		f := &b.report.Features[fi]
 		if f.Feature != b.sessionFeature {
@@ -1278,7 +1507,7 @@ func (b *statusBuilder) sessionObsMissing() bool {
 // ---------- features ----------
 
 func (b *statusBuilder) buildFeature(feature string) (AgentStatusFeature, error) {
-	featurePath, err := b.ws.ResolveFeaturePath(feature)
+	featurePath, err := b.featurePath(feature)
 	if err != nil {
 		// Ambiguous topology is fatal: reporting other features while
 		// silently picking one of two candidate directories would make the
@@ -1312,7 +1541,8 @@ func (b *statusBuilder) buildFeature(feature string) (AgentStatusFeature, error)
 	// the compatibility-hint suppression is already in force when the sync
 	// projection runs. It is strictly read-only and never evaluates the §12.3
 	// remote follow-up record.
-	view.Reparent = BuildReparentProjection(ReparentLocationFor(b.ws, feature, featurePath))
+	reparentPath := b.reparentPath(feature, featurePath)
+	view.Reparent = BuildReparentProjection(ReparentLocationFor(b.ws, feature, reparentPath))
 	b.reparentActive = view.Reparent != nil
 
 	syncView, external := b.buildFeatureSync(feature, featurePath)
@@ -1752,9 +1982,13 @@ func (b *statusBuilder) buildCheckoutMaterialization(entry *AgentStatusEntry, se
 		return
 	}
 
-	exists := gitRefExists(b.ws.RepoRoot, entry.GitBranch)
-	entry.Materialization.RefExists = boolPtr(exists)
-	if exists {
+	exists, refErr := statusRefExists(b.ws.RepoRoot, entry.GitBranch, b.opts.Budget)
+	entry.Materialization.RefExists = exists
+	if refErr != nil {
+		b.gitProbeIssue(ScopeEntry, entry.Feature, entry.Name, "branch ref", b.ws.RepoRoot, refErr)
+		return
+	}
+	if exists != nil && *exists {
 		entry.Materialization.State = MaterializedPresent
 		return
 	}
@@ -1801,7 +2035,9 @@ func (b *statusBuilder) buildExternalMaterialization(entry *AgentStatusEntry, fe
 		return
 	}
 
-	entry.Materialization.RefExists = boolPtr(gitRefExists(b.ws.RepoRoot, entry.GitBranch))
+	exists, refErr := statusRefExists(b.ws.RepoRoot, entry.GitBranch, b.opts.Budget)
+	entry.Materialization.RefExists = exists
+	b.gitProbeIssue(ScopeEntry, feature, se.Name, "branch ref", b.ws.RepoRoot, refErr)
 
 	info, statErr := os.Stat(wtPath)
 	switch {
@@ -1832,18 +2068,16 @@ func (b *statusBuilder) buildExternalMaterialization(entry *AgentStatusEntry, fe
 	b.appendBranchTmux(entry, wtPath)
 }
 
-// probeWorktree fills checked_out_branch and dirty for a present worktree.
-// Both helpers swallow their errors, so the dirty probe is gated on a
-// successful branch probe: otherwise a broken checkout reads as clean.
+// probeWorktree fills checked_out_branch and dirty for a present worktree,
+// retaining each independently measured fact when another probe fails.
 func (b *statusBuilder) probeWorktree(entry *AgentStatusEntry, wtPath string, external *SyncState) {
-	branch, detached := healthCurrentBranch(wtPath)
-	if branch == "" {
+	branch, detached, branchErr := statusCurrentBranch(wtPath, b.opts.Budget)
+	if branchErr != nil {
 		b.issue(IssueWorktreeUnreadable, SeverityWarning, ScopeEntry, entry.Feature, entry.Name,
-			fmt.Sprintf("could not read the checked-out branch in %s", wtPath),
+			fmt.Sprintf("could not read the checked-out branch in %s: %s", wtPath, statusProbeProblem(branchErr)),
 			"inspect "+wtPath)
-		return
 	}
-	if !detached {
+	if branch != "" && detached != nil && !*detached {
 		entry.Materialization.CheckedOutBranch = strPtr(branch)
 		if entry.GitBranch != "" && branch != entry.GitBranch {
 			b.issue(IssueWorktreeWrongBranch, SeverityWarning, ScopeEntry, entry.Feature, entry.Name,
@@ -1852,9 +2086,13 @@ func (b *statusBuilder) probeWorktree(entry *AgentStatusEntry, wtPath string, ex
 		}
 	}
 
-	dirty := gitDirty(wtPath)
-	entry.Materialization.Dirty = boolPtr(dirty)
-	if !dirty {
+	dirty, dirtyErr := statusDirty(wtPath, b.opts.Budget)
+	entry.Materialization.Dirty = dirty
+	if dirtyErr != nil {
+		b.gitProbeIssue(ScopeEntry, entry.Feature, entry.Name, "dirty state", wtPath, dirtyErr)
+		return
+	}
+	if dirty == nil || !*dirty {
 		return
 	}
 	if syncWantsBranch(external, entry.Name) {

@@ -2,12 +2,15 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
 	"github.com/spf13/pflag"
@@ -67,6 +70,92 @@ func withoutTmuxOnPath(t *testing.T) {
 	}
 }
 
+func withStatusGitRecorder(t *testing.T) string {
+	t.Helper()
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "git.log")
+	shim := filepath.Join(dir, "git")
+	script := `#!/bin/sh
+{
+  printf 'begin\n'
+  printf 'locks\t%s\n' "${GIT_OPTIONAL_LOCKS-}"
+  for arg in "$@"; do printf 'arg\t%s\n' "$arg"; done
+  printf 'end\n'
+} >> "$STATUS_GIT_LOG"
+is_status=0
+probe_path=
+previous=
+for arg in "$@"; do
+  if [ "$arg" = "status" ]; then is_status=1; fi
+  if [ "$previous" = "-C" ]; then probe_path=$arg; fi
+  previous=$arg
+done
+if [ "${STATUS_DELAY_GIT_PATH-}" = "$probe_path" ] && [ "$is_status" = "1" ]; then
+  sleep 2
+fi
+if [ "${STATUS_FAIL_GIT_PATH-}" = "$probe_path" ] && [ "$is_status" = "1" ]; then
+  exit 42
+fi
+if [ "${STATUS_FAIL_GIT_STATUS-}" = "1" ] && [ "$is_status" = "1" ]; then
+  exit 42
+fi
+case " $* " in
+  *" worktree list --porcelain "*)
+    if [ "${STATUS_FAIL_WORKTREE_LIST-}" = "1" ]; then exit 42; fi
+    ;;
+esac
+exec "$STATUS_REAL_GIT" "$@"
+`
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("STATUS_GIT_LOG", logPath)
+	t.Setenv("STATUS_REAL_GIT", realGit)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return logPath
+}
+
+func withStatusTmuxRecorder(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "tmux.log")
+	shim := filepath.Join(dir, "tmux")
+	script := `#!/bin/sh
+printf 'tmux\n' >> "$STATUS_TMUX_LOG"
+echo 'no server running' >&2
+exit 1
+`
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("STATUS_TMUX_LOG", logPath)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return logPath
+}
+
+func readStatusLog(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return ""
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func clearStatusLog(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func runStatus(t *testing.T, args ...string) (string, string, error) {
 	t.Helper()
 	cmd := statusCmd()
@@ -90,7 +179,7 @@ func TestStatusHelpSurface(t *testing.T) {
 	if cmd.Short != "Show agent work status for every logical branch" {
 		t.Fatalf("Short = %q", cmd.Short)
 	}
-	for _, want := range []string{"always covers every feature", "agent_state", "needs_attention"} {
+	for _, want := range []string{"always builds every feature", "builds only that feature", "five seconds", "agent_state", "needs_attention"} {
 		if !strings.Contains(cmd.Long, want) {
 			t.Fatalf("Long text is missing %q", want)
 		}
@@ -366,5 +455,407 @@ func TestStatusReportsTmuxMissingWhenTmuxIsAbsent(t *testing.T) {
 	attention := doc["workspace"].(map[string]any)["attention"].(map[string]any)
 	if attention["status"] != "idle" {
 		t.Fatalf("an info issue must not make the workspace need attention: %v", attention)
+	}
+}
+
+func TestStatusScopedDoesNotProbeUnrelatedFeatureAndGlobalStillDoes(t *testing.T) {
+	repo := setupGitRepo(t, "main")
+	root := withUnifiedWorkspaceEnv(t, repo)
+	captureStdout(t, func() {
+		if err := addExternal("auth", nil, "api", "main", false, false, false); err != nil {
+			t.Fatal(err)
+		}
+		if err := addExternal("billing", nil, "pay", "main", false, false, false); err != nil {
+			t.Fatal(err)
+		}
+	})
+	withIdleTmuxOnPath(t)
+	logPath := withStatusGitRecorder(t)
+	billingPath := filepath.Join(root, "billing")
+	billingWorktree := filepath.Join(billingPath, "worktrees", "pay")
+	t.Setenv("STATUS_DELAY_GIT_PATH", billingWorktree)
+	t.Setenv("STATUS_FAIL_GIT_PATH", billingWorktree)
+	var scopedCounts []int
+
+	for _, location := range []string{repo, root, filepath.Join(root, "auth")} {
+		chdirForTest(t, location)
+		clearStatusLog(t, logPath)
+		start := time.Now()
+		out, _, err := runStatus(t, "auth", "--json")
+		if err != nil {
+			t.Fatalf("%s: %v", location, err)
+		}
+		if elapsed := time.Since(start); elapsed >= 1500*time.Millisecond {
+			t.Fatalf("%s: scoped status was delayed by the unrelated worktree: %s", location, elapsed)
+		}
+		var report internal.AgentStatusReport
+		if err := json.Unmarshal([]byte(out), &report); err != nil {
+			t.Fatal(err)
+		}
+		if len(report.Features) != 1 || report.Features[0].Feature != "auth" {
+			t.Fatalf("%s: scoped features = %+v", location, report.Features)
+		}
+		logged := readStatusLog(t, logPath)
+		if strings.Contains(logged, billingPath) || strings.Contains(logged, "arg\tpay\n") {
+			t.Fatalf("%s: scoped Git argv touched billing:\n%s", location, logged)
+		}
+		if strings.Count(logged, "locks\t0\n") != strings.Count(logged, "begin\n") {
+			t.Fatalf("%s: status Git probe omitted GIT_OPTIONAL_LOCKS=0:\n%s", location, logged)
+		}
+		scopedCounts = append(scopedCounts, strings.Count(logged, "begin\n"))
+	}
+
+	t.Setenv("STATUS_DELAY_GIT_PATH", "")
+	t.Setenv("STATUS_FAIL_GIT_PATH", "")
+	chdirForTest(t, repo)
+	clearStatusLog(t, logPath)
+	if _, _, err := runStatus(t, "--json"); err != nil {
+		t.Fatal(err)
+	}
+	globalLog := readStatusLog(t, logPath)
+	if !strings.Contains(globalLog, billingPath) {
+		t.Fatalf("the unchanged global report must probe billing:\n%s", globalLog)
+	}
+	globalCount := strings.Count(globalLog, "begin\n")
+
+	clearStatusLog(t, logPath)
+	if _, _, err := runStatus(t, "auth", "--json"); err != nil {
+		t.Fatal(err)
+	}
+	scopedCount := strings.Count(readStatusLog(t, logPath), "begin\n")
+	if scopedCount >= globalCount {
+		t.Fatalf("actual Git invocation counts: scoped=%d global=%d", scopedCount, globalCount)
+	}
+	t.Logf("actual Git invocations: scoped repo/workspace/feature=%v, global repo=%d", scopedCounts, globalCount)
+}
+
+func TestStatusMissingStopsBeforeInventories(t *testing.T) {
+	repo := setupGitRepo(t, "main")
+	root := withUnifiedWorkspaceEnv(t, repo)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.EnsureExternalWorkspaceMarker(root); err != nil {
+		t.Fatal(err)
+	}
+	gitLog := withStatusGitRecorder(t)
+	tmuxLog := withStatusTmuxRecorder(t)
+
+	for _, location := range []string{repo, root} {
+		chdirForTest(t, location)
+		clearStatusLog(t, gitLog)
+		clearStatusLog(t, tmuxLog)
+		out, _, err := runStatus(t, "missing", "--json")
+		if err == nil || !strings.Contains(err.Error(), "feature not found: missing") {
+			t.Fatalf("%s: err = %v", location, err)
+		}
+		if out != "" {
+			t.Fatalf("%s: stdout = %q", location, out)
+		}
+		logged := readStatusLog(t, gitLog)
+		for _, forbidden := range []string{"arg\tstatus\n", "arg\tworktree\n", "arg\t--verify\n"} {
+			if strings.Contains(logged, forbidden) {
+				t.Fatalf("%s: missing feature dispatched %q:\n%s", location, forbidden, logged)
+			}
+		}
+		if got := readStatusLog(t, tmuxLog); got != "" {
+			t.Fatalf("%s: tmux ran before selected-feature validation: %q", location, got)
+		}
+	}
+}
+
+func TestStatusGitProbeFailureProjectsUnknown(t *testing.T) {
+	repo := setupGitRepo(t, "main")
+	withUnifiedWorkspaceEnv(t, repo)
+	withIdleTmuxOnPath(t)
+	captureStdout(t, func() {
+		if err := addExternal("auth", nil, "api", "main", false, false, false); err != nil {
+			t.Fatal(err)
+		}
+	})
+	withStatusGitRecorder(t)
+	t.Setenv("STATUS_FAIL_GIT_STATUS", "1")
+
+	out, _, err := runStatus(t, "auth", "--json")
+	if err != nil {
+		t.Fatalf("a failed observation still produces a report: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatal(err)
+	}
+	workspace := doc["workspace"].(map[string]any)
+	if workspace["dirty"] != nil {
+		t.Fatalf("workspace dirty = %v, want null", workspace["dirty"])
+	}
+	feature := doc["features"].([]any)[0].(map[string]any)
+	entry := feature["entries"].([]any)[0].(map[string]any)
+	materialization := entry["materialization"].(map[string]any)
+	if materialization["dirty"] != nil {
+		t.Fatalf("entry dirty = %v, want null", materialization["dirty"])
+	}
+	foundWorkspace, foundEntry := false, false
+	for _, raw := range doc["issues"].([]any) {
+		issue := raw.(map[string]any)
+		if issue["code"] != "git-probe-unavailable" {
+			continue
+		}
+		foundWorkspace = foundWorkspace || issue["scope"] == "workspace"
+		foundEntry = foundEntry || issue["scope"] == "entry"
+	}
+	if !foundWorkspace || !foundEntry {
+		t.Fatalf("probe issues = %v", doc["issues"])
+	}
+}
+
+func TestStatusScopedIgnoresUnrelatedCheckoutAmbiguity(t *testing.T) {
+	repo := setupGitRepoCheckout(t)
+	withCheckoutEnv(t, repo)
+	withIdleTmuxOnPath(t)
+	authPath := filepath.Join(repo, ".tws", "features", "auth")
+	for _, path := range []string{
+		authPath,
+		filepath.Join(repo, ".tws", "features", "billing"),
+		filepath.Join(repo, ".tws", "billing"),
+	} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := internal.SaveStack(authPath, internal.Stack{Branches: []internal.StackEntry{{Name: "api", Base: "main"}}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{
+		filepath.Join(repo, ".tws", "features", "billing"),
+		filepath.Join(repo, ".tws", "billing"),
+	} {
+		if err := internal.SaveStack(path, internal.Stack{Branches: []internal.StackEntry{{Name: "pay", Base: "main"}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gitInDir(t, repo, "branch", "api")
+
+	out, _, err := runStatus(t, "auth", "--json")
+	if err != nil {
+		t.Fatalf("unrelated checkout ambiguity must not abort auth: %v", err)
+	}
+	var report internal.AgentStatusReport
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Features) != 1 || report.Features[0].Feature != "auth" {
+		t.Fatalf("features = %+v", report.Features)
+	}
+
+	if out, _, err := runStatus(t, "--json"); err == nil || !strings.Contains(err.Error(), "ambiguous feature") {
+		t.Fatalf("global topology failure = %v, stdout=%q", err, out)
+	}
+}
+
+func TestStatusScopedCwdEquivalence(t *testing.T) {
+	repo := setupGitRepo(t, "main")
+	root := withUnifiedWorkspaceEnv(t, repo)
+	withIdleTmuxOnPath(t)
+	captureStdout(t, func() {
+		if err := addExternal("auth", nil, "api", "main", false, false, false); err != nil {
+			t.Fatal(err)
+		}
+	})
+	worktree := filepath.Join(root, "auth", "worktrees", "api")
+	nestedWorktree := filepath.Join(worktree, "nested")
+	nestedFeature := filepath.Join(root, "auth", "notes")
+	for _, dir := range []string{nestedWorktree, nestedFeature} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	locations := []string{repo, worktree, nestedWorktree, root, filepath.Join(root, "auth"), nestedFeature}
+
+	var reference string
+	for _, location := range locations {
+		chdirForTest(t, location)
+		out, _, err := runStatus(t, "auth", "--json")
+		if err != nil {
+			t.Fatalf("%s: %v", location, err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal([]byte(out), &doc); err != nil {
+			t.Fatal(err)
+		}
+		delete(doc, "generated_at")
+		normalized, err := json.Marshal(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reference == "" {
+			reference = string(normalized)
+		} else if string(normalized) != reference {
+			t.Fatalf("%s produced a different scoped document", location)
+		}
+	}
+}
+
+func TestStatusScopedCheckoutLegacyCwdEquivalence(t *testing.T) {
+	repo := setupGitRepoCheckout(t)
+	withCheckoutEnv(t, repo)
+	withIdleTmuxOnPath(t)
+	featurePath := filepath.Join(repo, ".tws", "auth")
+	nested := filepath.Join(featurePath, "notes")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.SaveStack(featurePath, internal.Stack{Branches: []internal.StackEntry{{Name: "api", Base: "main"}}}); err != nil {
+		t.Fatal(err)
+	}
+	gitInDir(t, repo, "branch", "api")
+
+	var reference string
+	for _, location := range []string{repo, featurePath, nested} {
+		chdirForTest(t, location)
+		out, _, err := runStatus(t, "auth", "--json")
+		if err != nil {
+			t.Fatalf("%s: %v", location, err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal([]byte(out), &doc); err != nil {
+			t.Fatal(err)
+		}
+		delete(doc, "generated_at")
+		normalized, err := json.Marshal(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reference == "" {
+			reference = string(normalized)
+		} else if string(normalized) != reference {
+			t.Fatalf("%s produced a different checkout scoped document", location)
+		}
+	}
+}
+
+func TestStatusScopedCheckoutSkipsWorktreeInventory(t *testing.T) {
+	repo := setupGitRepoCheckout(t)
+	withCheckoutEnv(t, repo)
+	withIdleTmuxOnPath(t)
+	ws, err := internal.RequireWorkspace()
+	if err != nil {
+		t.Fatal(err)
+	}
+	featurePath := ws.FeaturePath("auth")
+	nested := filepath.Join(featurePath, "notes")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := internal.SaveStack(featurePath, internal.Stack{
+		Branches: []internal.StackEntry{{Name: "api", Base: "main"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	gitInDir(t, repo, "branch", "api")
+	if err := internal.SaveCheckoutAgentSession(ws, &internal.CheckoutAgentSession{
+		SchemaVersion: 1,
+		WorkspaceID:   ws.StableID,
+		Feature:       "auth",
+		Name:          "api",
+		GitBranch:     "api",
+		Mode:          internal.AgentSessionDirect,
+		PID:           os.Getpid(),
+		Stage:         internal.DirectStageAgent,
+		RepoDir:       repo,
+		LockToken:     "status-test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	lockDir := internal.CheckoutSessionIntentDir(ws)
+	if err := os.MkdirAll(lockDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := json.Marshal(map[string]any{
+		"token":      "status-test",
+		"pid":        os.Getpid(),
+		"created_at": "2026-10-01T00:00:00Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(lockDir, "owner.json"), owner, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	logPath := withStatusGitRecorder(t)
+	t.Setenv("STATUS_FAIL_WORKTREE_LIST", "1")
+	for _, location := range []string{repo, nested} {
+		chdirForTest(t, location)
+		clearStatusLog(t, logPath)
+		out, _, err := runStatus(t, "auth", "--json")
+		if err != nil {
+			t.Fatalf("%s: %v", location, err)
+		}
+		if logged := readStatusLog(t, logPath); strings.Contains(logged, "arg\tworktree\n") {
+			t.Fatalf("%s: checkout scoped status dispatched worktree inventory:\n%s", location, logged)
+		}
+		var report internal.AgentStatusReport
+		if err := json.Unmarshal([]byte(out), &report); err != nil {
+			t.Fatal(err)
+		}
+		if len(report.Features) != 1 || len(report.Features[0].Entries) != 1 {
+			t.Fatalf("%s: scoped report = %+v", location, report.Features)
+		}
+		entry := report.Features[0].Entries[0]
+		if entry.Materialization.RefExists == nil || !*entry.Materialization.RefExists ||
+			entry.Materialization.State != internal.MaterializedPresent {
+			t.Fatalf("%s: selected ref projection = %+v", location, entry.Materialization)
+		}
+		if report.Workspace.CheckoutSession == nil ||
+			report.Workspace.CheckoutSession.Presence != internal.PresencePresent ||
+			len(entry.Sessions) != 1 {
+			t.Fatalf("%s: selected session projection = workspace=%+v entry=%+v",
+				location, report.Workspace.CheckoutSession, entry.Sessions)
+		}
+		for _, issue := range report.Issues {
+			if issue.Code == internal.IssueGitProbeUnavailable &&
+				strings.Contains(issue.Message, "worktree inventory") {
+				t.Fatalf("%s: skipped inventory produced an issue: %+v", location, issue)
+			}
+		}
+	}
+}
+
+func TestStatusParentCancellationStopsResolution(t *testing.T) {
+	repo := setupGitRepo(t, "main")
+	withUnifiedWorkspaceEnv(t, repo)
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	shim := filepath.Join(dir, "git")
+	script := `#!/bin/sh
+case " $* " in
+  *" rev-parse --git-common-dir "*) sleep 30 ;;
+esac
+exec "$STATUS_REAL_GIT" "$@"
+`
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("STATUS_REAL_GIT", realGit)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 70*time.Millisecond)
+	defer cancel()
+	cmd := statusCmd()
+	cmd.SetContext(ctx)
+	cmd.SetArgs([]string{"auth", "--json"})
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	start := time.Now()
+	err = cmd.Execute()
+	if err == nil || out.Len() != 0 {
+		t.Fatalf("canceled status: err=%v stdout=%q stderr=%q", err, out.String(), errOut.String())
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("parent cancellation took %s", elapsed)
 	}
 }

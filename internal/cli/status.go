@@ -18,10 +18,13 @@ func statusCmd() *cobra.Command {
 whether a tws-launched session is running, and whether anything needs
 attention.
 
-Scope. With no argument the report always covers every feature in the resolved
-workspace, from any working directory. It is never scoped by your current
-location — pass a feature name to filter. (This deliberately differs from
-'tws space list', which is cwd-scoped.)
+Scope. With no argument the report always builds every feature in the resolved
+workspace. With a feature argument it builds only that feature plus genuine
+workspace evidence, including a shared checkout session even when that session
+belongs to another feature. It does not read or probe other feature stacks,
+worktrees, or session records. Scope is never inferred from your current
+location. (This deliberately differs from 'tws space list', which is
+cwd-scoped.)
 
 Your working directory selects which workspace is resolved; it never changes
 what the report says about that workspace. Run from the repository, from a
@@ -38,6 +41,12 @@ Exit status is 0 whenever a report was produced, including when branches need
 attention or operational state is stale or corrupt. A non-zero exit means no
 report could be produced at all.
 
+Git and tmux subprocesses are limited to five seconds each and share one
+thirty-second invocation budget beginning with workspace resolution. A failed
+or timed-out observation is reported as null/unknown with an issue, never as
+clean or absent. Ordinary filesystem reads are synchronous and are not
+interruptible by that subprocess budget.
+
 --json prints one versioned document with a stable key set; absent values are
 null and lists are never null.`,
 		Args: cobra.MaximumNArgs(1),
@@ -52,34 +61,31 @@ null and lists are never null.`,
 			// failure must not spray usage into a polled surface's output.
 			cmd.SilenceUsage = true
 
-			ws, degradedReason, err := internal.ResolveStatusWorkspace()
-			if err != nil {
-				return err
-			}
-
 			feature := ""
 			if len(args) == 1 {
 				feature = args[0]
-				// Guard the caller-supplied name against a registered space
-				// before any path join, stat, record read, or tmux probe. The
-				// guard root is the root the subsequent reads join against.
-				if gerr := internal.GuardFeatureName(ws.MetadataRoot, feature); gerr != nil {
-					return gerr
-				}
 			}
 
-			report, err := internal.BuildAgentStatus(ws, degradedReason, nil)
+			budget := internal.NewStatusProbeBudget(cmd.Context())
+			defer budget.Close()
+			ws, degradedReason, err := internal.ResolveStatusWorkspaceWithBudget(feature, budget)
 			if err != nil {
 				return err
 			}
-			for i := range report.Features {
-				f := &report.Features[i]
-				f.Reparent = reparentProjectionFor(ws, f.Feature, f.Path)
+			opts := &internal.AgentStatusOpts{
+				Budget: budget,
+				ResolveReparentPath: func(feature, ordinaryPath string) (string, error) {
+					return reparentFeaturePathFor(ws, feature)
+				},
 			}
+			var report *internal.AgentStatusReport
 			if feature != "" {
-				if ferr := report.FilterFeature(feature); ferr != nil {
-					return ferr
-				}
+				report, err = internal.BuildAgentStatusScoped(ws, degradedReason, feature, opts)
+			} else {
+				report, err = internal.BuildAgentStatus(ws, degradedReason, opts)
+			}
+			if err != nil {
+				return err
 			}
 			// §11.10 rule 1: the anchored line precedes every stdout write.
 			// The report itself is already built read-only; this is a pure

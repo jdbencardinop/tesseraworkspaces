@@ -2,9 +2,11 @@ package internal
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -152,8 +154,13 @@ func TestAgentStatusIssueCodeClosure(t *testing.T) {
 		}
 		seen[code] = true
 	}
-	if len(AgentStatusIssueCodes) != 45 {
-		t.Fatalf("issue code table has %d entries, want 45", len(AgentStatusIssueCodes))
+	if len(AgentStatusIssueCodes) != 48 {
+		t.Fatalf("issue code table has %d entries, want 48", len(AgentStatusIssueCodes))
+	}
+	for _, added := range []string{IssueGitProbeUnavailable, IssueStatusProbeExhausted, IssueSessionOffScopeUnhealthy} {
+		if !seen[added] {
+			t.Fatalf("new status reliability code %q is missing", added)
+		}
 	}
 	for _, removed := range []string{"sync-lock-invalid", "feature-tmux-unknown"} {
 		if seen[removed] {
@@ -969,8 +976,12 @@ func TestAgentStatusTmuxTable(t *testing.T) {
 		if hasIssue(r, IssueTmuxUnverifiable) == nil {
 			t.Fatalf("expected tmux-unverifiable, got %v", issueCodes(r))
 		}
-		if len(findEntry(t, r, "auth", "api").Sessions) != 0 {
-			t.Fatal("an unusable inventory produces no per-branch observation")
+		api := findEntry(t, r, "auth", "api")
+		if len(api.Sessions) != 1 || api.Sessions[0].Presence != PresenceUnknown {
+			t.Fatalf("a failed inventory must not claim absence: %+v", api.Sessions)
+		}
+		if hasIssue(r, IssueTmuxPanesUnverified) == nil {
+			t.Fatalf("expected a scoped unknown-runtime issue, got %v", issueCodes(r))
 		}
 	})
 
@@ -2344,5 +2355,316 @@ func TestBuildWorktreeInventory_FailClosed(t *testing.T) {
 	}
 	if empty := BuildWorktreeInventory(""); empty.Available || empty.Err == nil {
 		t.Fatalf("an empty repo root yields an unavailable inventory with a cause: %+v", empty)
+	}
+}
+
+func TestAgentStatusScopedBuildIgnoresUnrelatedCheckoutAmbiguity(t *testing.T) {
+	dir, ws := setupHealthTestRepo(t)
+	addFeatureToRepo(t, ws, "auth", "api", "main")
+	gitInTest(t, dir, "branch", "api")
+
+	for _, path := range []string{
+		filepath.Join(ws.MetadataRoot, "features", "billing"),
+		filepath.Join(ws.MetadataRoot, "billing"),
+	} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := SaveStack(path, Stack{Branches: []StackEntry{{Name: "pay", Base: "main"}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	report, err := BuildAgentStatusScoped(ws, "", "auth", statusOpts(nil, nil))
+	if err != nil {
+		t.Fatalf("unrelated checkout ambiguity must not abort scoped status: %v", err)
+	}
+	if len(report.Features) != 1 || report.Features[0].Feature != "auth" {
+		t.Fatalf("scoped features = %+v", report.Features)
+	}
+	if report.Summary.Features != 1 || report.Summary.Entries != 1 {
+		t.Fatalf("scoped summary = %+v", report.Summary)
+	}
+	if _, err := BuildAgentStatus(ws, "", statusOpts(nil, nil)); err == nil {
+		t.Fatal("the unchanged global builder must still fail on ambiguous topology")
+	}
+}
+
+func TestAgentStatusScopedBuildIgnoresUnrelatedMalformedStack(t *testing.T) {
+	entries := []StackEntry{{Name: "api", Base: "main"}}
+	ws, featurePath := setupExternalStatusWorkspace(t, "auth", entries)
+	addExternalWorktree(t, ws, featurePath, entries[0])
+	billing := filepath.Join(ws.MetadataRoot, "billing")
+	if err := os.MkdirAll(filepath.Join(billing, "worktrees"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(StackPath(billing), []byte("branches: [\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := BuildAgentStatusScoped(ws, "", "auth", statusOpts(nil, nil))
+	if err != nil {
+		t.Fatalf("unrelated malformed stack must not abort scoped status: %v", err)
+	}
+	if len(report.Features) != 1 || report.Features[0].Feature != "auth" {
+		t.Fatalf("scoped features = %+v", report.Features)
+	}
+	for _, issue := range report.Issues {
+		if issue.Feature != nil && *issue.Feature == "billing" {
+			t.Fatalf("unrelated feature issue leaked into scoped report: %+v", issue)
+		}
+	}
+}
+
+func TestAgentStatusScopedGitProbeFailuresStayUnknown(t *testing.T) {
+	entries := []StackEntry{{Name: "api", Base: "main"}}
+	ws, featurePath := setupExternalStatusWorkspace(t, "auth", entries)
+	addExternalWorktree(t, ws, featurePath, entries[0])
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shimDir := t.TempDir()
+	shim := filepath.Join(shimDir, "git")
+	script := `#!/bin/sh
+case " $* " in
+  *" status --porcelain "*) exit 42 ;;
+esac
+exec "$STATUS_REAL_GIT" "$@"
+`
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("STATUS_REAL_GIT", realGit)
+	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	report, err := BuildAgentStatusScoped(ws, "", "auth", statusOpts(nil, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Workspace.Dirty != nil {
+		t.Fatalf("failed workspace dirty probe must be null, got %v", *report.Workspace.Dirty)
+	}
+	entry := findEntry(t, report, "auth", "api")
+	if entry.Materialization.Dirty != nil {
+		t.Fatalf("failed entry dirty probe must be null, got %v", *entry.Materialization.Dirty)
+	}
+	if entry.Materialization.CheckedOutBranch == nil || *entry.Materialization.CheckedOutBranch != "api" {
+		t.Fatalf("independent branch fact must survive dirty failure: %+v", entry.Materialization)
+	}
+	var workspaceIssue, entryIssue bool
+	for _, issue := range report.Issues {
+		if issue.Code != IssueGitProbeUnavailable {
+			continue
+		}
+		workspaceIssue = workspaceIssue || issue.Scope == ScopeWorkspace
+		entryIssue = entryIssue || issue.Scope == ScopeEntry && issue.Feature != nil && *issue.Feature == "auth"
+	}
+	if !workspaceIssue || !entryIssue {
+		t.Fatalf("failed probes need scoped issues, got %+v", report.Issues)
+	}
+}
+
+func TestAgentStatusScopedRefProbeFailureIsNotMissing(t *testing.T) {
+	dir, ws := setupHealthTestRepo(t)
+	addFeatureToRepo(t, ws, "auth", "api", "main")
+	gitInTest(t, dir, "branch", "api")
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shimDir := t.TempDir()
+	shim := filepath.Join(shimDir, "git")
+	script := `#!/bin/sh
+case " $* " in
+  *" rev-parse --verify --quiet "*) exit 42 ;;
+esac
+exec "$STATUS_REAL_GIT" "$@"
+`
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("STATUS_REAL_GIT", realGit)
+	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	report, err := BuildAgentStatusScoped(ws, "", "auth", statusOpts(nil, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := findEntry(t, report, "auth", "api")
+	if entry.Materialization.RefExists != nil || entry.Materialization.State != MaterializedUnknown {
+		t.Fatalf("unavailable ref probe = %+v", entry.Materialization)
+	}
+	if hasIssue(report, IssueRefMissing) != nil || hasIssue(report, IssueRefMissingArchived) != nil {
+		t.Fatalf("an unavailable ref is not a verified missing ref: %v", issueCodes(report))
+	}
+	if hasIssue(report, IssueGitProbeUnavailable) == nil {
+		t.Fatalf("missing probe issue: %v", issueCodes(report))
+	}
+}
+
+func TestAgentStatusScopedBudgetExhaustionReturnsPartialReport(t *testing.T) {
+	entries := []StackEntry{{Name: "api", Base: "main"}}
+	ws, featurePath := setupExternalStatusWorkspace(t, "auth", entries)
+	addExternalWorktree(t, ws, featurePath, entries[0])
+
+	logPath := filepath.Join(t.TempDir(), "git.log")
+	shimDir := t.TempDir()
+	shim := filepath.Join(shimDir, "git")
+	script := `#!/bin/sh
+printf 'git\n' >> "$STATUS_GIT_LOG"
+sleep 30
+`
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("STATUS_GIT_LOG", logPath)
+	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	budget := newStatusProbeBudget(context.Background(), time.Second, 250*time.Millisecond)
+	defer budget.Close()
+	opts := statusOpts(nil, nil)
+	opts.Budget = budget
+	report, err := BuildAgentStatusScoped(ws, "", "auth", opts)
+	if err != nil {
+		t.Fatalf("established topology must yield a partial report: %v", err)
+	}
+	if hasIssue(report, IssueStatusProbeExhausted) == nil {
+		t.Fatalf("budget exhaustion issue missing: %v", issueCodes(report))
+	}
+	if report.Workspace.Branch != nil || report.Workspace.Detached != nil || report.Workspace.Dirty != nil {
+		t.Fatalf("unmeasured workspace facts must stay null: %+v", report.Workspace)
+	}
+	entry := findEntry(t, report, "auth", "api")
+	if entry.Materialization.RefExists != nil || entry.Materialization.CheckedOutBranch != nil ||
+		entry.Materialization.Dirty != nil {
+		t.Fatalf("unmeasured entry facts must stay null: %+v", entry.Materialization)
+	}
+	if budget.launchedCount() != 1 {
+		t.Fatalf("launched commands = %d, want 1", budget.launchedCount())
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(data), "git\n") != 1 {
+		t.Fatalf("actual dispatch log = %q", data)
+	}
+}
+
+func TestAgentStatusScopedCheckoutSessionOffScope(t *testing.T) {
+	cases := []struct {
+		name         string
+		liveness     ProcessLiveness
+		wantPresence RuntimePresence
+		wantWarning  bool
+	}{
+		{name: "live", liveness: ProcessLive, wantPresence: PresencePresent},
+		{name: "dead", liveness: ProcessDead, wantPresence: PresenceStale, wantWarning: true},
+		{name: "unknown", liveness: ProcessUnknown, wantPresence: PresenceUnknown, wantWarning: true},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, ws := setupHealthTestRepo(t)
+			addFeatureToRepo(t, ws, "auth", "api", "main")
+			addFeatureToRepo(t, ws, "billing", "pay", "main")
+			gitInTest(t, dir, "branch", "api")
+			gitInTest(t, dir, "branch", "pay")
+			pid := 910100 + i
+			writeCheckoutSessionState(t, ws, fmt.Sprintf(
+				`{"schema_version":1,"workspace_id":%q,"feature":"billing","name":"pay","mode":"direct","pid":%d,"stage":"agent"}`,
+				ws.StableID, pid))
+			writeCheckoutSessionLock(t, ws)
+			opts := statusOpts(fakeProcessProber{probe: map[int]ProcessLiveness{pid: tc.liveness}}, nil)
+
+			report, err := BuildAgentStatusScoped(ws, "", "auth", opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if report.Workspace.CheckoutSession == nil || report.Workspace.CheckoutSession.Presence != tc.wantPresence {
+				t.Fatalf("off-scope session = %+v", report.Workspace.CheckoutSession)
+			}
+			if len(report.Features) != 1 || report.Features[0].Feature != "auth" {
+				t.Fatalf("scoped features = %+v", report.Features)
+			}
+			if hasIssue(report, IssueSessionUnattributed) != nil {
+				t.Fatal("an excluded but valid feature must not be called unattributed")
+			}
+			gotWarning := hasIssue(report, IssueSessionOffScopeUnhealthy) != nil
+			if gotWarning != tc.wantWarning {
+				t.Fatalf("off-scope warning = %v, want %v; issues=%v", gotWarning, tc.wantWarning, issueCodes(report))
+			}
+		})
+	}
+
+	dir, ws := setupHealthTestRepo(t)
+	addFeatureToRepo(t, ws, "auth", "api", "main")
+	addFeatureToRepo(t, ws, "billing", "pay", "main")
+	gitInTest(t, dir, "branch", "api")
+	gitInTest(t, dir, "branch", "pay")
+	writeCheckoutSessionState(t, ws, fmt.Sprintf(
+		`{"schema_version":1,"workspace_id":%q,"feature":"billing","name":"pay","mode":"direct","pid":910200,"stage":"agent"}`,
+		ws.StableID))
+	writeCheckoutSessionLock(t, ws)
+	global := buildStatus(t, ws, statusOpts(fakeProcessProber{probe: map[int]ProcessLiveness{910200: ProcessDead}}, nil))
+	if hasIssue(global, IssueSessionOffScopeUnhealthy) != nil {
+		t.Fatal("global attribution must retain its existing entry-scoped behavior")
+	}
+	if hasIssue(global, IssueSessionOwnerDead) == nil {
+		t.Fatalf("global report must attribute the stale session: %v", issueCodes(global))
+	}
+	if sessions := findEntry(t, global, "billing", "pay").Sessions; len(sessions) != 1 {
+		t.Fatalf("global billing session attribution = %+v", sessions)
+	}
+}
+
+func TestAgentStatusScopedSelectedSessionMissingEntryIsDiagnosed(t *testing.T) {
+	dir, ws := setupHealthTestRepo(t)
+	addFeatureToRepo(t, ws, "auth", "api", "main")
+	gitInTest(t, dir, "branch", "api")
+	writeCheckoutSessionState(t, ws, fmt.Sprintf(
+		`{"schema_version":1,"workspace_id":%q,"feature":"auth","name":"missing","mode":"direct","pid":910300,"stage":"agent"}`,
+		ws.StableID))
+	writeCheckoutSessionLock(t, ws)
+
+	report, err := BuildAgentStatusScoped(ws, "", "auth",
+		statusOpts(fakeProcessProber{probe: map[int]ProcessLiveness{910300: ProcessDead}}, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasIssue(report, IssueSessionUnattributed) == nil {
+		t.Fatalf("a missing entry inside the selected feature remains diagnosed: %v", issueCodes(report))
+	}
+}
+
+func TestAgentStatusScopedTmuxFailureDoesNotClaimAbsence(t *testing.T) {
+	entries := []StackEntry{{Name: "api", Base: "main"}}
+	ws, featurePath := setupExternalStatusWorkspace(t, "auth", entries)
+	addExternalWorktree(t, ws, featurePath, entries[0])
+
+	dir := t.TempDir()
+	shim := filepath.Join(dir, "tmux")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	budget := newStatusProbeBudget(context.Background(), 250*time.Millisecond, 3*time.Second)
+	defer budget.Close()
+	opts := statusOpts(nil, RealTmuxInventory{budget: budget})
+	opts.Budget = budget
+
+	report, err := BuildAgentStatusScoped(ws, "", "auth", opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := findEntry(t, report, "auth", "api")
+	if entry.RuntimePresence != PresenceUnknown || len(entry.Sessions) != 1 ||
+		entry.Sessions[0].Presence != PresenceUnknown {
+		t.Fatalf("failed tmux observation = %+v", entry)
+	}
+	if hasIssue(report, IssueTmuxUnverifiable) == nil || hasIssue(report, IssueTmuxPanesUnverified) == nil {
+		t.Fatalf("tmux failure issues = %v", issueCodes(report))
 	}
 }

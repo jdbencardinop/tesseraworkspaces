@@ -23,6 +23,36 @@ type reparentTmuxProbe struct{ snapshot internal.TmuxSnapshot }
 
 func (p reparentTmuxProbe) Snapshot() internal.TmuxSnapshot { return p.snapshot }
 
+func TestReparentDefaultTmuxInventoryHasNoStatusTimeout(t *testing.T) {
+	dir := t.TempDir()
+	shim := filepath.Join(dir, "tmux")
+	session := internal.ExternalTmuxSessionName("feature", "pr2")
+	script := `#!/bin/sh
+case "$1" in
+  list-sessions)
+    sleep 6
+    printf '%s\n' "$REPARENT_TMUX_SESSION"
+    ;;
+  list-panes)
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("REPARENT_TMUX_SESSION", session)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	names, err := reparentExternalLiveSessions(t.TempDir(), "feature", []string{"pr2"}, nil)
+	if err != nil {
+		t.Fatalf("default reparent tmux inventory inherited a status timeout: %v", err)
+	}
+	if strings.Join(names, ",") != "pr2" {
+		t.Fatalf("default reparent tmux inventory = %v, want pr2", names)
+	}
+}
+
 // Acceptance criteria carried by this file's cells: AC-038 (the scope
 // refusals), AC-039 and AC-040 (same-parent no-work and the stale-edge
 // guidance), AC-068 (the session launch exclusion), AC-079 (sync <-> reparent

@@ -2,13 +2,17 @@
   "id": "scoped-status-projection",
   "slug": "scoped-status-projection",
   "title": "Fix GitHub issue #3: 'tws status \u003cfeature\u003e' must validate and build only the requested feature plus the minimum workspace-level evidence instead of building every feature and filtering afterward. Unrelated slow, missing, corrupt, or unreadable feature metadata and worktrees must not delay or fail a scoped report. Add bounded Git/tmux/process probe contexts that degrade unavailable facts to explicit issues without changing all-workspace output or the versioned status schema.",
-  "state": "defined",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-09-12T15:42:23Z",
-  "updated_at": "2026-10-02T05:42:04Z",
-  "last_command": "explore",
-  "notes": "Phase advanced manually (--manual); artifact authored at exploration.md",
-  "apply": {},
+  "updated_at": "2026-10-02T07:24:56Z",
+  "last_command": "record",
+  "notes": "landed at 2026-10-02T07:24:56Z",
+  "apply": {
+    "completed_at": "2026-10-02T07:24:05Z",
+    "base_commit": "8d0e4bc12b00326e4f5aa419939de7b8f64001ef",
+    "has_patch": true
+  },
   "reconcile": {},
   "depends_on": [
     {
