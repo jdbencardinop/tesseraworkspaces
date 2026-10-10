@@ -25,9 +25,9 @@ func newCmd() *cobra.Command {
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			switch len(args) {
 			case 0:
-				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
+				return managedCompletionFeatures(), cobra.ShellCompDirectiveNoFileComp
 			case 1:
-				return internal.ListBranches(args[0]), cobra.ShellCompDirectiveNoFileComp
+				return managedCompletionBranches(args[0]), cobra.ShellCompDirectiveNoFileComp
 			default:
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			}
@@ -42,6 +42,21 @@ func newCmd() *cobra.Command {
 					return fmt.Errorf("--repo is not supported in checkout mode; checkout workspaces use exactly one repository")
 				}
 				return createCheckoutBranch(ws, args[0], args[1], base, force)
+			}
+			ws, err = managedTemplateWorkspaceForFeature(ws, args[0])
+			if err != nil {
+				return err
+			}
+			featurePath, err := ws.ResolveFeaturePath(args[0])
+			if err != nil {
+				return err
+			}
+			managed, err := internal.ManagedTemplateStatePresent(featurePath)
+			if err != nil {
+				return err
+			}
+			if managed {
+				return createWorktreeResolved(ws, args[0], args[1], base, repo, force)
 			}
 			return createWorktree(args[0], args[1], base, repo, force)
 		},
@@ -175,12 +190,62 @@ func openCheckoutTmux(ws internal.Workspace, feature, branch string) {
 // an omitted base resolves from the selected repository's origin/HEAD.
 func createWorktree(feature, name, requestedBase, repoPath string, force bool) error {
 	wsRoot := internal.TwsRoot()
+	return createWorktreeAt(
+		internal.Workspace{Mode: internal.ModeExternal, MetadataRoot: wsRoot},
+		feature, internal.FeaturePath(feature), internal.WorktreePath(feature, name),
+		name, requestedBase, repoPath, force,
+	)
+}
+
+func createWorktreeResolved(ws internal.Workspace, feature, name, requestedBase, repoPath string, force bool) error {
+	featurePath, err := ws.ResolveFeaturePath(feature)
+	if err != nil {
+		return err
+	}
+	cfg, err := internal.LoadConfigForRepoE(ws.RepoRoot)
+	if err != nil {
+		return err
+	}
+	if err := internal.ValidateManagedCheckoutContextResolved(
+		ws, feature, featurePath, cfg.GetAgentCommand(), cfg.InjectInto, false,
+	); err != nil {
+		return err
+	}
+	repoRoot := ws.RepoRoot
+	storedRepo := ""
+	if repoPath != "" {
+		repoRoot, storedRepo, err = resolveSourceRepo(featurePath, internal.Stack{}, repoPath)
+		if err != nil {
+			return err
+		}
+	}
+	return createWorktreeAt(
+		ws, feature, featurePath, filepath.Join(featurePath, "worktrees", filepath.FromSlash(name)),
+		name, requestedBase, repoPath, force,
+		&worktreeCreationSelection{
+			repoRoot: repoRoot, storedRepo: storedRepo, cfg: cfg,
+			inject: managedInjectTarget{Value: cfg.InjectInto},
+		},
+	)
+}
+
+type worktreeCreationSelection struct {
+	repoRoot   string
+	storedRepo string
+	cfg        internal.Config
+	inject     managedInjectTarget
+}
+
+func createWorktreeAt(
+	ws internal.Workspace,
+	feature, featurePath, path, name, requestedBase, repoPath string,
+	force bool,
+	selections ...*worktreeCreationSelection,
+) error {
+	wsRoot := ws.MetadataRoot
 	if err := internal.GuardFeatureName(wsRoot, feature); err != nil {
 		return err
 	}
-
-	featurePath := internal.FeaturePath(feature)
-	path := internal.WorktreePath(feature, name)
 
 	if err := internal.EnsureExternalWorkspaceMarker(wsRoot); err != nil {
 		return err
@@ -190,23 +255,64 @@ func createWorktree(feature, name, requestedBase, repoPath string, force bool) e
 	}
 
 	stack, _ := internal.LoadStack(featurePath)
-	repoRoot, storedRepo, err := resolveSourceRepo(featurePath, stack, repoPath)
-	if err != nil {
-		return err
-	}
-
-	baseName, baseRef, err := resolveCreationBase(repoRoot, storedRepo, stack, requestedBase)
-	if err != nil {
-		return err
-	}
-
+	existingEntry := internal.GetBranch(stack, name)
+	reactivating := existingEntry.Name != "" && existingEntry.Archived
+	var repoRoot, storedRepo string
+	var err error
 	cfg := internal.LoadConfig()
-	gitBranch := name
-	if cfg.BranchPrefix != "" {
+	injectTarget := managedInjectTarget{Value: internal.ResolveInjectInto("")}
+	if len(selections) > 0 && selections[0] != nil {
+		repoRoot = selections[0].repoRoot
+		storedRepo = selections[0].storedRepo
+		cfg = selections[0].cfg
+		injectTarget = selections[0].inject
+	} else {
+		repoRoot, storedRepo, err = resolveSourceRepo(featurePath, stack, repoPath)
+		if err != nil {
+			return err
+		}
+	}
+	if reactivating {
+		storedRepo = existingEntry.Repo
+		repoRoot = ws.RepoRoot
+		if storedRepo != "" {
+			repoRoot, err = internal.MainRepoRootIn(storedRepo)
+			if err != nil {
+				return fmt.Errorf("resolving stored repository for archived entry %q: %w", name, err)
+			}
+		}
+		if repoPath != "" {
+			requestedRoot, _, resolveErr := resolveSourceRepo(featurePath, internal.Stack{}, repoPath)
+			if resolveErr != nil {
+				return resolveErr
+			}
+			if !sameResolvedRepoRoot(repoRoot, requestedRoot) {
+				return fmt.Errorf("archived entry %q belongs to a different repository (%s)", name, repoRoot)
+			}
+		}
+	}
+
+	baseName := existingEntry.Base
+	baseRef := ""
+	if !reactivating {
+		baseName, baseRef, err = resolveCreationBase(repoRoot, storedRepo, stack, requestedBase)
+		if err != nil {
+			return err
+		}
+	}
+
+	gitBranch := existingEntry.GitBranch()
+	if !reactivating {
+		gitBranch = name
+	}
+	if !reactivating && cfg.BranchPrefix != "" {
 		gitBranch = cfg.BranchPrefix + name
 	}
 
 	branchExists := internal.VerifyGitRef(repoRoot, gitBranch) == nil
+	if reactivating && !branchExists {
+		return fmt.Errorf("archived entry %q references missing git branch %q in %s", name, gitBranch, repoRoot)
+	}
 	if !branchExists && gitBranch != name && internal.VerifyGitRef(repoRoot, name) == nil {
 		gitBranch = name
 		branchExists = true
@@ -267,8 +373,26 @@ func createWorktree(feature, name, requestedBase, repoPath string, force bool) e
 		}
 	}
 
-	target := internal.ResolveInjectInto("")
-	if err := internal.InjectFiles(featurePath, path, target); err != nil {
+	managed, managedErr := internal.ManagedTemplateStatePresent(featurePath)
+	if managedErr != nil {
+		return managedErr
+	}
+	if managed {
+		resolvedWS := ws
+		if resolvedWS.RepoRoot == "" {
+			var err error
+			resolvedWS, err = internal.RequireWorkspace()
+			if err != nil {
+				return err
+			}
+		}
+		if err := syncManagedAndLegacyInject(
+			nil, resolvedWS, feature, featurePath, name, path,
+			injectTarget,
+		); err != nil {
+			return fmt.Errorf("managed inject failed after worktree creation: %w", err)
+		}
+	} else if err := internal.InjectFiles(featurePath, path, injectTarget.Value); err != nil {
 		fmt.Printf("Warning: inject failed: %v\n", err)
 	}
 

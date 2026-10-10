@@ -21,7 +21,7 @@ tws <command> [args]
 
 | Command | Description |
 |---------|-------------|
-| `tws add <feature> [-n <branch>] [--open] [--tmux]` | Create feature (and optionally a branch) |
+| `tws add <feature> [-n <branch>] [--open] [--tmux] [--template <dir-or-name>] [--worktree-template <ref>] [--orchestrator-template <ref>] [--agent claude\|copilot]` | Create a legacy or managed feature |
 | `tws new <feature> <branch> [--base <parent>] [--force]` | Create a worktree branch |
 | `tws open [feature] [branch] [--tmux] [--no-agent]` | Open worktree and run agent |
 | `tws sync <feature> [--push] [--verbose] [--continue] [--abort] [--fetch\|--no-fetch] [--full\|--local-only] [--only <entry>\|--from <entry>]` | Rebase worktrees in dependency order, optionally scoped |
@@ -50,7 +50,8 @@ tws <command> [args]
 | `tws rename branch <feature> <old> <new>` | Rename a branch |
 | `tws config show/set/get` | Manage configuration |
 | `tws close <feature> <branch>` | Kill tmux session |
-| `tws template sync <feature> [--template <dir>]` | Backfill templates |
+| `tws template add/list/show/remove` | Manage global/per-repository named template packages |
+| `tws template sync <feature> [--template <dir-or-name>] [--scope worktree\|orchestrator\|both] [--allow-managed-removal]` | Backfill legacy templates or refresh managed roles |
 | `tws init [--agent claude\|copilot]` | Install agent skills |
 | `tws --version` | Print version |
 
@@ -161,6 +162,49 @@ Checkout mode has one physical checkout and no linked worktrees, so
 
 Re-sync after adding new files: `tws inject <feature>` or target one logical
 entry with `tws inject <feature> review/pr-123`.
+
+### Managed Role Templates
+
+Named packages are copied into
+`~/.config/tws/template-registry/<name>/` or repository-local
+`.tws/.template-registry/<name>/`. A package uses `inject/` for worktree
+assets, `feature/` for orchestrator assets, and optional version-1
+`template.yaml` for literal guidance and role/agent-filtered skill references.
+References never copy or prove installation of skill bodies.
+
+```sh
+tws template add review ./review-template
+tws add auth --template review --agent claude
+tws template sync auth --scope worktree
+```
+
+Claude managed destinations are `inject/CLAUDE.local.md` for worktrees and
+feature-root `CLAUDE.md` for orchestration. `.tws-templates.json` is the only
+ownership evidence: matching bytes or generated prose do not make a file
+owned. Modified, unmanaged, symlinked, or tracked destinations refuse.
+
+When unchanged owned files or external links become obsolete, tws lists every
+exact path and asks default-No. Only `y`/`yes` proceeds. Automation may pass
+`--allow-managed-removal`, but the warning remains and the flag never
+authorizes a conflict. Managed worktree guidance requires repository-root
+injection; non-root `inject_into` / `--into` remains a legacy/user-file route.
+For managed `tws inject`, explicit `--into .` overrides configured non-root
+`inject_into` for that invocation; explicit non-root flags refuse.
+Directory-valued `--template` inputs keep legacy copy-if-missing behavior and
+override managed defaults for a new legacy add, but must not be mixed with
+named/role, `--scope`, or `--agent` selectors. Saved registry origins use an
+opaque move-stable identity, and an explicit renderer remains valid only while
+the recorded `agent_command` is unchanged. External managed routes keep one
+execution-selected feature root (including `TWS_ROOT`); actual managed changes
+remain excluded by active sessions and sync recovery evidence, while a
+verified no-op may reopen an existing session.
+
+Existing owned objects are moved into private `.tws-template-recovery/`
+pending evidence before replacement/removal. Cleanup occurs only after
+successful ownership publication and revalidation; failures preserve and
+report exact paths, and retries fail closed. This does not promise multi-file
+atomicity or preserve writes arriving later through an already-open descriptor
+after final verification.
 
 ### Cross-Worktree Decisions
 

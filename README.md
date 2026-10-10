@@ -262,6 +262,109 @@ Checkout mode has one physical checkout and no linked worktrees, so both
 feature-wide and branch-specific `tws inject` commands refuse explicitly.
 Existing destination files are preserved.
 
+### Named, Role-Aware Templates
+
+Named template packages are copied into a registry, then selected independently
+for worktree and orchestrator guidance:
+
+```sh
+# Register an independent copy of a package
+tws template add review ./review-template            # global
+tws template add review ./review-template --repo     # owning repository
+tws template list
+tws template show review                              # repo entry wins
+tws template show global:review                       # explicit origin
+
+# Select one package for both roles, or select roles independently
+tws add auth --template review --agent copilot
+tws add auth \
+  --worktree-template global:worktree-base \
+  --orchestrator-template repo:orchestrator-base \
+  --agent claude
+
+# Refresh saved selections, or change only one role explicitly
+tws template sync auth
+tws template sync auth --scope worktree --worktree-template global:new-base
+```
+
+Packages contain `inject/` assets for worktree context and `feature/` assets
+for the feature directory. Optional `template.yaml` version 1 supplies literal
+role guidance and skill **references**; tws never executes package content or
+copies skill implementations. Registry storage is separate from legacy
+templates:
+
+- global: `~/.config/tws/template-registry/<name>/`
+- repository: `.tws/.template-registry/<name>/`
+
+An unqualified name prefers the repository entry. Saved selections retain
+their resolved `repo:` or `global:` origin plus an opaque registry identity, so
+a later shadowing entry or same-named registry under another HOME/repository
+cannot silently retarget a feature. Moving a repository together with its
+registry preserves that identity. Removing a registry entry never removes
+feature files; a feature whose saved source disappeared requires explicit
+reselection.
+
+Managed rendering writes native guidance:
+
+| Role | Claude | Copilot |
+|---|---|---|
+| worktree | `inject/CLAUDE.local.md` | `inject/.github/instructions/tws-worktree.instructions.md` |
+| orchestrator | `CLAUDE.md` | `AGENTS.md` |
+
+`--agent` selects rendering only; it does not change `agent_command`. If the
+renderer was explicit, tws honors it while the recorded launch command remains
+unchanged—even for a supported renderer different from the launcher or for a
+custom wrapper. A later launch-command change requires explicit rerendering
+instead of silently switching native guidance.
+
+Managed worktree guidance requires repository-root injection. A non-root
+`inject_into` or `--into` remains supported for legacy/user inject files, but a
+managed worktree operation refuses it; orchestrator-only sync is unaffected.
+For `tws inject`, an explicit `--into .` is the supported one-run override of a
+configured non-root `inject_into`; an explicit non-root flag is still refused.
+Checkout mode keeps durable files under `.tws/features/<feature>` and exposes
+worktree context only through the existing session-owned temporary links.
+
+Managed state lives in feature-local `.tws-templates.json`. tws replaces or
+removes only regular files and external links whose recorded hash, mode,
+filesystem identity, exact Git-worktree identity, source mapping, and link
+target still match. Same-content files without ownership metadata,
+modified owned files, tracked paths, and symlinks are conflicts—not adoption
+candidates. When an update would retire unchanged owned paths, tws prints every
+feature, role, kind, and exact path, then asks default-No:
+
+```text
+Remove these unchanged TWS-managed files and apply the template update? [y/N]
+```
+
+Only `y`/`yes` proceeds. Automation must pass
+`--allow-managed-removal`; the full warning is still printed, and the flag
+never authorizes modified or unmanaged content. `--scope worktree`,
+`--scope orchestrator`, and `--scope both` preserve unselected role state.
+
+Directory-valued `--template` arguments remain the legacy copy-if-missing
+route, including repeated first-existing-file-wins layering and custom
+injection targets. Legacy features are not adopted implicitly, and directory
+inputs cannot be mixed with named/role selectors. New features may opt into
+managed mode through `worktree_template` and `orchestrator_template` defaults.
+An explicit directory input remains legacy even when those defaults exist.
+
+External managed creation and later new/open/inject/sync operations keep one
+execution-selected feature root, including the documented `TWS_ROOT` override.
+A verified link-sync no-op may reopen or attach to an existing session; actual
+managed writes or link changes remain blocked by live sessions and by any
+ordinary sync recovery evidence.
+
+Managed mutations pin the selected package, feature, registry, and worktree
+roots. New leaves are published without replacement. Before replacing or
+removing an existing owned object, tws moves it into a private same-filesystem
+`.tws-template-recovery/` area and records pending evidence. Successful
+ownership publication triggers cleanup only after the old copy is reverified;
+any mismatch or failure preserves the evidence and reports its exact path.
+Retries fail closed while that evidence remains. This is not a multi-file
+transaction and cannot preserve later writes made through an already-open
+descriptor to an old object after its final successful verification.
+
 ### Multi-Repo Workspaces
 
 Work on code and docs repos in the same feature:
@@ -280,10 +383,14 @@ tws export auth --full -o auth.tar.gz  # tarball with inject files
 tws import --from-repo auth         # recreate on another machine
 ```
 
+The export schema is unchanged. Managed selections, ownership/link evidence,
+and orchestrator assets are not portable; `--full` includes inject bytes only,
+and imported bytes are unmanaged until an explicit future migration feature.
+
 ### 3-Tier Skill System
 
-- **Worktree skills** — injected into each worktree, agents work on code
-- **Orchestrator skill** — auto-installed in feature dir, coordinates agents
+- **Worktree guidance** — native Claude/Copilot files injected into each worktree
+- **Orchestrator guidance** — native Claude/Copilot files in the feature dir
 - **Global skills** — installed via `tws init`, knows how to create workspaces
 
 ```sh
@@ -312,7 +419,7 @@ read. No timeout flags are added.
 
 | Command | Description |
 |---------|-------------|
-| `tws add <feature> [-n branch] [--open] [--tmux]` | Create feature workspace |
+| `tws add <feature> [-n branch] [--open] [--tmux] [--template dir-or-name] [--worktree-template ref] [--orchestrator-template ref] [--agent claude\|copilot]` | Create legacy or managed feature workspace |
 | `tws new <feature> <branch> [--base] [--repo] [--force]` | Create worktree branch |
 | `tws open [feature] [branch] [--tmux] [--no-agent]` | Open worktree (interactive picker if no args) |
 | `tws sync <feature> [--push] [--continue] [--abort] [--verbose] [--fetch\|--no-fetch] [--full\|--local-only] [--only <entry>\|--from <entry>]` | Rebase in dependency order, optionally scoped |
@@ -338,7 +445,8 @@ read. No timeout flags are added.
 | `tws hooks install/remove [--all]` | Manage agent hooks |
 | `tws export <feature> [--full] [--to-repo]` | Export workspace |
 | `tws import <file> [--from-repo]` | Import workspace |
-| `tws template sync [--all] [--template dir]` | Backfill templates |
+| `tws template add/list/show/remove` | Manage global/per-repository named template packages |
+| `tws template sync [feature\|--all] [--template dir-or-name] [--scope worktree\|orchestrator\|both] [--allow-managed-removal]` | Backfill legacy templates or refresh managed roles |
 | `tws close <feature> <branch>` | Kill tmux session |
 | `tws registry add <path> [--alias name]` | Register a repo/workspace for discovery |
 | `tws registry list/show/check [--json]` | Inspect registered workspaces |
@@ -537,10 +645,12 @@ tws space remove learning --workspace # drops the link; never deletes the target
 
 ```sh
 tws config set agent_command opencode        # change agent
-tws config set use_tmux true --repo          # per-repo tmux default
+tws config set use_tmux true --repo          # owning-repository tmux default
 tws config set test_command "go build ./..."  # post-rebase validation
 tws config set auto_hooks true               # auto-install hooks on tws new
 tws config set inject_into .context          # inject target subdirectory
+tws config set worktree_template global:worktree-base
+tws config set orchestrator_template repo:orchestrator-base --repo
 ```
 
 Config files: `~/.config/tws/config.yaml` (global), `.tws/config.yaml` (per-repo). Env: `TWS_ROOT`.

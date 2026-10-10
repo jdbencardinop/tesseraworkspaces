@@ -20,9 +20,16 @@ agent_command: opencode
 
 # Use tmux by default for this repo
 use_tmux: true
+
+# Named managed-template defaults for newly created features
+worktree_template: global:worktree-base
+orchestrator_template: repo:orchestrator-base
 ```
 
-Per-repo values override global config. Only `agent_command` and `use_tmux` are typically set per-repo.
+Per-repo values override global config. Template references may be unqualified
+(repository registry first), `repo:<name>`, or `global:<name>`.
+For managed feature commands, “repo” means the workspace's primary owning
+repository, even when the command is invoked from a secondary worktree.
 
 ## Global config file
 
@@ -40,6 +47,10 @@ agent_command: claude
 # Use tmux for tws open (default: false)
 # Override per-invocation with --tmux or --no-tmux
 use_tmux: false
+
+# Opt newly created features into managed role templates
+worktree_template: worktree-base
+orchestrator_template: orchestrator-base
 ```
 
 ### Agent command
@@ -58,6 +69,37 @@ agent_command: claude-dev      # Claude Code dev build — -c auto-detection wor
 
 When the agent is `claude`, `claude-dev`, or `cc`, tws automatically detects existing Claude sessions and appends `-c` (continue) on subsequent opens.
 
+Managed template rendering recognizes exact Claude aliases above and the
+`copilot` executable. A wrapper or custom `agent_command` must use explicit
+`--agent claude` or `--agent copilot`; tws does not guess from substrings or
+execute the command to identify it. An explicit renderer records the current
+`agent_command` as decision provenance: ordinary sync and checkout context
+continue to honor that renderer while the launch command is unchanged, and
+require explicit reselection after a later launch-command change.
+
+### Managed template defaults
+
+`worktree_template` and `orchestrator_template` supply role defaults only when
+a new feature enters managed mode. Existing legacy features are not migrated
+implicitly. Once selected, each role persists its resolved registry origin and
+rendering agent in feature-local `.tws-templates.json`; later default or
+registry shadowing changes do not retarget it. Registry roots carry an opaque,
+move-stable identity, so moving a repository with its local registry preserves
+the saved origin while another HOME or repository containing the same name is
+never substituted.
+
+```sh
+tws config set worktree_template global:worktree-base
+tws config set orchestrator_template repo:orchestrator-base --repo
+```
+
+The global registry is `~/.config/tws/template-registry/`; the repository
+registry is `.tws/.template-registry/`. Managed worktree guidance requires
+root injection, so a non-root `inject_into` is compatible only with legacy/user
+inject files or orchestrator-only managed updates. `tws inject ... --into .`
+explicitly overrides a configured non-root target for that invocation; an
+explicit non-root `--into` does not.
+
 Each key is the absolute path to a git repository. The value is the workspace root where features and worktrees are stored for that repo.
 
 If no entry exists for the current repo, tesseraworkspaces defaults to a sibling directory named `<repo>.tws/` next to the repo.
@@ -69,6 +111,14 @@ Set `TWS_ROOT` to override all config resolution for the current session:
 ```sh
 TWS_ROOT=/tmp/scratch tws add my-feature
 ```
+
+Managed external add/new/open/inject/template-sync operations use the same
+execution-selected feature root. New features honor `TWS_ROOT`; an already
+existing feature remains coherent with the root where that feature is found
+rather than splitting its assets, worktrees, links, and reservations.
+The workspace's primary repository supplies role defaults, repository
+registry entries, and agent configuration even when the command runs inside
+a secondary-repository worktree. Ambiguous primary ownership is refused.
 
 ## Default behavior
 

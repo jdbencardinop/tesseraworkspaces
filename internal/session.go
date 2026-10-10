@@ -713,6 +713,9 @@ func PlanCheckoutSessionLinks(ws Workspace, feature, into string) ([]SessionCont
 	if err != nil {
 		return nil, err
 	}
+	if err := ValidateManagedCheckoutContext(ws, feature, featurePath, into); err != nil {
+		return nil, err
+	}
 	source := InjectPath(featurePath)
 	if _, err := os.Stat(source); os.IsNotExist(err) {
 		return nil, nil

@@ -12,7 +12,7 @@ You are working in a project that uses `tws` for feature-scoped workspaces with 
 
 `tws` is a compiled Go binary on PATH. Invoke it directly:
 
-- `tws add <feature> [-n <branch>] [--open]` — Create feature (quick start with -n)
+- `tws add <feature> [-n <branch>] [--open] [--template <dir-or-name>] [--worktree-template <ref>] [--orchestrator-template <ref>] [--agent claude|copilot]` — Create a legacy or managed feature
 - `tws new <feature> <branch> [--base <parent>] [--force]` — Create worktree branch
 - `tws open [feature] [branch] [--tmux] [--no-agent]` — Open worktree and run agent
 - `tws sync <feature> [--push] [--verbose] [--continue] [--abort] [--fetch|--no-fetch] [--full|--local-only] [--only <entry>|--from <entry>]` — Rebase worktrees in dependency order, optionally scoped
@@ -41,7 +41,8 @@ You are working in a project that uses `tws` for feature-scoped workspaces with 
 - `tws rename feature/branch` — Rename feature or branch
 - `tws config show/set/get` — Manage configuration
 - `tws close <feature> <branch>` — Close a session: refuses while a direct record is live, then kills tmux
-- `tws template sync <feature> [--template <dir>]` — Backfill templates
+- `tws template add/list/show/remove` — Manage global/per-repository named template packages
+- `tws template sync <feature> [--template <dir-or-name>] [--scope worktree|orchestrator|both] [--allow-managed-removal]` — Backfill legacy templates or refresh managed roles
 
 ## Stacked & Divergent Branches
 
@@ -87,6 +88,49 @@ or use an ignored subfolder.
 
 Checkout mode has no linked worktrees, so both feature-wide and
 branch-specific `tws inject` refuse explicitly.
+
+## Managed Role Templates
+
+Named packages are independent registry copies under
+`~/.config/tws/template-registry/<name>/` or
+`.tws/.template-registry/<name>/`. `inject/` contains worktree assets,
+`feature/` contains orchestrator assets, and optional version-1
+`template.yaml` contains literal role guidance and role/agent-filtered skill
+references. A reference is not a copied skill body or proof of installation.
+
+Copilot managed guidance uses
+`inject/.github/instructions/tws-worktree.instructions.md` with `applyTo`
+frontmatter and feature-root `AGENTS.md`. Claude uses
+`inject/CLAUDE.local.md` and `CLAUDE.md`.
+
+`.tws-templates.json` is the only ownership authority. Same-content unmanaged
+files, modified owned files, symlinks, tracked destinations, and changed links
+must refuse; never recommend deleting state or forcing adoption. Obsolete
+unchanged owned files and links are listed exactly and require default-No
+`y`/`yes`, or `--allow-managed-removal` for unattended consent. The flag still
+prints the warning and never overrides a conflict.
+
+Managed worktree guidance requires root injection. Legacy/user inject files
+retain custom `inject_into` / `--into`, and orchestrator-only managed sync is
+still valid. Explicit `tws inject ... --into .` overrides configured non-root
+`inject_into` for one managed invocation; explicit non-root flags refuse.
+Directory-valued `--template` remains legacy copy-if-missing
+behavior and overrides managed defaults for a new legacy add, but cannot be
+mixed with named/role, `--scope`, or `--agent` selectors. Saved registry
+origins use an opaque move-stable identity, and an explicit renderer remains
+valid only while the recorded `agent_command` is unchanged. External managed
+routes keep one execution-selected feature root (including `TWS_ROOT`);
+actual managed changes remain excluded by active sessions and sync recovery
+evidence, while a verified no-op may reopen an existing session. Exports omit
+managed selection/ownership/link state and orchestrator assets; imported
+inject bytes remain unmanaged.
+
+Before replacement/removal, existing owned objects and bounded pending
+evidence move into private `.tws-template-recovery/`. Cleanup occurs only after
+successful ledger publication and revalidation; failures retain and report
+exact paths, and retries fail closed. This is not multi-file atomic and cannot
+capture later writes through an already-open descriptor after final
+verification.
 
 ## Decisions
 

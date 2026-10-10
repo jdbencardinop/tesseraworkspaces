@@ -1,0 +1,66 @@
+{
+  "feature": "named-feature-templates",
+  "base_commit": "947032d1e7e1014dbc6a4f0f5e7de4611db02b03",
+  "product_baseline": "v1.2.18-rc.4",
+  "candidate": "v11",
+  "product_file_count": 41,
+  "product_manifest_sha256": "3022af7ddafab49f2ff44d2ed7293fe223a5609fb8a6bcebaf8aa3550bfaf330",
+  "canonical_patch_sha256": "23aac2724ac59b4ebcc3fa50c9c20c1a02be11857e42c1ab8d60b5b89a076212",
+  "recipe_sha256": "3bfd491b76c71d47531dd098e12615501c6dbdf72729b60feadd6f72536fafbc",
+  "reviews": {
+    "model": "gpt-5.6-sol",
+    "filesystem_and_ownership": "approved",
+    "integration_and_correctness": "approved",
+    "cli_ux_and_documentation": "approved",
+    "exact_manifest_verified_before_and_after": true,
+    "rendered_hash_typos_corrected_by_fresh_verification": true
+  },
+  "candidate_gates": {
+    "focused_real_git_regressions": "passed",
+    "historical_archive_session_and_reparent_regressions": "passed",
+    "eleven_independent_cli_regression_scenarios": "passed",
+    "go test ./... -count=1 -timeout 40m": "passed",
+    "full_gate_test_duration_seconds": 822.99,
+    "go vet ./...": "passed",
+    "golangci-lint run ./...": "passed",
+    "make build": "passed",
+    "gofmt": "passed",
+    "git diff --check": "passed",
+    "tpatch feature deps --validate-all": "passed",
+    "approved_product_bytes_unchanged": true
+  },
+  "recipe": {
+    "operation_count": 41,
+    "top_level_fields": ["feature", "operations"],
+    "existing_file_preimage_hashes": 28,
+    "new_files_absent_at_recorded_base": 13,
+    "normalization": "The installed record generator emitted write-file operations without preimage hashes and with unused empty search/replace fields. Added SHA-256 preimages from the exact recorded Git baseline for the 28 existing files and removed unused fields. The 13 new-file operations have no preimage_hash; their absence is established by the fresh exact-base replay fixtures. Product content and canonical patch were unchanged."
+  },
+  "replay": {
+    "fresh_normalized_recipe_replays": 2,
+    "base_commit": "947032d1e7e1014dbc6a4f0f5e7de4611db02b03",
+    "matching_product_files_per_replay": 41,
+    "normalized_recipe_verdict": "passed",
+    "canonical_patch_isolated_index_replay": "passed",
+    "canonical_patch_postimages_match_approved_manifest": true
+  },
+  "tpatch_verification": {
+    "status": "inherited_dependency_verification_failure",
+    "failed_parent": "fix-inject-slash-worktree-discovery",
+    "parent_landing": "86c7d5872b6a7d203840c06c403df14cda733c0e",
+    "parent_landing_is_ancestor_of_product_baseline": true,
+    "reproduced_on_unchanged_main_baseline": true,
+    "detail": "The verifier cannot materialize the hard parent's canonical patch at the verification baseline. Verifying that parent independently on unchanged main also fails its historical/current canonical-patch and preimage checks, although its recipe replay passes. This feature's own exact-base recipe and canonical patch were independently replayed successfully. Do not alter truthful dependencies or rewrite historical artifacts to suppress the inherited failure.",
+    "later_touch_warnings": "The tool reports older whole-file owners on shared paths. Exact-base preimages and complete approved postimage comparisons were used; no older feature artifacts were modified.",
+    "deferred_maintenance": "repair-historical-tpatch-artifacts"
+  },
+  "approved_safety_policy": {
+    "managed_mode": "explicit opt-in; legacy directory templates remain separate",
+    "role_selection": "persist independent worktree and orchestrator sources and rendering provenance",
+    "obsolete_file_consent": "exact-path warning and default-No confirmation; explicit unattended consent never overrides ownership or edits",
+    "preservation": "preserve before mutation; clean verified old copies only after successful publication; retain evidence on conflict or failure",
+    "open_descriptor_limit": "automatic cleanup does not protect writes arriving later through already-open descriptors after final successful verification",
+    "checkout": "one physical checkout; session-owned temporary context only",
+    "publication": "no push or tag authorized"
+  }
+}

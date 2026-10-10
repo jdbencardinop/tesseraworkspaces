@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -18,6 +19,10 @@ func addCmd() *cobra.Command {
 	var open bool
 	var force bool
 	var useTmux bool
+	var worktreeTemplate string
+	var orchestratorTemplate string
+	var agent string
+	var allowManagedRemoval bool
 
 	cmd := &cobra.Command{
 		Use:   "add <feature>",
@@ -37,22 +42,166 @@ Note: injected files appear as untracked in git status. Add them to
 			if err != nil {
 				return err
 			}
-
-			if ws.Mode == internal.ModeCheckout {
-				return addCheckout(ws, feature, templates, newBranch, base, force, open, useTmux)
+			ws, err = managedTemplateWorkspaceForFeature(ws, feature)
+			if err != nil {
+				return err
 			}
-			return addExternal(feature, templates, newBranch, base, force, open, useTmux)
+
+			classified, err := classifyTemplateArgs(ws.RepoRoot, templates)
+			if err != nil {
+				return err
+			}
+			flags := managedFlagsFromCommand(cmd, worktreeTemplate, orchestratorTemplate, agent, allowManagedRemoval)
+			if err := applyNamedAlias(&flags, classified); err != nil {
+				return err
+			}
+			featurePath, err := ws.ResolveFeaturePath(feature)
+			if err != nil {
+				return err
+			}
+			exists, err := featureExists(featurePath)
+			if err != nil {
+				return err
+			}
+			statePresent, err := internal.ManagedTemplateStatePresent(featurePath)
+			if err != nil {
+				return err
+			}
+			managedExplicit := classified.namedSet || flags.worktreeTemplateSet ||
+				flags.orchestratorSet || flags.agentSet
+			managed := managedExplicit || statePresent
+			if len(classified.legacyDirs) > 0 {
+				if managed {
+					return errors.New("cannot mix legacy directory templates with managed template selection")
+				}
+			} else if !managed && !exists {
+				managed, err = managedTemplateDefaultsConfigured(ws.RepoRoot)
+				if err != nil {
+					return err
+				}
+			}
+			if managed {
+				return addManaged(cmd, ws, feature, flags, newBranch, base, force, open, useTmux)
+			}
+			if ws.Mode == internal.ModeCheckout {
+				return addCheckout(ws, feature, classified.legacyDirs, newBranch, base, force, open, useTmux)
+			}
+			return addExternal(feature, classified.legacyDirs, newBranch, base, force, open, useTmux)
 		},
 	}
 
-	cmd.Flags().StringArrayVar(&templates, "template", nil, "Template directory to copy into inject/ (can be specified multiple times)")
+	cmd.Flags().StringArrayVar(&templates, "template", nil, "Legacy template directory or one named template package")
+	cmd.Flags().StringVar(&worktreeTemplate, "worktree-template", "", "Named template reference for worktree guidance")
+	cmd.Flags().StringVar(&orchestratorTemplate, "orchestrator-template", "", "Named template reference for orchestrator guidance")
+	cmd.Flags().StringVar(&agent, "agent", "", "Rendering agent: claude or copilot")
+	cmd.Flags().BoolVar(&allowManagedRemoval, "allow-managed-removal", false, "Consent to removal of listed unchanged managed paths")
 	cmd.Flags().StringVarP(&newBranch, "new", "n", "", "Also create a worktree branch")
 	cmd.Flags().StringVar(&base, "base", "", "Base branch for the new worktree (default: repo's default branch)")
 	cmd.Flags().BoolVar(&open, "open", false, "Open the worktree after creation (used with -n)")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force checkout of already checked-out branch")
 	cmd.Flags().BoolVar(&useTmux, "tmux", false, "Open in tmux session (used with --open)")
+	_ = cmd.RegisterFlagCompletionFunc("agent", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"claude", "copilot"}, cobra.ShellCompDirectiveNoFileComp
+	})
+	for _, name := range []string{"worktree-template", "orchestrator-template"} {
+		_ = cmd.RegisterFlagCompletionFunc(name, namedTemplateFlagCompletion)
+	}
+	_ = cmd.RegisterFlagCompletionFunc("template", namedTemplateAliasCompletion)
 
 	return cmd
+}
+
+func addManaged(
+	cmd *cobra.Command,
+	ws internal.Workspace,
+	feature string,
+	flags managedTemplateFlags,
+	newBranch, base string,
+	force, open, useTmux bool,
+) error {
+	roles := []internal.ManagedTemplateRole{
+		internal.ManagedTemplateRoleWorktree,
+		internal.ManagedTemplateRoleOrchestrator,
+	}
+	plan, err := planManagedTemplateForFeature(ws, feature, roles, flags)
+	if err != nil {
+		return err
+	}
+	if err := confirmManagedTemplateRemovals(cmd, []*internal.ManagedTemplatePlan{plan}, flags.allowRemoval); err != nil {
+		return err
+	}
+	if managedTemplatePostConsentHook != nil {
+		if err := managedTemplatePostConsentHook(); err != nil {
+			return err
+		}
+	}
+	if ws.Mode == internal.ModeExternal {
+		if err := internal.EnsureExternalWorkspaceMarker(ws.MetadataRoot); err != nil {
+			return err
+		}
+	}
+	if err := executeManagedTemplatePlans(cmd, []*internal.ManagedTemplatePlan{plan}); err != nil {
+		return err
+	}
+
+	root := plan.Request.FeaturePath
+	if ws.Mode == internal.ModeExternal {
+		if err := os.MkdirAll(filepath.Join(root, "worktrees"), 0o755); err != nil {
+			return fmt.Errorf("creating worktrees directory: %w", err)
+		}
+	}
+	featureMD := filepath.Join(root, "FEATURE.md")
+	if _, err := os.Lstat(featureMD); errors.Is(err, os.ErrNotExist) {
+		if err := os.WriteFile(featureMD, []byte("# "+feature+"\n"), 0o644); err != nil {
+			return fmt.Errorf("creating FEATURE.md: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("checking FEATURE.md: %w", err)
+	}
+
+	if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Feature added:", feature); err != nil {
+		return err
+	}
+	if newBranch == "" {
+		return nil
+	}
+	if ws.Mode == internal.ModeCheckout {
+		if err := createCheckoutBranch(ws, feature, newBranch, base, force); err != nil {
+			return err
+		}
+		if open {
+			if useTmux {
+				openCheckoutTmux(ws, feature, newBranch)
+			} else {
+				fmt.Printf("Branch %s created. Use 'git checkout %s' to switch.\n", newBranch, newBranch)
+			}
+		}
+		return nil
+	}
+	if err := createWorktreeResolved(ws, feature, newBranch, base, "", force); err != nil {
+		return err
+	}
+	if !open {
+		return nil
+	}
+	managedCfg, err := resolveManagedConfig(ws)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(root, "worktrees", filepath.FromSlash(newBranch))
+	if useTmux {
+		return openWithTmuxResolved(feature, newBranch, path, root, managedCfg.AgentCommand, func() error {
+			return refuseExternalOpenDuringMutation(feature, root)
+		})
+	}
+	return openDirect(directOpenOpts{
+		Path: path, Feature: feature, Name: newBranch,
+		GitBranch: resolveDirectGitBranch(root, newBranch), FeaturePath: root,
+		AgentCommand: managedCfg.AgentCommand,
+		FinalGuard: func() error {
+			return refuseExternalOpenDuringMutation(feature, root)
+		},
+	})
 }
 
 // addExternal preserves existing external-mode add semantics.

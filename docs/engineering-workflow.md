@@ -64,14 +64,31 @@ Current shipped checkout slices:
 The opt-in global workspace registry is also shipped for stable cross-repository
 discovery, health checks, and moved-target repair.
 
-Next roadmap work: **scoped status projection (issue #3)** — build only the
-requested feature plus necessary workspace-level evidence, and bound status
-subprocess probes without changing the versioned output contract. Ordinary
-sync safety (#4) is fully released and verified in `v1.2.18-rc.2`.
+Next roadmap work: **role-aware templates (issue #2)** — define independent
+worktree/orchestrator selections, global/per-repository defaults, scoped
+synchronization, native agent guidance, and ownership-tracked file updates.
+Scoped status projection (#3) is fully released and verified in
+`v1.2.18-rc.4`; named status builds only the requested feature plus shared
+workspace evidence, with bounded probes and the existing versioned schema.
+Ordinary sync safety (#4) is fully released and verified in `v1.2.18-rc.2`.
 Slash-containing worktree injection (#1) is fully released and verified in
-`v1.2.18-rc.3`, including explicit checkout injection refusal. Preserve those
-sync/reparent/session and injection behaviors. Role-aware templates (#2)
-remain a later, separate tpatch boundary.
+`v1.2.18-rc.3`, including explicit checkout injection refusal. All three
+milestones have successful main/tag CI. Preserve those status,
+sync/reparent/session, and injection behaviors.
+
+The current implementation candidate boundary is `named-feature-templates`;
+it is not released until review, focused/full gates, landing, and release
+verification complete. Legacy
+directory-based templates retain copy-if-missing behavior; named templates
+or role flags opt into managed updates with saved per-feature selections.
+Managed updates must refuse unmanaged files or symlinks and modified owned
+files. Removing obsolete, unchanged owned files requires an exact-path
+warning and default-No confirmation, or explicit unattended consent;
+declining leaves the update unapplied. This narrow deletion consent is not
+interactive conflict resolution. Keep `template-conflict-resolution`
+separate: keep/replace/diff/edit must never become an ownership override.
+The approved analysis, specification, and exploration remain the binding
+implementation and review contract.
 See [`roadmap.md`](roadmap.md).
 
 ## Tpatch workflow

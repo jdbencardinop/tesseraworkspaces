@@ -24,6 +24,9 @@ tws add auth -n feature/auth-api --open
 # With a custom template
 tws add auth -n auth-models --template ~/templates/go-project --open
 
+# With a named package for both managed roles
+tws add auth -n auth-models --template review --agent copilot --open
+
 # Without opening (just setup)
 tws add auth -n auth-models
 ```
@@ -381,18 +384,83 @@ tws inject auth --into .context    # preserve layout under a target directory
 # Checkout mode has no linked worktrees; both forms refuse explicitly.
 # Existing destination files are never overwritten.
 
-# Backfill templates into existing features
+# Legacy directory backfill (copy-if-missing, repeated directories supported)
 tws template sync auth --template ~/templates/base
 tws template sync --all            # all features
 ```
+
+## Named, role-aware templates
+
+```sh
+# Registry (global by default; --repo selects .tws/.template-registry)
+tws template add review ./review-template
+tws template add review ./review-template --repo
+tws template list
+tws template show review            # effective repo-first resolution
+tws template show global:review     # explicit origin
+tws template remove review          # registry entry only; feature files stay
+
+# Package layout:
+#   feature/       orchestrator assets
+#   inject/        worktree assets
+#   template.yaml  optional version-1 literal guidance + skill references
+
+# Independent role selection
+tws add auth \
+  --worktree-template global:worktree-base \
+  --orchestrator-template repo:orchestrator-base \
+  --agent claude
+
+# Saved selections refresh from the same persisted origin
+tws template sync auth
+tws template sync auth --scope worktree
+tws template sync auth --scope orchestrator --orchestrator-template review
+
+# Unattended consent for eligible obsolete owned files/links
+tws template sync auth --allow-managed-removal
+```
+
+Managed files are owned only through feature-local `.tws-templates.json`.
+Matching bytes are not ownership. Modified owned files, unmanaged files or
+symlinks, tracked worktree paths, recreated same-target links, changed
+worktree identities, and corrupt link mappings always refuse.
+Eligible unchanged removals print every exact path and ask default-No; only
+`y`/`yes` proceeds. `--allow-managed-removal` still prints the warning and
+never overrides a conflict.
+
+Claude destinations are `inject/CLAUDE.local.md` (worktree) and `CLAUDE.md`
+(orchestrator). Copilot uses
+`inject/.github/instructions/tws-worktree.instructions.md` and `AGENTS.md`.
+Managed worktree guidance requires root injection; legacy/user files retain
+custom `inject_into` / `--into`. For managed `tws inject`, use explicit
+`--into .` to override a configured non-root target for one run. Checkout stores durable assets under the
+feature and uses only session-owned temporary context links.
+
+Directory-valued `--template` remains legacy first-existing-file-wins behavior.
+It overrides configured managed defaults for a new legacy add, but must not be
+combined with `--scope`, `--agent`, or role selectors. Saved registry origins
+use move-stable identities rather than paths, and explicit renderers remain
+valid only while the recorded launch command is unchanged. Existing legacy
+features are not adopted by defaults. Exports omit managed selections,
+ownership/link evidence, and orchestrator assets; imported inject bytes remain
+unmanaged.
+
+Existing owned objects are preserved under private
+`.tws-template-recovery/` pending evidence before mutation. Verified old
+copies are cleaned only after successful ledger publication; failures retain
+and report them, and retries fail closed. This provides no multi-file
+atomicity and cannot capture later writes through an already-open descriptor
+after final verification.
 
 ## Configuration
 
 ```sh
 tws config show                              # show resolved config
 tws config set agent_command opencode        # change agent globally
-tws config set use_tmux true --repo          # per-repo setting
+tws config set use_tmux true --repo          # owning-repository setting
 tws config get agent_command                 # check current value
+tws config set worktree_template global:worktree-base
+tws config set orchestrator_template repo:orchestrator-base --repo
 
 # Config files:
 #   Global: ~/.config/tws/config.yaml

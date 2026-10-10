@@ -84,20 +84,22 @@ Shipped foundations:
   reconstructs only the matching recovery reservation. v1.2.16 only fails closed for same-feature sync after envelope
   birth; do not use an older tws while any reparent is active or recoverable.
 
-Current target: **scoped status projection (issue #3)** — build only the
-requested feature plus necessary workspace-level evidence instead of scanning
-unrelated features, and bound status subprocess probes while preserving the
-versioned output contract. Ordinary sync safety (#4) is fully released and
+Current target: **role-aware templates (issue #2)** — independent worktree and
+orchestrator selections, global/per-repository defaults, scoped synchronization,
+native agent guidance, and ownership-tracked updates. Scoped status projection
+(#3) is fully released and verified in `v1.2.18-rc.4`: named status builds only
+the requested feature plus shared workspace evidence, with bounded probes and
+the existing versioned schema. Ordinary sync safety (#4) is fully released and
 verified in `v1.2.18-rc.2`. Slash-containing worktree injection (#1) is fully
 released and verified in `v1.2.18-rc.3`, including verified external worktree
-discovery and explicit checkout injection refusal. Both milestones have
+discovery and explicit checkout injection refusal. All three milestones have
 successful main/tag CI.
 
 The approved delivery order is **#4, #1, #3, #2**. Keep each existing tpatch
 feature as its own implementation boundary; the issue-to-feature mapping below
 is the queue, not permission to combine unrelated fixes. Lane B runtime-boundary
 coordination is complete; its remaining provider PRDs do not block this
-tws-local status feature.
+tws-local template feature.
 
 Follow-ups explicitly owned by later features rather than by `tws status`:
 
@@ -139,14 +141,27 @@ For decoupled names, `StackEntry.Name` identifies the tws worktree while `StackE
 |---|---|---|---|
 | 1 | Shipped: v1.2.18-rc.2 | [#4: ordinary sync rollback and replay cutoff](https://github.com/jdbencardinop/tesseraworkspaces/issues/4) | [`sync-transactional-abort`](../.tpatch/features/sync-transactional-abort/request.md), [`sync-cutoff-integrity`](../.tpatch/features/sync-cutoff-integrity/request.md) |
 | 2 | Shipped: v1.2.18-rc.3 | [#1: slash-containing worktree injection](https://github.com/jdbencardinop/tesseraworkspaces/issues/1) | [`fix-inject-slash-worktree-discovery`](../.tpatch/features/fix-inject-slash-worktree-discovery/request.md) |
-| 3 | Current: scoped-status reliability | [#3: avoid building unrelated feature status](https://github.com/jdbencardinop/tesseraworkspaces/issues/3) | [`scoped-status-projection`](../.tpatch/features/scoped-status-projection/request.md) |
-| 4 | P2: workflow enhancement | [#2: role-aware templates](https://github.com/jdbencardinop/tesseraworkspaces/issues/2) | [`named-feature-templates`](../.tpatch/features/named-feature-templates/request.md), [`template-conflict-resolution`](../.tpatch/features/template-conflict-resolution/request.md) |
+| 3 | Shipped: v1.2.18-rc.4 | [#3: avoid building unrelated feature status](https://github.com/jdbencardinop/tesseraworkspaces/issues/3) | [`scoped-status-projection`](../.tpatch/features/scoped-status-projection/request.md) |
+| 4 | Current: P2 implementation candidate (not released) | [#2: role-aware templates](https://github.com/jdbencardinop/tesseraworkspaces/issues/2) | [`named-feature-templates`](../.tpatch/features/named-feature-templates/request.md), [`template-conflict-resolution`](../.tpatch/features/template-conflict-resolution/request.md) |
 
-Issues #4 and #1 are closed after their verified releases. The current
-implementation boundary is only
-[`scoped-status-projection`](../.tpatch/features/scoped-status-projection/request.md);
-do not combine it with provider integration, template work, or changes to
-mutation safety.
+Issues #4, #1, and #3 are closed after their verified releases. The current
+implementation/review boundary is only
+[`named-feature-templates`](../.tpatch/features/named-feature-templates/request.md),
+using its approved analysis, specification, and exploration. It remains
+unreleased until the required review, replay, landing, and release gates pass.
+Legacy directory-based templates retain copy-if-missing behavior; named
+templates or role flags opt into managed updates. Save each feature's role
+selections so later default changes do not silently retarget it.
+
+Managed updates must refuse unmanaged files or symlinks and modified owned
+files. Obsolete, unchanged owned files may be removed only after an exact-path
+warning and default-No confirmation, or explicit unattended consent;
+declining leaves the update unapplied. This narrow deletion consent belongs
+to the managed template contract, not the separate
+[`template-conflict-resolution`](../.tpatch/features/template-conflict-resolution/request.md)
+keep/replace/diff/edit slice. Neither consent nor later conflict handling
+permits overwriting unmanaged content. Do not combine this feature with
+provider integration or changes to Git mutation safety.
 
 Nonblocking reparent follow-up:
 [`fix-reparent-completion-context`](../.tpatch/features/fix-reparent-completion-context/request.md)
@@ -156,7 +171,7 @@ follow-up does not displace the issue queue above.
 
 ## Agent integration — P2
 
-- **Named feature templates**: manage a global/per-repo template registry with `add`, `list`, `show`, and `remove`. A template contains `feature/` assets copied to the feature root and `inject/` assets copied to the worktree injection source. This standardizes orchestrator skills, feature docs, prompts, and shared worktree context across future features.
+- **Named feature templates (current implementation candidate)**: manage a global/per-repo template registry with `add`, `list`, `show`, and `remove`. Independently select and persist worktree and orchestrator roles, with defaults for unconfigured roles and role-scoped sync. A template contains `feature/` assets for the feature root and `inject/` assets for the worktree injection source. Render native agent guidance and optional skill references without copying canonical skill bodies. Track ownership, refuse conflicts, and require consent before removing unchanged owned files; retain legacy directory-template behavior. This item is not marked shipped until the candidate passes the repository's landing and release workflow.
 - **Agent-aware context files**: map local instructions to conventions understood by Claude, Copilot, Codex, and other configured agents.
 - **Copilot and Codex hooks**: install supported decision-reading integrations or warn clearly when the configured agent has no hook adapter.
 - **Explicit decision acknowledgement**: allow feature-root orchestration with `tws decisions ack --branch <name>`.

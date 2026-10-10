@@ -1,0 +1,8 @@
+{
+  "slug": "named-feature-templates",
+  "completed_at": "2026-10-10T03:46:40Z",
+  "base_commit": "947032d1e7e1014dbc6a4f0f5e7de4611db02b03",
+  "has_patch": true,
+  "validation_status": "passed",
+  "validation_notes": "Frozen v11 approved by three explicit gpt-5.6-sol reviewers; full tests with 40m runner limit, vet, golangci-lint, build, 11 real-CLI regression scenarios, formatting, diff and dependency checks passed; exact candidate bytes verified before/after."
+}

@@ -8,6 +8,16 @@ import (
 )
 
 func runCheckoutOpen(ws internal.Workspace, args []string, useTmux, noTmux, noAgent bool, cmdFlag interface{ Changed(string) bool }) error {
+	return runCheckoutOpenResolved(ws, args, useTmux, noTmux, noAgent, cmdFlag, nil)
+}
+
+func runCheckoutOpenResolved(
+	ws internal.Workspace,
+	args []string,
+	useTmux, noTmux, noAgent bool,
+	cmdFlag interface{ Changed(string) bool },
+	managedCfg *resolvedManagedConfig,
+) error {
 	// Guarded at the top: resolveCheckoutOpenArgs already resolves feature
 	// paths and loads stacks for a named feature.
 	if len(args) >= 1 {
@@ -19,13 +29,36 @@ func runCheckoutOpen(ws internal.Workspace, args []string, useTmux, noTmux, noAg
 	if err != nil {
 		return err
 	}
-	if noAgent {
-		fmt.Println(ws.RepoRoot)
-		return nil
-	}
 	featurePath, err := ws.ResolveFeaturePath(feature)
 	if err != nil {
 		return err
+	}
+	managed, err := internal.ManagedTemplateStatePresent(featurePath)
+	if err != nil {
+		return err
+	}
+	cfg := internal.LoadConfig()
+	target := managedInjectTarget{Value: internal.ResolveInjectInto("")}
+	if managed {
+		if managedCfg == nil {
+			resolved, err := resolveManagedConfig(ws)
+			if err != nil {
+				return err
+			}
+			managedCfg = &resolved
+		}
+		cfg = managedCfg.Config
+		target = managedInjectTarget{Value: cfg.InjectInto}
+		if err := internal.ValidateManagedCheckoutContextResolved(
+			ws, feature, featurePath, managedCfg.AgentCommand,
+			target.Value, target.Explicit,
+		); err != nil {
+			return err
+		}
+	}
+	if noAgent {
+		fmt.Println(ws.RepoRoot)
+		return nil
 	}
 	stack, err := internal.LoadStack(featurePath)
 	if err != nil {
@@ -35,7 +68,6 @@ func runCheckoutOpen(ws internal.Workspace, args []string, useTmux, noTmux, noAg
 	if entry.Name == "" {
 		return fmt.Errorf("branch %q not found in feature %q", name, feature)
 	}
-	cfg := internal.LoadConfig()
 	command := internal.CheckoutSessionAgentCommand(cfg.GetAgentCommand(), ws.RepoRoot)
 	tmux := useTmux
 	if !cmdFlag.Changed("tmux") && !noTmux && cfg.UseTmux != nil {
@@ -45,9 +77,9 @@ func runCheckoutOpen(ws internal.Workspace, args []string, useTmux, noTmux, noAg
 		tmux = false
 	}
 	if tmux {
-		return internal.OpenCheckoutTmux(ws, feature, entry, command, nil, internal.ResolveInjectInto(""))
+		return internal.OpenCheckoutTmux(ws, feature, entry, command, nil, target.Value)
 	}
-	return internal.OpenCheckoutDirect(ws, feature, entry, command, nil, nil, internal.ResolveInjectInto(""))
+	return internal.OpenCheckoutDirect(ws, feature, entry, command, nil, nil, target.Value)
 }
 
 func resolveCheckoutOpenArgs(ws internal.Workspace, args []string) (string, string, error) {

@@ -182,6 +182,13 @@ func ListBranches(feature string) []string {
 	if err != nil {
 		return nil
 	}
+	return ListBranchesAt(featurePath)
+}
+
+// ListBranchesAt returns branch names from one already-resolved feature path.
+// Runtime callers that have selected a workspace must use this form so a
+// later cwd-based resolver cannot retarget the operation.
+func ListBranchesAt(featurePath string) []string {
 	stack, err := LoadStack(featurePath)
 	if err == nil && len(stack.Branches) > 0 {
 		var names []string

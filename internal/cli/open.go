@@ -30,9 +30,29 @@ Use --all to create a tmux session with windows for every worktree in the featur
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			switch len(args) {
 			case 0:
-				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
+				ws, err := internal.RequireWorkspace()
+				if err != nil {
+					return nil, cobra.ShellCompDirectiveNoFileComp
+				}
+				ws, err = managedTemplateExecutionWorkspace(ws)
+				if err != nil {
+					return nil, cobra.ShellCompDirectiveNoFileComp
+				}
+				features, err := ws.ListFeaturesResolved()
+				if err != nil {
+					return nil, cobra.ShellCompDirectiveNoFileComp
+				}
+				return features, cobra.ShellCompDirectiveNoFileComp
 			case 1:
-				return internal.ListBranches(args[0]), cobra.ShellCompDirectiveNoFileComp
+				ws, err := internal.RequireWorkspace()
+				if err != nil {
+					return nil, cobra.ShellCompDirectiveNoFileComp
+				}
+				context, err := resolveFeatureContext(ws, args[0])
+				if err != nil {
+					return nil, cobra.ShellCompDirectiveNoFileComp
+				}
+				return internal.ListBranchesAt(context.FeaturePath), cobra.ShellCompDirectiveNoFileComp
 			default:
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			}
@@ -61,6 +81,22 @@ Use --all to create a tmux session with windows for every worktree in the featur
 					if ferr != nil {
 						return ferr
 					}
+					managed, ferr := internal.ManagedTemplateStatePresent(fp)
+					if ferr != nil {
+						return ferr
+					}
+					var managedCfg resolvedManagedConfig
+					if managed {
+						managedCfg, ferr = resolveManagedConfig(ws)
+						if ferr != nil {
+							return ferr
+						}
+						if ferr := internal.ValidateManagedOrchestratorContext(
+							ws, feature, fp, managedCfg.AgentCommand,
+						); ferr != nil {
+							return ferr
+						}
+					}
 					// §14.2a: no session, no terminal, while a reparent is
 					// recorded for this feature.
 					if rerr := refuseOpenDuringReparent(ws, feature); rerr != nil {
@@ -77,25 +113,52 @@ Use --all to create a tmux session with windows for every worktree in the featur
 						// A feature directory is not a logical branch, so it
 						// has no per-branch record; the workspace intent itself
 						// remains live through the agent and shell.
-						return openDirect(directOpenOpts{Path: fp})
+						return openDirect(directOpenOpts{
+							Path: fp, AgentCommand: managedCfg.AgentCommand,
+						})
 					})
 				}
 
-				return runCheckoutOpen(ws, args, useTmux, noTmux, noAgent, cmd.Flags())
+				return runCheckoutOpenResolved(ws, args, useTmux, noTmux, noAgent, cmd.Flags(), nil)
 			}
-
 			// Handle --all: tmux session with all worktrees
 			if all {
 				if len(args) < 1 {
 					return fmt.Errorf("usage: tws open <feature> --all")
 				}
-				// Guarded because the feature name is joined under TwsRoot().
-				if gerr := internal.GuardFeatureName(internal.TwsRoot(), args[0]); gerr != nil {
+				feature := args[0]
+				ws, err = managedTemplateWorkspaceForFeature(ws, feature)
+				if err != nil {
+					return err
+				}
+				if gerr := internal.GuardFeatureName(ws.MetadataRoot, feature); gerr != nil {
 					return gerr
 				}
-				feature := args[0]
-				featurePath := internal.FeaturePath(feature)
-				return openAll(feature, featurePath, func() error {
+				resolved, resolveErr := ws.ResolveFeaturePath(feature)
+				if resolveErr != nil {
+					return resolveErr
+				}
+				featurePath := resolved
+				if managed, managedErr := internal.ManagedTemplateStatePresent(resolved); managedErr != nil {
+					return managedErr
+				} else if managed {
+					managedCfg, err := resolveManagedConfig(ws)
+					if err != nil {
+						return err
+					}
+					if err := internal.ValidateManagedOrchestratorContext(
+						ws, feature, featurePath, managedCfg.AgentCommand,
+					); err != nil {
+						return err
+					}
+					if _, err := syncManagedAndLegacyInjectAll(
+						cmd, ws, feature, featurePath,
+						managedInjectTarget{Value: managedCfg.Config.InjectInto},
+					); err != nil {
+						return fmt.Errorf("managed inject sync failed: %w", err)
+					}
+				}
+				return openAllAt(feature, featurePath, internal.ListBranchesAt(featurePath), func() error {
 					return refuseOpenDuringReparent(ws, feature)
 				})
 			}
@@ -106,11 +169,34 @@ Use --all to create a tmux session with windows for every worktree in the featur
 					return fmt.Errorf("usage: tws open <feature> --feature-dir")
 				}
 				feature := args[0]
-				// Guarded because the feature name is joined under TwsRoot().
-				if gerr := internal.GuardFeatureName(internal.TwsRoot(), feature); gerr != nil {
+				ws, err = managedTemplateWorkspaceForFeature(ws, feature)
+				if err != nil {
+					return err
+				}
+				if gerr := internal.GuardFeatureName(ws.MetadataRoot, feature); gerr != nil {
 					return gerr
 				}
-				path := internal.FeaturePath(feature)
+				resolved, resolveErr := ws.ResolveFeaturePath(feature)
+				if resolveErr != nil {
+					return resolveErr
+				}
+				path := resolved
+				managed, managedErr := internal.ManagedTemplateStatePresent(resolved)
+				if managedErr != nil {
+					return managedErr
+				}
+				var managedCfg resolvedManagedConfig
+				if managed {
+					managedCfg, err = resolveManagedConfig(ws)
+					if err != nil {
+						return err
+					}
+					if err := internal.ValidateManagedOrchestratorContext(
+						ws, feature, path, managedCfg.AgentCommand,
+					); err != nil {
+						return err
+					}
+				}
 				if _, err := os.Stat(path); os.IsNotExist(err) {
 					return fmt.Errorf("feature not found: %s", feature)
 				}
@@ -131,38 +217,56 @@ Use --all to create a tmux session with windows for every worktree in the featur
 					fmt.Printf("Opening feature dir: %s\n", path)
 					// Untracked: a feature directory is not a logical branch,
 					// so no long-lived direct session record is created.
-					return openDirect(directOpenOpts{Path: path})
+					return openDirect(directOpenOpts{
+						Path: path, AgentCommand: managedCfg.AgentCommand,
+					})
 				})
 			}
 
 			// Normal mode: open a specific worktree
-			if len(args) >= 1 {
-				// The 0-arg picker is covered by ListFeaturesE inside
-				// resolveOpenArgs.
-				if gerr := internal.GuardFeatureName(internal.TwsRoot(), args[0]); gerr != nil {
-					return gerr
-				}
-			}
-			feature, branch, err := resolveOpenArgs(args)
+			context, branch, err := resolveOpenArgs(ws, args)
 			if err != nil {
 				return err
 			}
+			ws = context.Workspace
+			feature := context.Feature
 			// §14.2a, after the picker has settled the identity: the exclusion
 			// covers the 0-arg and 1-arg picker routes too.
 			if rerr := refuseOpenDuringReparent(ws, feature); rerr != nil {
 				return rerr
 			}
 
-			path := internal.WorktreePath(feature, branch)
+			featurePath := context.FeaturePath
+			path := filepath.Join(featurePath, "worktrees", filepath.FromSlash(branch))
+			resolvedFeaturePath := context.FeaturePath
+			managed, managedErr := internal.ManagedTemplateStatePresent(resolvedFeaturePath)
+			if managedErr != nil {
+				return managedErr
+			}
+			if managed {
+				featurePath = resolvedFeaturePath
+			}
 
 			if _, err := os.Stat(path); os.IsNotExist(err) {
 				return fmt.Errorf("worktree not found: %s", path)
 			}
 
 			// Re-sync inject files
-			featurePath := internal.FeaturePath(feature)
 			injectTarget := internal.ResolveInjectInto("")
-			if err := internal.InjectFiles(featurePath, path, injectTarget); err != nil {
+			var managedCfg resolvedManagedConfig
+			if managed {
+				managedCfg, err = resolveManagedConfig(ws)
+				if err != nil {
+					return err
+				}
+				injectTarget = managedCfg.Config.InjectInto
+				if err := syncManagedAndLegacyInject(
+					cmd, ws, feature, featurePath, branch, path,
+					managedInjectTarget{Value: injectTarget},
+				); err != nil {
+					return fmt.Errorf("managed inject sync failed: %w", err)
+				}
+			} else if err := internal.InjectFiles(featurePath, path, injectTarget); err != nil {
 				fmt.Printf("Warning: inject sync failed: %v\n", err)
 			}
 
@@ -193,6 +297,9 @@ Use --all to create a tmux session with windows for every worktree in the featur
 			tmux := useTmux
 			if !cmd.Flags().Changed("tmux") && !noTmux {
 				cfg := internal.LoadConfig()
+				if managed {
+					cfg = managedCfg.Config
+				}
 				if cfg.UseTmux != nil {
 					tmux = *cfg.UseTmux
 				}
@@ -202,7 +309,7 @@ Use --all to create a tmux session with windows for every worktree in the featur
 			}
 
 			if tmux {
-				return openWithTmux(feature, branch, path, featurePath, func() error {
+				return openWithTmuxResolved(feature, branch, path, featurePath, managedCfg.AgentCommand, func() error {
 					return refuseOpenDuringReparent(ws, feature)
 				})
 			}
@@ -213,11 +320,12 @@ Use --all to create a tmux session with windows for every worktree in the featur
 				fmt.Printf("  Run 'tws close %s %s' to kill it, or use --tmux to attach.\n", feature, branch)
 			}
 			return openDirect(directOpenOpts{
-				Path:        path,
-				Feature:     feature,
-				Name:        branch,
-				GitBranch:   resolveDirectGitBranch(featurePath, branch),
-				FeaturePath: featurePath,
+				Path:         path,
+				Feature:      feature,
+				Name:         branch,
+				GitBranch:    resolveDirectGitBranch(featurePath, branch),
+				FeaturePath:  featurePath,
+				AgentCommand: managedCfg.AgentCommand,
 				FinalGuard: func() error {
 					return refuseOpenDuringReparent(ws, feature)
 				},
@@ -234,47 +342,60 @@ Use --all to create a tmux session with windows for every worktree in the featur
 	return cmd
 }
 
-func resolveOpenArgs(args []string) (string, string, error) {
+func resolveOpenArgs(ws internal.Workspace, args []string) (resolvedFeatureContext, string, error) {
 	var feature, branch string
 	var err error
 
 	switch len(args) {
 	case 2:
-		return args[0], args[1], nil
+		context, err := resolveFeatureContext(ws, args[0])
+		return context, args[1], err
 	case 1:
 		feature = args[0]
-		branches := internal.ListBranches(feature)
+		context, err := resolveFeatureContext(ws, feature)
+		if err != nil {
+			return resolvedFeatureContext{}, "", err
+		}
+		branches := internal.ListBranchesAt(context.FeaturePath)
 		if len(branches) == 0 {
-			return "", "", fmt.Errorf("no branches found for feature: %s", feature)
+			return resolvedFeatureContext{}, "", fmt.Errorf("no branches found for feature: %s", feature)
 		}
 		branch, err = pick("Select branch:", branches)
 		if err != nil {
-			return "", "", err
+			return resolvedFeatureContext{}, "", err
 		}
-		return feature, branch, nil
+		return context, branch, nil
 	case 0:
-		features, listErr := internal.ListFeaturesE()
+		executionWS, resolveErr := managedTemplateExecutionWorkspace(ws)
+		if resolveErr != nil {
+			return resolvedFeatureContext{}, "", resolveErr
+		}
+		features, listErr := executionWS.ListFeaturesResolved()
 		if listErr != nil {
-			return "", "", listErr
+			return resolvedFeatureContext{}, "", listErr
 		}
 		if len(features) == 0 {
-			return "", "", fmt.Errorf("no features found. Use 'tws add <feature>' to create one")
+			return resolvedFeatureContext{}, "", fmt.Errorf("no features found. Use 'tws add <feature>' to create one")
 		}
 		feature, err = pick("Select feature:", features)
 		if err != nil {
-			return "", "", err
+			return resolvedFeatureContext{}, "", err
 		}
-		branches := internal.ListBranches(feature)
+		context, err := resolveFeatureContext(executionWS, feature)
+		if err != nil {
+			return resolvedFeatureContext{}, "", err
+		}
+		branches := internal.ListBranchesAt(context.FeaturePath)
 		if len(branches) == 0 {
-			return "", "", fmt.Errorf("no branches found for feature: %s", feature)
+			return resolvedFeatureContext{}, "", fmt.Errorf("no branches found for feature: %s", feature)
 		}
 		branch, err = pick("Select branch:", branches)
 		if err != nil {
-			return "", "", err
+			return resolvedFeatureContext{}, "", err
 		}
-		return feature, branch, nil
+		return context, branch, nil
 	}
-	return "", "", fmt.Errorf("unexpected args")
+	return resolvedFeatureContext{}, "", fmt.Errorf("unexpected args")
 }
 
 // openAll creates a tmux session with the feature dir as the first window
@@ -308,6 +429,10 @@ func withExternalSessionLaunchIntent(featurePath, feature string, names []string
 }
 
 func openAll(feature, featurePath string, finalGuard func() error) error {
+	return openAllAt(feature, featurePath, internal.ListBranchesAt(featurePath), finalGuard)
+}
+
+func openAllAt(feature, featurePath string, branches []string, finalGuard func() error) error {
 	if _, err := os.Stat(featurePath); os.IsNotExist(err) {
 		return fmt.Errorf("feature not found: %s", feature)
 	}
@@ -326,9 +451,8 @@ func openAll(feature, featurePath string, finalGuard func() error) error {
 			return err
 		}
 
-		branches := internal.ListBranches(feature)
 		for _, branch := range branches {
-			wtPath := internal.WorktreePath(feature, branch)
+			wtPath := filepath.Join(featurePath, "worktrees", filepath.FromSlash(branch))
 			if _, err := os.Stat(wtPath); os.IsNotExist(err) {
 				continue
 			}
@@ -341,6 +465,13 @@ func openAll(feature, featurePath string, finalGuard func() error) error {
 }
 
 func openWithTmux(feature, branch, path, featurePath string, finalGuard func() error) error {
+	return openWithTmuxResolved(feature, branch, path, featurePath, "", finalGuard)
+}
+
+func openWithTmuxResolved(
+	feature, branch, path, featurePath, agentCommand string,
+	finalGuard func() error,
+) error {
 	return withExternalSessionLaunchIntent(featurePath, feature, []string{branch}, false, finalGuard, func() error {
 		if _, err := exec.LookPath("tmux"); err != nil {
 			return fmt.Errorf("required tool %q not found in PATH", "tmux")
@@ -351,8 +482,11 @@ func openWithTmux(feature, branch, path, featurePath string, finalGuard func() e
 			return internal.Run("tmux", "attach", "-t", session)
 		}
 
-		cfg := internal.LoadConfig()
-		agentCmd := cfg.GetAgentCommand()
+		agentCmd := agentCommand
+		if agentCmd == "" {
+			cfg := internal.LoadConfig()
+			agentCmd = cfg.GetAgentCommand()
+		}
 		if isClaudeAgent(agentCmd) && hasClaudeSession(path) {
 			agentCmd += " -c"
 		}

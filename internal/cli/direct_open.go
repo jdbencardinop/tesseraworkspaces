@@ -43,18 +43,19 @@ type directSessionStore interface {
 // directOpenOpts fully describes one direct open. An empty Feature or Name
 // means an untracked open: no record is created, read, updated, or removed.
 type directOpenOpts struct {
-	Path        string
-	Feature     string
-	Name        string
-	GitBranch   string
-	FeaturePath string
-	Runner      directRunner
-	Shell       directRunner
-	LookPath    func(string) (string, error)
-	Store       directSessionStore
-	FinalGuard  func() error
-	Out         io.Writer
-	Err         io.Writer
+	Path         string
+	Feature      string
+	Name         string
+	GitBranch    string
+	FeaturePath  string
+	AgentCommand string
+	Runner       directRunner
+	Shell        directRunner
+	LookPath     func(string) (string, error)
+	Store        directSessionStore
+	FinalGuard   func() error
+	Out          io.Writer
+	Err          io.Writer
 }
 
 // DirectSessionLaunchIntentHook is a test-only seam after the starting record
@@ -206,8 +207,11 @@ func openDirect(opts directOpenOpts) error {
 
 	// Step 1: resolve the agent command before anything is written, so a
 	// missing agent binary never leaves a record behind.
-	cfg := internal.LoadConfig()
-	agentCmd := cfg.GetAgentCommand()
+	agentCmd := opts.AgentCommand
+	if agentCmd == "" {
+		cfg := internal.LoadConfig()
+		agentCmd = cfg.GetAgentCommand()
+	}
 	parts := strings.Fields(agentCmd)
 	if len(parts) == 0 {
 		return fmt.Errorf("agent_command is empty; set agent_command in .tws/config.yaml")

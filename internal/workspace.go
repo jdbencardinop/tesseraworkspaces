@@ -340,6 +340,28 @@ func inferExternalRepoRoot(metadataRoot string, cfg Config) (string, error) {
 	return inferExternalRepoRootWith(metadataRoot, cfg, MainRepoRootIn)
 }
 
+// ResolveExternalWorkspaceAt resolves the owning repository for one already
+// selected external metadata root. It deliberately does not use the caller's
+// current Git repository as identity: a command may be running inside a
+// secondary-repository worktree belonging to the selected primary workspace.
+func ResolveExternalWorkspaceAt(metadataRoot string) (Workspace, error) {
+	if strings.TrimSpace(metadataRoot) == "" {
+		return Workspace{}, errors.New("external workspace root is empty")
+	}
+	root := cleanAbsolute(metadataRoot)
+	repoRoot, err := inferExternalRepoRoot(root, LoadConfig())
+	if err != nil {
+		return Workspace{}, err
+	}
+	return Workspace{
+		RepoRoot:     repoRoot,
+		Mode:         ModeExternal,
+		MetadataRoot: canonicalize(root),
+		StableID:     stableID(repoRoot),
+		Caps:         capsFor(ModeExternal),
+	}, nil
+}
+
 func inferExternalRepoRootWith(metadataRoot string, cfg Config, resolveRepoRoot func(string) (string, error)) (string, error) {
 	metadataRoot = canonicalize(metadataRoot)
 	candidates := make(map[string]bool)

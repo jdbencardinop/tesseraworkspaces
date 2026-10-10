@@ -82,6 +82,12 @@ type injectWorktreeTarget struct {
 	Path string
 }
 
+// InjectWorktreeTarget is a verified materialized external worktree.
+type InjectWorktreeTarget struct {
+	Name string
+	Path string
+}
+
 type injectStackEntry struct {
 	Name     string
 	Path     string
@@ -141,6 +147,20 @@ func InjectFilesForFeature(featurePath, injectInto string) (int, error) {
 		count++
 	}
 	return count, errors.Join(injectErrs...)
+}
+
+// DiscoverInjectWorktrees returns the same verified target inventory used by
+// injection, without mutating any worktree.
+func DiscoverInjectWorktrees(featurePath string) ([]InjectWorktreeTarget, error) {
+	targets, err := discoverInjectWorktrees(featurePath)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]InjectWorktreeTarget, 0, len(targets))
+	for _, target := range targets {
+		out = append(out, InjectWorktreeTarget(target))
+	}
+	return out, nil
 }
 
 func discoverInjectWorktrees(featurePath string) ([]injectWorktreeTarget, error) {

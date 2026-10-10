@@ -32,6 +32,53 @@ Resolve learning, ticket, patching, research, and documentation locations with
 A bare `tws space list` is scoped to the current directory; pass `--all` when
 you need the complete registry regardless of where the command runs.
 
+### Manage role-aware templates
+
+```sh
+tws template add review ./review-template [--repo]
+tws template list
+tws template show review
+tws template sync <feature>                         # refresh saved roles
+tws template sync <feature> --scope orchestrator
+tws template sync <feature> --scope worktree \
+  --worktree-template global:new-worktree-base
+```
+
+Named packages split `feature/` orchestrator assets from `inject/` worktree
+assets. Claude native outputs are feature-root `CLAUDE.md` and
+`inject/CLAUDE.local.md`; Copilot uses `AGENTS.md` and
+`inject/.github/instructions/tws-worktree.instructions.md`. Optional
+version-1 manifest skill entries are references only, never copied skill
+implementations.
+
+Each feature persists resolved role origins, agents, regular-file
+hashes/modes, and owned external links in `.tws-templates.json`. Never tell an
+operator to delete that state or adopt a same-content file. Modified,
+unmanaged, symlinked, or tracked destinations are hard conflicts. Eligible
+unchanged removals are listed exactly and require default-No `y`/`yes`
+confirmation. `--allow-managed-removal` is narrow unattended consent; it still
+prints the warning and cannot override a conflict.
+
+Managed worktree guidance requires repository-root injection. Use
+orchestrator-only scope when a legacy custom `inject_into` must remain, or use
+explicit `tws inject ... --into .` for a one-run managed root override.
+Directory-valued `--template` inputs retain legacy copy-if-missing layering and
+override configured managed defaults for a new legacy add, but cannot be mixed
+with named/role, `--scope`, or `--agent` selection. Saved registry origins use
+an opaque move-stable identity, and explicit renderers retain the launch
+command that authorized them. External managed routes keep one
+execution-selected root (including `TWS_ROOT`); real changes remain excluded by
+live sessions and sync recovery evidence, while verified no-op reopen/attach is
+allowed. Exports omit managed selections, ownership/link evidence, and
+orchestrator assets; imported inject bytes remain unmanaged.
+
+Managed replacement/removal first preserves owned objects plus bounded pending
+evidence under private `.tws-template-recovery/`. Verified old copies are
+cleaned only after successful ledger publication; failures retain and report
+them, and retries refuse. Do not describe this as multi-file atomicity or as
+protecting writes made later through an already-open descriptor after final
+verification.
+
 ### Communicate with worktree agents
 ```sh
 # Broadcast to all agents

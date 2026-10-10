@@ -22,6 +22,9 @@ because it has one physical checkout and no linked worktrees.
 
 Injected files are symlinked into the worktree. By default they go to
 the worktree root. Use --into to target a subdirectory (e.g., --into .context).
+For managed worktree guidance, root injection is required: an explicit
+--into . overrides a configured non-root inject_into for this invocation,
+while an explicit non-root --into is refused.
 
 Set inject_into in config to change the default:
   tws config set inject_into .context
@@ -35,9 +38,9 @@ Tip: To keep git status clean, either:
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			switch len(args) {
 			case 0:
-				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
+				return managedCompletionFeatures(), cobra.ShellCompDirectiveNoFileComp
 			case 1:
-				return internal.ListBranches(args[0]), cobra.ShellCompDirectiveNoFileComp
+				return managedCompletionBranches(args[0]), cobra.ShellCompDirectiveNoFileComp
 			default:
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			}
@@ -45,6 +48,10 @@ Tip: To keep git status clean, either:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			feature := args[0]
 			ws, err := internal.RequireWorkspace()
+			if err != nil {
+				return err
+			}
+			ws, err = managedTemplateWorkspaceForFeature(ws, feature)
 			if err != nil {
 				return err
 			}
@@ -61,7 +68,24 @@ Tip: To keep git status clean, either:
 				return fmt.Errorf("no inject/ directory found for feature: %s\nCreate it at: %s", feature, injectDir)
 			}
 
+			managed, err := internal.ManagedTemplateStatePresent(featurePath)
+			if err != nil {
+				return err
+			}
 			target := internal.ResolveInjectInto(into)
+			managedTarget := managedInjectTarget{Value: target}
+			if managed {
+				cfg, err := resolveManagedConfig(ws)
+				if err != nil {
+					return err
+				}
+				managedTarget.Value = cfg.Config.InjectInto
+				managedTarget.Explicit = cmd.Flags().Changed("into")
+				if managedTarget.Explicit {
+					managedTarget.Value = into
+				}
+				target = managedTarget.Value
+			}
 
 			if len(args) == 2 {
 				branch := args[1]
@@ -72,7 +96,13 @@ Tip: To keep git status clean, either:
 				if err != nil {
 					return err
 				}
-				if err := internal.InjectFiles(featurePath, path, target); err != nil {
+				if managed {
+					if err := syncManagedAndLegacyInject(
+						cmd, ws, feature, featurePath, branch, path, managedTarget,
+					); err != nil {
+						return err
+					}
+				} else if err := internal.InjectFiles(featurePath, path, target); err != nil {
 					return err
 				}
 				if target != "" && target != "." {
@@ -81,7 +111,14 @@ Tip: To keep git status clean, either:
 					fmt.Printf("Injected files into: %s/%s\n", feature, branch)
 				}
 			} else {
-				count, err := internal.InjectFilesForFeature(featurePath, target)
+				var count int
+				if managed {
+					count, err = syncManagedAndLegacyInjectAll(
+						cmd, ws, feature, featurePath, managedTarget,
+					)
+				} else {
+					count, err = internal.InjectFilesForFeature(featurePath, target)
+				}
 				if err != nil {
 					return err
 				}
@@ -91,7 +128,7 @@ Tip: To keep git status clean, either:
 		},
 	}
 
-	cmd.Flags().StringVar(&into, "into", "", "Target subdirectory within worktree (default: root, or inject_into from config)")
+	cmd.Flags().StringVar(&into, "into", "", "Target subdirectory; managed guidance accepts only root, and --into . overrides configured inject_into")
 
 	return cmd
 }

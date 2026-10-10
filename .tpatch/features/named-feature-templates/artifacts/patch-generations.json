@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "feature": "named-feature-templates",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_8989dbcedbc1",
+      "kind": "record",
+      "patch_sha256": "23aac2724ac59b4ebcc3fa50c9c20c1a02be11857e42c1ab8d60b5b89a076212",
+      "git_patch_id": "135f3aca86994055480c00d37119ebc87c6867b2",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "997bd1273f33537ca90e3fcfcae43eddcb342d8db664dd8a2f3c7ae7316c2370",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "",
+      "base_commit": "947032d1e7e1014dbc6a4f0f5e7de4611db02b03",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "CHANGELOG.md",
+        "README.md",
+        "assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md",
+        "assets/skills/claude/tesseraworkspaces/SKILL.md",
+        "assets/skills/copilot/tws.prompt.md",
+        "docs/cheatsheet.md",
+        "docs/configuration.md",
+        "docs/engineering-workflow.md",
+        "docs/roadmap.md",
+        "go.mod",
+        "go.sum",
+        "internal/cli/add.go",
+        "internal/cli/archive.go",
+        "internal/cli/config.go",
+        "internal/cli/direct_open.go",
+        "internal/cli/export.go",
+        "internal/cli/inject.go",
+        "internal/cli/managed_template.go",
+        "internal/cli/named_template_final_regression_test.go",
+        "internal/cli/named_template_test.go",
+        "internal/cli/new.go",
+        "internal/cli/open.go",
+        "internal/cli/open_checkout.go",
+        "internal/cli/rename.go",
+        "internal/cli/sync_plan_docs_test.go",
+        "internal/cli/template.go",
+        "internal/cli/template_parent_regression_test.go",
+        "internal/config.go",
+        "internal/inject.go",
+        "internal/paths.go",
+        "internal/session.go",
+        "internal/template_fs_unix.go",
+        "internal/template_managed.go",
+        "internal/template_managed_test.go",
+        "internal/template_parent_regression_test.go",
+        "internal/template_preserve.go",
+        "internal/template_registry.go",
+        "internal/template_rename_darwin.go",
+        "internal/template_rename_linux.go",
+        "internal/template_rename_unsupported.go",
+        "internal/workspace.go"
+      ],
+      "dependencies": [
+        {
+          "slug": "copilot-codex-hooks",
+          "kind": "soft",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "fix-inject-slash-worktree-discovery",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "921e63c04fd8b9f83646b7404cf627ee8b9c756a6814ce4da18194f446ac6501",
+          "parent_recipe_sha256": "22da83d7ef1082bc70d6094023d231c3b51472362169f019e2a03ad0e3d9e59e"
+        },
+        {
+          "slug": "skill-distribution",
+          "kind": "soft",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "template-conflict-resolution",
+          "kind": "soft",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "template-sync-existing",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "tiered-skill-system",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        },
+        {
+          "slug": "workspace-templates",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        }
+      ],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}

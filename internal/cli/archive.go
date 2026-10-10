@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
 	"github.com/spf13/cobra"
@@ -16,9 +18,9 @@ func archiveCmd() *cobra.Command {
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			switch len(args) {
 			case 0:
-				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
+				return managedCompletionFeatures(), cobra.ShellCompDirectiveNoFileComp
 			case 1:
-				return internal.ListBranches(args[0]), cobra.ShellCompDirectiveNoFileComp
+				return managedCompletionBranches(args[0]), cobra.ShellCompDirectiveNoFileComp
 			default:
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			}
@@ -42,7 +44,7 @@ func archiveCmd() *cobra.Command {
 
 // archiveCheckout marks a branch as archived in metadata only.
 // The git branch is preserved; no worktree to remove.
-func archiveCheckout(ws internal.Workspace, feature, branch string) error {
+func archiveCheckout(ws internal.Workspace, feature, branch string) (retErr error) {
 	if err := internal.GuardFeatureName(ws.MetadataRoot, feature); err != nil {
 		return err
 	}
@@ -50,6 +52,36 @@ func archiveCheckout(ws internal.Workspace, feature, branch string) error {
 	featurePath, err := ws.ResolveFeaturePath(feature)
 	if err != nil {
 		return err
+	}
+	lifecycle, err := internal.AcquireManagedFeatureLifecycleLock(featurePath)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, lifecycle.Release()) }()
+	managed, err := internal.ManagedTemplateStatePresent(featurePath)
+	if err != nil {
+		return err
+	}
+	reservation, err := acquireManagedFeatureRenameReservation(ws, feature, featurePath, managed)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, reservation.Release()) }()
+	if managed {
+		cfg, err := internal.LoadConfigForRepoE(ws.RepoRoot)
+		if err != nil {
+			return err
+		}
+		if err := internal.ValidateManagedCheckoutContextResolved(
+			ws, feature, featurePath, cfg.GetAgentCommand(), cfg.InjectInto, false,
+		); err != nil {
+			return err
+		}
+		if err := internal.ValidateManagedOrchestratorContext(
+			ws, feature, featurePath, cfg.GetAgentCommand(),
+		); err != nil {
+			return err
+		}
 	}
 
 	stack, err := internal.LoadStack(featurePath)
@@ -83,12 +115,81 @@ func archiveCheckout(ws internal.Workspace, feature, branch string) error {
 
 // archiveExternal removes the worktree from disk but preserves the git branch.
 func archiveExternal(feature, branch string) error {
-	if err := internal.GuardFeatureName(internal.TwsRoot(), feature); err != nil {
+	root := internal.TwsRoot()
+	if err := internal.GuardFeatureName(root, feature); err != nil {
 		return err
 	}
+	featurePath := filepath.Join(root, feature)
+	_, rawErr := os.Lstat(featurePath)
+	rawExists := rawErr == nil
+	if rawErr != nil && !errors.Is(rawErr, os.ErrNotExist) {
+		return rawErr
+	}
+	ws, err := internal.RequireWorkspace()
+	if err != nil {
+		return err
+	}
+	if rawExists {
+		managed, err := internal.ManagedTemplateStatePresent(featurePath)
+		if err != nil {
+			return err
+		}
+		if !managed {
+			ws.Mode = internal.ModeExternal
+			ws.MetadataRoot = root
+			return archiveExternalAt(ws, feature, featurePath, branch)
+		}
+	}
+	context, err := resolveFeatureContext(ws, feature)
+	if err != nil {
+		return err
+	}
+	return archiveExternalAt(context.Workspace, feature, context.FeaturePath, branch)
+}
 
-	featurePath := internal.FeaturePath(feature)
-	path := internal.WorktreePath(feature, branch)
+func archiveExternalAt(
+	ws internal.Workspace,
+	feature, featurePath, branch string,
+) (retErr error) {
+	if err := internal.GuardFeatureName(ws.MetadataRoot, feature); err != nil {
+		return err
+	}
+	lifecycle, err := internal.AcquireManagedFeatureLifecycleLock(featurePath)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, lifecycle.Release()) }()
+	managed, err := internal.ManagedTemplateStatePresent(featurePath)
+	if err != nil {
+		return err
+	}
+	reservation, err := acquireManagedFeatureRenameReservation(ws, feature, featurePath, managed)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, reservation.Release()) }()
+	if managed {
+		cfg, err := internal.LoadConfigForRepoE(ws.RepoRoot)
+		if err != nil {
+			return err
+		}
+		if err := internal.ValidateManagedCheckoutContextResolved(
+			ws, feature, featurePath, cfg.GetAgentCommand(), cfg.InjectInto, false,
+		); err != nil {
+			return err
+		}
+		if err := internal.ValidateManagedOrchestratorContext(
+			ws, feature, featurePath, cfg.GetAgentCommand(),
+		); err != nil {
+			return err
+		}
+	}
+	path := filepath.Join(featurePath, "worktrees", filepath.FromSlash(branch))
+	if residue, err := internal.ManagedTemplateRecoveryResidue(path); err != nil {
+		return err
+	} else if residue != "" {
+		return fmt.Errorf("managed template recovery evidence exists at %s; resolve it before archiving the branch", residue)
+	}
 
 	// Archiving removes the worktree a live session's path points at, i.e.
 	// the agent's own working directory. The guard precedes the
@@ -96,6 +197,15 @@ func archiveExternal(feature, branch string) error {
 	if gerr := guardDirectRecords(os.Stdout, featurePath, "archive", feature+"/"+branch,
 		directRecordTargetForBranch(feature, branch)); gerr != nil {
 		return gerr
+	}
+	var retirement *preparedManagedWorktreeRetirement
+	if managed {
+		retirement, err = prepareManagedWorktreeLinkRetirement(
+			ws, feature, featurePath, branch,
+		)
+		if err != nil {
+			return fmt.Errorf("preparing managed link ownership retirement for archive: %w", err)
+		}
 	}
 
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -115,8 +225,21 @@ func archiveExternal(feature, branch string) error {
 	}
 
 	// Use git worktree remove to cleanly detach.
-	if err := internal.Run("git", "worktree", "remove", "--force", path); err != nil {
+	repoRoot := ws.RepoRoot
+	if stack, loadErr := internal.LoadStack(featurePath); loadErr == nil {
+		if entry := internal.GetBranch(stack, branch); entry.Name != "" {
+			resolved, resolveErr := resolveBranchRenameRepo(ws, entry, path, true)
+			if resolveErr != nil {
+				return resolveErr
+			}
+			repoRoot = resolved
+		}
+	}
+	if err := internal.RunDir(repoRoot, "git", "worktree", "remove", "--force", path); err != nil {
 		return fmt.Errorf("error removing worktree: %w", err)
+	}
+	if err := retirement.publishAfterRemoval(); err != nil {
+		return fmt.Errorf("publishing managed link ownership retirement after archive removal: %w", err)
 	}
 
 	// Mark as archived in stack.

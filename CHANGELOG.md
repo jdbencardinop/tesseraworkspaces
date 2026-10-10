@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+- **Named, role-aware managed templates** — `tws template add/list/show/remove`
+  now manages independent global and per-repository package copies outside the
+  legacy templates directory. `tws add` and `tws template sync` accept named
+  aliases plus independent `--worktree-template` /
+  `--orchestrator-template` selections, `--agent claude|copilot`, and
+  worktree/orchestrator/both sync scope; the corresponding config defaults opt
+  only new features into managed mode. Explicit legacy directories override
+  those defaults and cannot be mixed with managed selectors. Saved selections
+  retain an opaque, move-stable registry origin and rendering provenance, so
+  another same-named HOME/repository source cannot rebind a role and an
+  unchanged custom launcher can continue using an explicit renderer.
+  Version-1 data-only manifests add literal
+  role/agent-filtered guidance and skill references without copying skill
+  bodies. Native destinations are Claude `CLAUDE.local.md` / `CLAUDE.md` and
+  Copilot `.github/instructions/tws-worktree.instructions.md` / `AGENTS.md`.
+  Feature-local `.tws-templates.json` records regular-file hashes/modes and
+  exact external-link ownership. Managed refresh refuses unmanaged,
+  same-content, modified, symlinked, tracked, ambiguous, or unsafe paths.
+  Obsolete unchanged owned files and links are listed exactly and require a
+  default-No `y`/`yes` confirmation, or `--allow-managed-removal` for
+  unattended consent; that flag still prints the warning and never overrides a
+  conflict. Managed worktree guidance is root-injected, later external
+  worktrees receive recorded links through new/open/inject, external managed
+  routes honor one `TWS_ROOT`-selected context, verified no-op reopen/attach
+  avoids unnecessary session exclusion, ordinary sync recovery evidence still
+  blocks writers, primary-repository defaults remain authoritative from
+  secondary worktrees, checkout continues to use session-owned temporary links,
+  and mixed `--all` runs preflight every managed feature before any effect. Legacy
+  repeated directory templates keep
+  copy-if-missing ordering and custom targets. The export schema remains
+  unchanged and warns that selections, ownership/link evidence, and
+  orchestrator assets are omitted; imported inject bytes remain unmanaged.
+  Managed filesystem effects pin roots, query Git paths literally, publish
+  absent leaves without replacement, and preserve existing owned objects plus
+  bounded pending evidence in a private recovery area before mutation.
+  Verified old copies are cleaned only after successful ownership publication;
+  failures retain and report exact recovery paths. The protocol is explicitly
+  not multi-file atomic and cannot preserve later writes through an already
+  open descriptor after final verification.
 - **Scoped and bounded `tws status <feature>`** — named status now selects the
   requested feature before inventories and builds only that feature plus
   genuine workspace evidence. It no longer reads or probes unrelated stacks,

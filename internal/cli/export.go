@@ -29,7 +29,19 @@ func exportCmd() *cobra.Command {
 		Args: cobra.ExactArgs(1),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			if len(args) == 0 {
-				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
+				ws, err := internal.RequireWorkspace()
+				if err != nil {
+					return nil, cobra.ShellCompDirectiveNoFileComp
+				}
+				ws, err = managedTemplateExecutionWorkspace(ws)
+				if err != nil {
+					return nil, cobra.ShellCompDirectiveNoFileComp
+				}
+				features, err := ws.ListFeaturesResolved()
+				if err != nil {
+					return nil, cobra.ShellCompDirectiveNoFileComp
+				}
+				return features, cobra.ShellCompDirectiveNoFileComp
 			}
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
@@ -41,18 +53,24 @@ func exportCmd() *cobra.Command {
 				return err
 			}
 
-			if err := internal.GuardFeatureName(ws.MetadataRoot, feature); err != nil {
-				return err
-			}
-
-			var featurePath string
-			featurePath, err = ws.ResolveFeaturePath(feature)
+			context, err := resolveFeatureContext(ws, feature)
 			if err != nil {
 				return err
 			}
+			ws = context.Workspace
+			featurePath := context.FeaturePath
 
 			if _, err := os.Stat(featurePath); os.IsNotExist(err) {
 				return fmt.Errorf("feature not found: %s", feature)
+			}
+			managed, err := internal.ManagedTemplateStatePresent(featurePath)
+			if err != nil {
+				return err
+			}
+			if managed {
+				if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "Warning: export omits managed template selections, ownership metadata, external-link ownership, and orchestrator assets; imported inject files remain unmanaged."); err != nil {
+					return err
+				}
 			}
 
 			stack, _ := internal.LoadStack(featurePath)
@@ -63,7 +81,7 @@ func exportCmd() *cobra.Command {
 				if ws.Mode == internal.ModeCheckout {
 					return fmt.Errorf("--to-repo is not supported in checkout mode; use '-o <tracked-path>' to write to a tracked file instead")
 				}
-				return exportToRepo(feature, export)
+				return exportToRepo(ws.RepoRoot, feature, export)
 			}
 
 			if full {
@@ -98,12 +116,7 @@ func exportYAML(export internal.WorkspaceExport, output string) error {
 	return nil
 }
 
-func exportToRepo(feature string, export internal.WorkspaceExport) error {
-	repoRoot, err := internal.MainRepoRoot()
-	if err != nil {
-		return fmt.Errorf("not inside a git repository")
-	}
-
+func exportToRepo(repoRoot, feature string, export internal.WorkspaceExport) error {
 	dir := filepath.Join(repoRoot, ".tws", "workspaces")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
@@ -152,6 +165,10 @@ func exportTarball(feature, featurePath string, export internal.WorkspaceExport,
 	if _, err := os.Stat(injectDir); err == nil {
 		_ = filepath.Walk(injectDir, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
+				if err == nil && info != nil && info.IsDir() &&
+					filepath.Base(path) == ".tws-template-recovery" {
+					return filepath.SkipDir
+				}
 				return nil
 			}
 			relPath, _ := filepath.Rel(featurePath, path)

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"os"
 	"strconv"
 
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
@@ -27,8 +26,11 @@ func configShowCmd() *cobra.Command {
 		Use:   "show",
 		Short: "Show resolved configuration",
 		Args:  cobra.NoArgs,
-		Run: func(cmd *cobra.Command, args []string) {
-			cfg := internal.LoadConfig()
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, repoRoot, err := resolvedConfigForCommand()
+			if err != nil {
+				return err
+			}
 
 			fmt.Println("# Resolved configuration (global + per-repo)")
 			fmt.Printf("agent_command: %s\n", cfg.GetAgentCommand())
@@ -57,6 +59,16 @@ func configShowCmd() *cobra.Command {
 			} else {
 				fmt.Println("branch_prefix: (none)")
 			}
+			if cfg.WorktreeTemplate != "" {
+				fmt.Printf("worktree_template: %s\n", cfg.WorktreeTemplate)
+			} else {
+				fmt.Println("worktree_template: (builtin when managed)")
+			}
+			if cfg.OrchestratorTemplate != "" {
+				fmt.Printf("orchestrator_template: %s\n", cfg.OrchestratorTemplate)
+			} else {
+				fmt.Println("orchestrator_template: (builtin when managed)")
+			}
 			if len(cfg.Workspaces) > 0 {
 				fmt.Println("workspaces:")
 				for k, v := range cfg.Workspaces {
@@ -66,10 +78,11 @@ func configShowCmd() *cobra.Command {
 			fmt.Println()
 			fmt.Println("# Paths")
 			fmt.Printf("global: %s\n", internal.ConfigPath())
-			repoPath := internal.RepoConfigPath()
+			repoPath := internal.RepoConfigPathFor(repoRoot)
 			if repoPath != "" {
 				fmt.Printf("repo:   %s\n", repoPath)
 			}
+			return nil
 		},
 	}
 }
@@ -83,7 +96,7 @@ func configSetCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(2),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			if len(args) == 0 {
-				return []string{"agent_command", "use_tmux", "inject_into", "test_command", "auto_hooks", "branch_prefix"}, cobra.ShellCompDirectiveNoFileComp
+				return []string{"agent_command", "use_tmux", "inject_into", "test_command", "auto_hooks", "branch_prefix", "worktree_template", "orchestrator_template"}, cobra.ShellCompDirectiveNoFileComp
 			}
 			if len(args) == 1 && args[0] == "agent_command" {
 				return []string{"claude", "opencode", "aider", "copilot"}, cobra.ShellCompDirectiveNoFileComp
@@ -91,17 +104,23 @@ func configSetCmd() *cobra.Command {
 			if len(args) == 1 && args[0] == "use_tmux" {
 				return []string{"true", "false"}, cobra.ShellCompDirectiveNoFileComp
 			}
+			if len(args) == 1 && (args[0] == "worktree_template" || args[0] == "orchestrator_template") {
+				return namedTemplateFlagCompletion(cmd, args, toComplete)
+			}
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			key, value := args[0], args[1]
 
 			path := internal.ConfigPath()
 			if repo {
-				path = internal.RepoConfigPath()
+				_, repoRoot, err := resolvedConfigForCommand()
+				if err != nil {
+					return err
+				}
+				path = internal.RepoConfigPathFor(repoRoot)
 				if path == "" {
-					fmt.Println("Error: not inside a git repository")
-					os.Exit(1)
+					return fmt.Errorf("not inside an owning git repository")
 				}
 			}
 
@@ -113,8 +132,7 @@ func configSetCmd() *cobra.Command {
 			case "use_tmux":
 				b, err := strconv.ParseBool(value)
 				if err != nil {
-					fmt.Printf("Error: use_tmux must be true or false, got %q\n", value)
-					os.Exit(1)
+					return fmt.Errorf("use_tmux must be true or false, got %q", value)
 				}
 				cfg.UseTmux = &b
 			case "inject_into":
@@ -124,20 +142,27 @@ func configSetCmd() *cobra.Command {
 			case "auto_hooks":
 				b, err := strconv.ParseBool(value)
 				if err != nil {
-					fmt.Printf("Error: auto_hooks must be true or false, got %q\n", value)
-					os.Exit(1)
+					return fmt.Errorf("auto_hooks must be true or false, got %q", value)
 				}
 				cfg.AutoHooks = &b
 			case "branch_prefix":
 				cfg.BranchPrefix = value
+			case "worktree_template":
+				if err := internal.ValidateTemplateReferenceSyntax(value); err != nil {
+					return fmt.Errorf("invalid worktree_template: %w", err)
+				}
+				cfg.WorktreeTemplate = value
+			case "orchestrator_template":
+				if err := internal.ValidateTemplateReferenceSyntax(value); err != nil {
+					return fmt.Errorf("invalid orchestrator_template: %w", err)
+				}
+				cfg.OrchestratorTemplate = value
 			default:
-				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux, inject_into, test_command, auto_hooks)\n", key)
-				os.Exit(1)
+				return fmt.Errorf("unknown key: %s (valid: agent_command, use_tmux, inject_into, test_command, auto_hooks, branch_prefix, worktree_template, orchestrator_template)", key)
 			}
 
 			if err := internal.SaveConfigFile(path, cfg); err != nil {
-				fmt.Printf("Error saving config: %v\n", err)
-				os.Exit(1)
+				return fmt.Errorf("saving config: %w", err)
 			}
 
 			scope := "global"
@@ -145,10 +170,11 @@ func configSetCmd() *cobra.Command {
 				scope = "repo"
 			}
 			fmt.Printf("Set %s = %s (%s: %s)\n", key, value, scope, path)
+			return nil
 		},
 	}
 
-	cmd.Flags().BoolVar(&repo, "repo", false, "Edit per-repo config instead of global")
+	cmd.Flags().BoolVar(&repo, "repo", false, "Edit owning-repository config instead of global")
 
 	return cmd
 }
@@ -159,10 +185,13 @@ func configGetCmd() *cobra.Command {
 		Short: "Get a resolved config value",
 		Args:  cobra.ExactArgs(1),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-			return []string{"agent_command", "use_tmux", "inject_into", "test_command", "auto_hooks", "branch_prefix"}, cobra.ShellCompDirectiveNoFileComp
+			return []string{"agent_command", "use_tmux", "inject_into", "test_command", "auto_hooks", "branch_prefix", "worktree_template", "orchestrator_template"}, cobra.ShellCompDirectiveNoFileComp
 		},
-		Run: func(cmd *cobra.Command, args []string) {
-			cfg := internal.LoadConfig()
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, _, err := resolvedConfigForCommand()
+			if err != nil {
+				return err
+			}
 
 			switch args[0] {
 			case "agent_command":
@@ -197,10 +226,38 @@ func configGetCmd() *cobra.Command {
 				} else {
 					fmt.Println("(none)")
 				}
+			case "worktree_template":
+				if cfg.WorktreeTemplate != "" {
+					fmt.Println(cfg.WorktreeTemplate)
+				} else {
+					fmt.Println("(builtin when managed)")
+				}
+			case "orchestrator_template":
+				if cfg.OrchestratorTemplate != "" {
+					fmt.Println(cfg.OrchestratorTemplate)
+				} else {
+					fmt.Println("(builtin when managed)")
+				}
 			default:
-				fmt.Printf("Unknown key: %s (valid: agent_command, use_tmux, inject_into, test_command, auto_hooks)\n", args[0])
-				os.Exit(1)
+				return fmt.Errorf("unknown key: %s (valid: agent_command, use_tmux, inject_into, test_command, auto_hooks, branch_prefix, worktree_template, orchestrator_template)", args[0])
 			}
+			return nil
 		},
 	}
+}
+
+func resolvedConfigForCommand() (internal.Config, string, error) {
+	ws, err := internal.RequireWorkspace()
+	if err != nil {
+		return internal.LoadConfig(), "", nil
+	}
+	ws, err = managedTemplateExecutionWorkspace(ws)
+	if err != nil {
+		return internal.Config{}, "", err
+	}
+	cfg, err := internal.LoadConfigForRepoE(ws.RepoRoot)
+	if err != nil {
+		return internal.Config{}, "", err
+	}
+	return cfg, ws.RepoRoot, nil
 }
