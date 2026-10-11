@@ -839,11 +839,24 @@ func TestManagedTemplateSameTargetReplacementAndLiteralTrackedPathRefuse(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(linkPath); err != nil {
+	originalInfo, err := os.Lstat(linkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Keep the original inode allocated so filesystems cannot immediately
+	// recycle it for the replacement this fixture intends to distinguish.
+	if err := os.Rename(linkPath, filepath.Join(root, "retained-context-link")); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(target, linkPath); err != nil {
 		t.Fatal(err)
+	}
+	replacementInfo, err := os.Lstat(linkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(originalInfo, replacementInfo) {
+		t.Fatal("fixture did not create a distinct replacement symlink identity")
 	}
 	if _, err := PlanManagedTemplate(request); err == nil ||
 		!strings.Contains(err.Error(), "changed link ownership") {
