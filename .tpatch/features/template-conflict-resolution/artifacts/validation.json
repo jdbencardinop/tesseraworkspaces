@@ -1,0 +1,134 @@
+{
+  "feature": "template-conflict-resolution",
+  "stage": "pre-land",
+  "base_commit": "9c634f2a0e8c9e89e620060ec24a6a1df736f446",
+  "product_baseline": "v1.2.18-rc.5",
+  "candidate": "v2",
+  "product_file_count": 28,
+  "planning_file_count": 4,
+  "auxiliary_dependency_file_count": 1,
+  "candidate_manifest_sha256": "b916b5e6fce6cc631cea2682506a9ff2edc6d23be8eaddcf261ddaa795705527",
+  "canonical_patch_sha256": "b5fca1d3828686ce0d6529a086fa8ee13f7516cffc04baa218b57d683fa58992",
+  "recipe_sha256": "e274bcb4556bc93df505e99d070d2a92b93418e884e695a9efb88e1002d4c076",
+  "recipe_normalization": {
+    "generated_recipe_sha256": "eb072fc58fec9fb9182b692ac7370935af0d8890420e107bb9ea05716561b131",
+    "top_level_fields": ["feature", "operations"],
+    "operations": 28,
+    "exact_existing_file_preimages": 17,
+    "new_paths_proven_absent_at_base": 11,
+    "note": "Whole-file postimages match the reviewed candidate. Existing-file operations carry exact rc.5 sha256 preimage_hash values; fresh replay fixtures independently proved new-file absence. Normalization changes only the generated recipe, not product bytes or the canonical patch.",
+    "generation_receipt_note": "The tool's patch-generation receipt retains the original generated recipe hash. Re-recording the unchanged patch with --no-recipe-autogen preserves that historical receipt and does not advance its generation or update the recipe observation. The current normalized recipe hash is recorded above and must match the landing trailer; no historical generation record was manually rewritten."
+  },
+  "reviews": {
+    "model": "gpt-6-astra",
+    "filesystem_code_quality_preservation": "approved",
+    "architecture_correctness_tests": "approved",
+    "cli_ux_discoverability": "approved",
+    "all_approved_exact_candidate_manifest": true,
+    "verified_manifest_before_and_after_each_review": true,
+    "reviewers_modified_candidate": false
+  },
+  "checks": [
+    {
+      "command": "gofmt -l on every changed Go file",
+      "outcome": "passed; no unformatted files"
+    },
+    {
+      "command": "go test ./internal ./internal/cli -run 'Test(ManagedTemplate|NamedTemplate|SyncPlanDocs_|ReparentDocs_NormativeClaims)' -count=1 -timeout 20m",
+      "outcome": "passed"
+    },
+    {
+      "command": "go test ./... -count=1 -timeout 40m",
+      "outcome": "passed",
+      "seconds": 976.804
+    },
+    {
+      "command": "go vet ./...",
+      "outcome": "passed"
+    },
+    {
+      "command": "golangci-lint run ./...",
+      "outcome": "passed; 0 issues; isolated lint cache"
+    },
+    {
+      "command": "make build",
+      "outcome": "passed"
+    },
+    {
+      "command": "GOOS=linux GOARCH=amd64 go build -o <session-output>/conflict-v2-linux-tws ./cmd/tws",
+      "outcome": "cross-compilation passed; not a claim of Linux runtime execution"
+    },
+    {
+      "command": "git diff --check",
+      "outcome": "passed"
+    },
+    {
+      "command": "tpatch feature deps --validate-all",
+      "outcome": "passed; 0 violations"
+    }
+  ],
+  "independent_cli_evidence": {
+    "mode": "actual CLI binaries, isolated repositories/local bare remotes, real PTY input, deterministic fake editors",
+    "case_count": 25,
+    "outcome": "all passed",
+    "workspace_modes": ["external", "checkout"],
+    "coverage": [
+      "default and nonterminal refusal, empty answer and terminal EOF",
+      "keep, repeat sync, changed proposal, unacknowledged edits, replace and explicit override review",
+      "released rc.5 managed-state refusal and precise checkout-new compatibility boundary",
+      "separate removal consent and protected missing/obsolete customizations",
+      "whole-batch hard preflight before earlier managed or legacy effects",
+      "permission, NUL, invalid UTF-8 and symlink refusals",
+      "permission-preserving atomic editor saves, explicit acceptance and persistent edited content",
+      "failed/unsafe editors retain drafts without changing managed assets",
+      "native Copilot frontmatter validation",
+      "destination drift while a real terminal prompt is pending",
+      "physical case-alias scratch exclusion in both workspace modes",
+      "external branch rename, archive/reactivation and archived feature metadata rename with preserved acknowledgements"
+    ],
+    "baseline_binary_sha256": "31c50056363a674ecac65f74813b2c5f567d716409625826e290b9ab34f5b945",
+    "baseline_binary": "built from unchanged rc.5 product sources with exact v1.2.18-rc.5 version",
+    "fixture_correction": "The initial fake atomic editor did not preserve private 0600 permissions. Corrected the fixture to preserve the original mode; no product privacy guard or permission-refusal test was weakened."
+  },
+  "resolved_parent_audit_findings": [
+    "C-P1: reject physical ancestor/equality aliases before editor scratch creation; six permanent macOS alias cases passed without skips.",
+    "C-P2: reject resolver/lifecycle-only request combinations independently of AgentSet, with permanent core regressions."
+  ],
+  "replays": {
+    "recipe": {
+      "independent_fresh_exact_base_runs": 2,
+      "base_commit": "9c634f2a0e8c9e89e620060ec24a6a1df736f446",
+      "outcome": "both passed; all 28 product postimages/modes and reviewed planning/dependency metadata matched",
+      "preimages_and_new_file_absence_checked_before_execution": true
+    },
+    "canonical_patch": {
+      "method": "git apply --cached in a private index initialized at the exact base",
+      "outcome": "passed; all 28 postimages and modes matched",
+      "real_index_or_working_tree_modified": false
+    },
+    "record_summary_note": "record.md's generated diff-stat lists the 17 already-tracked files; the recorded canonical patch and independently verified replay include all 28 files, including 11 additions."
+  },
+  "dependency_metadata": {
+    "hard_parents": ["template-sync-existing", "named-feature-templates"],
+    "removed_obsolete_soft_edge": "named-feature-templates -> template-conflict-resolution",
+    "reason": "Managed conflict decisions depend on the shipped managed template ledger. The reverse pre-release soft hint is obsolete and would make the truthful new hard dependency cyclic.",
+    "published_parent_artifacts_modified": false
+  },
+  "tpatch_verification": {
+    "command": "tpatch verify template-conflict-resolution --no-write --json",
+    "exit_code": 2,
+    "failed_check": "recipe_replay_clean",
+    "reason": "Hard parent fix-inject-slash-worktree-discovery landed at 86c7d5872b6a7d203840c06c403df14cda733c0e, but historical canonical-patch closure verification cannot materialize its patch at the verification baseline.",
+    "baseline_reproduced": true,
+    "baseline_reproduction": "The same failure was captured before implementation by verifying unchanged rc.5 named-feature-templates at 9c634f2; its exact landing evidence was valid.",
+    "not_a_green_verifier_claim": true,
+    "independent_new_recipe_and_patch_replays": "passed as recorded above",
+    "maintenance_feature": "repair-historical-tpatch-artifacts"
+  },
+  "user_approved_existing_boundaries": [
+    "V2 refusal applies when managed-state readers/writers load ownership metadata. Released rc.5 checkout new may still create logical branch/stack metadata without changing template bytes or acknowledgements; this is not universal old-binary disabling.",
+    "The pre-existing materialized external feature-rename/backpointer defect is deferred to https://github.com/jdbencardinop/tesseraworkspaces/issues/5 by explicit user request, not repaired by this feature."
+  ],
+  "preserved_export_contract": "Export keeps the released archive omission of ownership metadata while preserving effective asset bytes and the live ledger.",
+  "publication_authorized": false
+}

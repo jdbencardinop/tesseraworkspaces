@@ -251,6 +251,7 @@ func templateSyncCmd() *cobra.Command {
 	var orchestratorTemplate string
 	var agent string
 	var allowManagedRemoval bool
+	var resolveConflicts bool
 
 	cmd := &cobra.Command{
 		Use:   "sync [feature]",
@@ -259,7 +260,13 @@ func templateSyncCmd() *cobra.Command {
 
 Directory-valued --template inputs retain legacy copy-if-missing behavior.
 Named packages, role flags, --agent, or an explicit --scope use managed,
-ownership-tracked updates. Managed features default to both roles.`,
+ownership-tracked updates. Managed features default to both roles.
+
+--resolve-conflicts reviews selected managed text conflicts and remembered
+overrides with keep/replace/diff/edit/cancel. Decisions require terminal input;
+the flag never selects managed templates or permits unmanaged-file adoption.
+Keep/edit acknowledge the current incoming proposal, not future updates.
+Customized files cannot be removed with --allow-managed-removal.`,
 		Args: cobra.MaximumNArgs(1),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			if len(args) == 0 {
@@ -267,7 +274,7 @@ ownership-tracked updates. Managed features default to both roles.`,
 			}
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			if all && len(args) > 0 {
 				return errors.New("--all cannot be combined with a feature argument")
 			}
@@ -278,14 +285,14 @@ ownership-tracked updates. Managed features default to both roles.`,
 			if err != nil {
 				return err
 			}
-			flags := managedFlagsFromCommand(cmd, worktreeTemplate, orchestratorTemplate, agent, allowManagedRemoval)
+			flags := managedFlagsFromCommand(cmd, worktreeTemplate, orchestratorTemplate, agent, allowManagedRemoval, resolveConflicts)
 			if err := applyNamedAlias(&flags, classified); err != nil {
 				return err
 			}
 			scopeChanged := cmd.Flags().Changed("scope")
 			if len(classified.legacyDirs) > 0 &&
-				(flags.worktreeTemplateSet || flags.orchestratorSet || flags.agentSet || scopeChanged) {
-				return errors.New("cannot combine a legacy directory --template with managed role, agent, or scope selectors")
+				(flags.worktreeTemplateSet || flags.orchestratorSet || flags.agentSet || scopeChanged || flags.resolveConflicts) {
+				return errors.New("cannot combine a legacy directory --template with managed role, agent, or scope selectors or --resolve-conflicts")
 			}
 			roles, err := managedTemplateRolesForScope(scope, scopeChanged)
 			if err != nil {
@@ -304,7 +311,7 @@ ownership-tracked updates. Managed features default to both roles.`,
 				flags.orchestratorSet || flags.agentSet || scopeChanged
 			ws, wsErr := internal.RequireWorkspace()
 			if wsErr != nil {
-				if managedExplicit {
+				if managedExplicit || flags.resolveConflicts {
 					return wsErr
 				}
 				return syncTemplatesWithoutWorkspace(
@@ -377,13 +384,28 @@ ownership-tracked updates. Managed features default to both roles.`,
 				}
 				plans = append(plans, plan)
 			}
-			if err := confirmManagedTemplateRemovals(cmd, plans, flags.allowRemoval); err != nil {
+			if flags.resolveConflicts && len(legacy) > 0 {
+				if len(plans) == 0 {
+					return errors.New("--resolve-conflicts requires a managed target; it does not migrate legacy templates")
+				}
+				for _, context := range legacy {
+					if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "feature=%q: legacy copy-if-missing only, after all managed preflight and decisions succeed\n", context.Feature); err != nil {
+						return err
+					}
+				}
+			}
+			var edits managedTemplateEdits
+			defer func() { retErr = errors.Join(retErr, edits.finish(retErr == nil)) }()
+			if err := confirmManagedTemplateChanges(cmd, plans, flags, &edits); err != nil {
 				return err
 			}
 			if managedTemplatePostConsentHook != nil {
 				if err := managedTemplatePostConsentHook(); err != nil {
 					return err
 				}
+			}
+			if err := edits.verify(); err != nil {
+				return err
 			}
 			if err := executeManagedTemplatePlans(cmd, plans); err != nil {
 				return err
@@ -411,6 +433,7 @@ ownership-tracked updates. Managed features default to both roles.`,
 	cmd.Flags().StringVar(&orchestratorTemplate, "orchestrator-template", "", "Named template reference for orchestrator guidance")
 	cmd.Flags().StringVar(&agent, "agent", "", "Rendering agent: claude or copilot")
 	cmd.Flags().BoolVar(&allowManagedRemoval, "allow-managed-removal", false, "Consent to removal of listed unchanged managed paths")
+	cmd.Flags().BoolVar(&resolveConflicts, "resolve-conflicts", false, "Interactively review managed text conflicts and remembered overrides (terminal required for decisions)")
 	_ = cmd.RegisterFlagCompletionFunc("scope", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return []string{"worktree", "orchestrator", "both"}, cobra.ShellCompDirectiveNoFileComp
 	})

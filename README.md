@@ -329,8 +329,9 @@ Managed state lives in feature-local `.tws-templates.json`. tws replaces or
 removes only regular files and external links whose recorded hash, mode,
 filesystem identity, exact Git-worktree identity, source mapping, and link
 target still match. Same-content files without ownership metadata,
-modified owned files, tracked paths, and symlinks are conflicts—not adoption
-candidates. When an update would retire unchanged owned paths, tws prints every
+tracked paths, and symlinks are never adoption candidates. Unacknowledged
+modified owned files refuse by default; the candidate resolver below is an
+explicit, text-only exception. When an update would retire unchanged owned paths, tws prints every
 feature, role, kind, and exact path, then asks default-No:
 
 ```text
@@ -364,6 +365,77 @@ any mismatch or failure preserves the evidence and reports its exact path.
 Retries fail closed while that evidence remains. This is not a multi-file
 transaction and cannot preserve later writes made through an already-open
 descriptor to an old object after its final successful verification.
+
+#### Managed text conflict resolution (implementation candidate, not released)
+
+```sh
+tws template sync auth --resolve-conflicts
+tws template sync auth --scope orchestrator --resolve-conflicts
+tws add auth --resolve-conflicts            # existing managed feature
+VISUAL='code --wait' tws template sync auth --resolve-conflicts
+```
+
+This flag is **not a managed selector**. It never migrates legacy features or
+works with directory-valued templates. It reviews selected, ledger-owned
+regular UTF-8 text without NUL, with unchanged recorded permissions. Ordinary
+non-conflicting binary updates remain supported. Unmanaged same-content
+files, symlinks/parents, changed worktree or link identities, tracked injection
+collisions, missing sources, invalid metadata, and pending recovery remain
+hard refusals, even with `--force` or `--allow-managed-removal`.
+
+Each escaped feature/role/path prompt shows current and incoming rendered
+digests/modes and offers **keep / replace / diff / edit / cancel**
+(`k/r/d/e/c`), defaulting to **cancel**. Keep preserves exact local bytes/mode;
+replace takes the rendered incoming bytes/mode. Diff is plain, unpaged,
+two-way output with terminal controls escaped; it invokes no external diff,
+textconv, repository drivers, or pager. There is no three-way base/history.
+
+Edit starts from current bytes in private staging outside feature, worktree,
+and registry roots, including their physical aliases, alongside a separate
+incoming reference. Editor selection
+is nonempty `VISUAL`, then `EDITOR`, then `vi`; quoted arguments are parsed
+without shell expansion and the absolute file path is a separate argument.
+GUI editors must wait, for example `code --wait`. A preview and explicit
+default-No acceptance are required after the editor exits. Safe regular-file
+atomic saves are supported; symlink/hard-link or unsafe staging replacements
+refuse. Editor/validation errors retain scratch edits and report their path.
+Copilot worktree instructions kept or edited this way need valid `applyTo`
+frontmatter; accepted bytes are never silently rewritten.
+
+Keep/edit remembers the **effective local bytes separately from the incoming
+proposal**. Ordinary sync preserves an unchanged acknowledgement without a
+terminal; changed incoming bytes/mode, source/renderer selection, or later
+unacknowledged local edits require a new decision. Passing the flag explicitly
+reviews unchanged overrides too and therefore needs a terminal. Replace
+clears the override, and a result equal to incoming is canonical. Piped
+answers, unattended keep-all/replace-all, and automatic prompts are unsupported.
+
+The first noncanonical keep/edit upgrades `.tws-templates.json` from v1 to
+**v2**, after a warning; existing v1 state is not eagerly converted. Released
+**v1.2.18-rc.5 refuses v2 in managed-state readers/writers**, potentially
+including workspace owner discovery. This is not a universal disable switch:
+rc.5 checkout `tws new` may still create logical branch/stack metadata without
+reading the ledger, leaving template bytes and acknowledgements unchanged.
+Use the newer CLI consistently in that workspace. v2 never automatically
+downgrades, even after clearing the last override; do not strip metadata.
+Missing or obsolete customized files hard-refuse rather than discarding
+decisions. Their deletion is excluded even with removal consent.
+
+All managed hard preflight and decisions finish before any effects in a mixed
+`--all` batch; legacy members are identified and still copy only missing files.
+Ordinary obsolete-file removal has its separate exact-path/default-No consent
+after decisions. Cancellation or input/output/editor errors before execution
+leave all feature and add branch/session effects unapplied. No writer
+reservation is held while waiting for a person or editor. Decisions are
+revalidated under exclusion, including unwritten kept files before ledger
+publication and cleanup. Failures after effects report per-feature progress
+and retained recovery; neither all-file nor cross-feature atomicity is claimed.
+
+Known inherited limitation: renaming an external feature with materialized
+worktrees can leave stale Git backpointers
+([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)).
+Acknowledgements survive feature metadata moves; this candidate does not
+repair that Git behavior.
 
 ### Multi-Repo Workspaces
 
@@ -419,7 +491,7 @@ read. No timeout flags are added.
 
 | Command | Description |
 |---------|-------------|
-| `tws add <feature> [-n branch] [--open] [--tmux] [--template dir-or-name] [--worktree-template ref] [--orchestrator-template ref] [--agent claude\|copilot]` | Create legacy or managed feature workspace |
+| `tws add <feature> [-n branch] [--open] [--tmux] [--template dir-or-name] [--worktree-template ref] [--orchestrator-template ref] [--agent claude\|copilot] [--resolve-conflicts]` | Create legacy or managed feature workspace |
 | `tws new <feature> <branch> [--base] [--repo] [--force]` | Create worktree branch |
 | `tws open [feature] [branch] [--tmux] [--no-agent]` | Open worktree (interactive picker if no args) |
 | `tws sync <feature> [--push] [--continue] [--abort] [--verbose] [--fetch\|--no-fetch] [--full\|--local-only] [--only <entry>\|--from <entry>]` | Rebase in dependency order, optionally scoped |
@@ -446,7 +518,7 @@ read. No timeout flags are added.
 | `tws export <feature> [--full] [--to-repo]` | Export workspace |
 | `tws import <file> [--from-repo]` | Import workspace |
 | `tws template add/list/show/remove` | Manage global/per-repository named template packages |
-| `tws template sync [feature\|--all] [--template dir-or-name] [--scope worktree\|orchestrator\|both] [--allow-managed-removal]` | Backfill legacy templates or refresh managed roles |
+| `tws template sync [feature\|--all] [--template dir-or-name] [--scope worktree\|orchestrator\|both] [--resolve-conflicts] [--allow-managed-removal]` | Backfill legacy templates or refresh managed roles |
 | `tws close <feature> <branch>` | Kill tmux session |
 | `tws registry add <path> [--alias name]` | Register a repo/workspace for discovery |
 | `tws registry list/show/check [--json]` | Inspect registered workspaces |

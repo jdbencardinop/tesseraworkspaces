@@ -23,6 +23,7 @@ func addCmd() *cobra.Command {
 	var orchestratorTemplate string
 	var agent string
 	var allowManagedRemoval bool
+	var resolveConflicts bool
 
 	cmd := &cobra.Command{
 		Use:   "add <feature>",
@@ -33,7 +34,11 @@ Files in inject/ are symlinked into every worktree. Use -n to also
 create a first worktree branch, and --open to launch the agent.
 
 Note: injected files appear as untracked in git status. Add them to
-.gitignore or place them in an already-ignored subfolder.`,
+.gitignore or place them in an already-ignored subfolder.
+
+For existing managed text, --resolve-conflicts explicitly reviews conflicts
+and remembered overrides in a terminal (keep/replace/diff/edit/cancel).
+It does not select managed templates, adopt files, or override --force safety.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			feature := args[0]
@@ -51,7 +56,7 @@ Note: injected files appear as untracked in git status. Add them to
 			if err != nil {
 				return err
 			}
-			flags := managedFlagsFromCommand(cmd, worktreeTemplate, orchestratorTemplate, agent, allowManagedRemoval)
+			flags := managedFlagsFromCommand(cmd, worktreeTemplate, orchestratorTemplate, agent, allowManagedRemoval, resolveConflicts)
 			if err := applyNamedAlias(&flags, classified); err != nil {
 				return err
 			}
@@ -71,6 +76,9 @@ Note: injected files appear as untracked in git status. Add them to
 				flags.orchestratorSet || flags.agentSet
 			managed := managedExplicit || statePresent
 			if len(classified.legacyDirs) > 0 {
+				if flags.resolveConflicts {
+					return errors.New("--resolve-conflicts cannot be used with legacy directory templates")
+				}
 				if managed {
 					return errors.New("cannot mix legacy directory templates with managed template selection")
 				}
@@ -82,6 +90,9 @@ Note: injected files appear as untracked in git status. Add them to
 			}
 			if managed {
 				return addManaged(cmd, ws, feature, flags, newBranch, base, force, open, useTmux)
+			}
+			if flags.resolveConflicts {
+				return errors.New("--resolve-conflicts requires a managed feature or an explicit managed template selection; it does not migrate legacy templates")
 			}
 			if ws.Mode == internal.ModeCheckout {
 				return addCheckout(ws, feature, classified.legacyDirs, newBranch, base, force, open, useTmux)
@@ -95,6 +106,7 @@ Note: injected files appear as untracked in git status. Add them to
 	cmd.Flags().StringVar(&orchestratorTemplate, "orchestrator-template", "", "Named template reference for orchestrator guidance")
 	cmd.Flags().StringVar(&agent, "agent", "", "Rendering agent: claude or copilot")
 	cmd.Flags().BoolVar(&allowManagedRemoval, "allow-managed-removal", false, "Consent to removal of listed unchanged managed paths")
+	cmd.Flags().BoolVar(&resolveConflicts, "resolve-conflicts", false, "Interactively review managed text conflicts and remembered overrides (terminal required for decisions)")
 	cmd.Flags().StringVarP(&newBranch, "new", "n", "", "Also create a worktree branch")
 	cmd.Flags().StringVar(&base, "base", "", "Base branch for the new worktree (default: repo's default branch)")
 	cmd.Flags().BoolVar(&open, "open", false, "Open the worktree after creation (used with -n)")
@@ -118,7 +130,9 @@ func addManaged(
 	flags managedTemplateFlags,
 	newBranch, base string,
 	force, open, useTmux bool,
-) error {
+) (retErr error) {
+	var edits managedTemplateEdits
+	defer func() { retErr = errors.Join(retErr, edits.finish(retErr == nil)) }()
 	roles := []internal.ManagedTemplateRole{
 		internal.ManagedTemplateRoleWorktree,
 		internal.ManagedTemplateRoleOrchestrator,
@@ -127,13 +141,16 @@ func addManaged(
 	if err != nil {
 		return err
 	}
-	if err := confirmManagedTemplateRemovals(cmd, []*internal.ManagedTemplatePlan{plan}, flags.allowRemoval); err != nil {
+	if err := confirmManagedTemplateChanges(cmd, []*internal.ManagedTemplatePlan{plan}, flags, &edits); err != nil {
 		return err
 	}
 	if managedTemplatePostConsentHook != nil {
 		if err := managedTemplatePostConsentHook(); err != nil {
 			return err
 		}
+	}
+	if err := edits.verify(); err != nil {
+		return err
 	}
 	if ws.Mode == internal.ModeExternal {
 		if err := internal.EnsureExternalWorkspaceMarker(ws.MetadataRoot); err != nil {

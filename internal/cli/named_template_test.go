@@ -58,14 +58,7 @@ func newManagedCLIFixture(t *testing.T) *managedCLIFixture {
 	if err := os.WriteFile(filepath.Join(repo, ".tws", "config.yaml"), []byte("workspace_mode: checkout\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	oldCWD, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(oldCWD) })
-	if err := os.Chdir(repo); err != nil {
-		t.Fatal(err)
-	}
+	t.Chdir(repo)
 	ws, err := internal.RequireWorkspace()
 	if err != nil {
 		t.Fatal(err)

@@ -23,6 +23,7 @@ type managedTemplateFlags struct {
 	agent                string
 	agentSet             bool
 	allowRemoval         bool
+	resolveConflicts     bool
 }
 
 type classifiedTemplateArgs struct {
@@ -50,14 +51,7 @@ type managedFeatureRenameReservation struct {
 	checkoutToken    string
 }
 
-var managedTemplateInputIsTTY = func(input io.Reader) bool {
-	file, ok := input.(*os.File)
-	if !ok {
-		return false
-	}
-	info, err := file.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
-}
+var managedTemplateInputIsTTY = managedTemplateTerminalInput
 
 var managedTemplatePostConsentHook func() error
 var managedTemplateTmuxProbe internal.TmuxInventoryProbe
@@ -348,7 +342,7 @@ func managedTemplateDefaultsConfigured(repoRoot string) (bool, error) {
 		globalCfg.WorktreeTemplate != "" || globalCfg.OrchestratorTemplate != "", nil
 }
 
-func managedFlagsFromCommand(cmd *cobra.Command, worktree, orchestrator, agent string, allow bool) managedTemplateFlags {
+func managedFlagsFromCommand(cmd *cobra.Command, worktree, orchestrator, agent string, allow, resolve bool) managedTemplateFlags {
 	return managedTemplateFlags{
 		worktreeTemplate:     worktree,
 		worktreeTemplateSet:  cmd.Flags().Changed("worktree-template"),
@@ -357,6 +351,7 @@ func managedFlagsFromCommand(cmd *cobra.Command, worktree, orchestrator, agent s
 		agent:                agent,
 		agentSet:             cmd.Flags().Changed("agent"),
 		allowRemoval:         allow,
+		resolveConflicts:     resolve,
 	}
 }
 
@@ -375,6 +370,7 @@ func managedPlanRequest(
 			Reference: flags.orchestratorTemplate, ReferenceSet: flags.orchestratorSet,
 		},
 		Agent: flags.agent, AgentSet: flags.agentSet,
+		ResolveConflicts: flags.resolveConflicts,
 	}
 }
 
@@ -396,6 +392,7 @@ func confirmManagedTemplateRemovals(
 	cmd *cobra.Command,
 	plans []*internal.ManagedTemplatePlan,
 	allow bool,
+	reader *bufio.Reader,
 ) error {
 	var removals []internal.ManagedTemplateRemoval
 	for _, plan := range plans {
@@ -416,7 +413,7 @@ func confirmManagedTemplateRemovals(
 		}
 		return removals[i].Path < removals[j].Path
 	})
-	errOut := cmd.ErrOrStderr()
+	errOut := managedTemplateCheckedWriter{cmd.ErrOrStderr()}
 	if _, err := fmt.Fprintln(errOut, "Managed template update would remove these unchanged TWS-managed paths:"); err != nil {
 		return err
 	}
@@ -442,7 +439,7 @@ func confirmManagedTemplateRemovals(
 		}
 		return errors.New("managed template removal requires an interactive y/yes answer or --allow-managed-removal")
 	}
-	answer, err := bufio.NewReader(input).ReadString('\n')
+	answer, err := reader.ReadString('\n')
 	if errors.Is(err, io.EOF) {
 		if _, writeErr := fmt.Fprintln(errOut); writeErr != nil {
 			return writeErr
@@ -503,17 +500,33 @@ func executeManagedTemplatePlansWithReservations(
 		}
 		plans[i] = replanned
 	}
-	for _, plan := range plans {
+	for i, plan := range plans {
 		if cmd != nil {
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s: applying managed template roles\n", plan.Request.Feature); err != nil {
-				return err
+				return managedTemplateBatchProgressError(plans, i, err)
 			}
 		}
 		if err := internal.ApplyManagedTemplatePlan(plan); err != nil {
-			return fmt.Errorf("%s: %w", plan.Request.Feature, err)
+			return managedTemplateBatchProgressError(plans, i, err)
 		}
 	}
 	return nil
+}
+
+func managedTemplateBatchProgressError(plans []*internal.ManagedTemplatePlan, index int, cause error) error {
+	if len(plans) == 1 {
+		return fmt.Errorf("%s: %w", plans[index].Request.Feature, cause)
+	}
+	var completed, notStarted []string
+	for i, plan := range plans {
+		if i < index {
+			completed = append(completed, plan.Request.Feature)
+		} else if i > index {
+			notStarted = append(notStarted, plan.Request.Feature)
+		}
+	}
+	return fmt.Errorf("%s: %w (managed batch: completed features=%q; not started=%q)",
+		plans[index].Request.Feature, cause, completed, notStarted)
 }
 
 func acquireManagedTemplateReservations(

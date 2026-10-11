@@ -21,7 +21,7 @@ tws <command> [args]
 
 | Command | Description |
 |---------|-------------|
-| `tws add <feature> [-n <branch>] [--open] [--tmux] [--template <dir-or-name>] [--worktree-template <ref>] [--orchestrator-template <ref>] [--agent claude\|copilot]` | Create a legacy or managed feature |
+| `tws add <feature> [-n <branch>] [--open] [--tmux] [--template <dir-or-name>] [--worktree-template <ref>] [--orchestrator-template <ref>] [--agent claude\|copilot] [--resolve-conflicts]` | Create a legacy or managed feature |
 | `tws new <feature> <branch> [--base <parent>] [--force]` | Create a worktree branch |
 | `tws open [feature] [branch] [--tmux] [--no-agent]` | Open worktree and run agent |
 | `tws sync <feature> [--push] [--verbose] [--continue] [--abort] [--fetch\|--no-fetch] [--full\|--local-only] [--only <entry>\|--from <entry>]` | Rebase worktrees in dependency order, optionally scoped |
@@ -51,7 +51,7 @@ tws <command> [args]
 | `tws config show/set/get` | Manage configuration |
 | `tws close <feature> <branch>` | Kill tmux session |
 | `tws template add/list/show/remove` | Manage global/per-repository named template packages |
-| `tws template sync <feature> [--template <dir-or-name>] [--scope worktree\|orchestrator\|both] [--allow-managed-removal]` | Backfill legacy templates or refresh managed roles |
+| `tws template sync <feature> [--template <dir-or-name>] [--scope worktree\|orchestrator\|both] [--resolve-conflicts] [--allow-managed-removal]` | Backfill legacy templates or refresh managed roles |
 | `tws init [--agent claude\|copilot]` | Install agent skills |
 | `tws --version` | Print version |
 
@@ -181,7 +181,8 @@ tws template sync auth --scope worktree
 Claude managed destinations are `inject/CLAUDE.local.md` for worktrees and
 feature-root `CLAUDE.md` for orchestration. `.tws-templates.json` is the only
 ownership evidence: matching bytes or generated prose do not make a file
-owned. Modified, unmanaged, symlinked, or tracked destinations refuse.
+owned. Unacknowledged modified content refuses by default; unmanaged,
+symlinked, or tracked destinations always refuse.
 
 When unchanged owned files or external links become obsolete, tws lists every
 exact path and asks default-No. Only `y`/`yes` proceeds. Automation may pass
@@ -205,6 +206,44 @@ successful ownership publication and revalidation; failures preserve and
 report exact paths, and retries fail closed. This does not promise multi-file
 atomicity or preserve writes arriving later through an already-open descriptor
 after final verification.
+
+**Conflict resolver — implementation candidate, not released.** Only managed
+`tws add` / `tws template sync` accept `--resolve-conflicts`; it is not a managed
+selector or legacy migration. A real terminal offers keep/replace/diff/edit/cancel
+(`k/r/d/e/c`), default cancel, for owned regular UTF-8/no-NUL text with unchanged
+permissions. Never pipe answers, invent keep-all/replace-all policies, or use
+`--force`/removal consent to adopt content or bypass recovery.
+
+Keep/edit remembers effective local bytes separately from the incoming rendered
+proposal. Ordinary repeat sync preserves matching overrides. Changed incoming
+bytes/mode or source/renderer selection, or later unacknowledged local edits,
+needs a new decision. The flag explicitly reviews unchanged overrides too;
+replace clears one and results equal to incoming are canonical. Missing or
+obsolete customized files hard-refuse; their deletion is excluded.
+
+Diff is two-way, unpaged and control-escaped, with no external diff/textconv or
+drivers. Edit stages private copies outside feature/worktree/registry roots;
+the editor is nonempty `VISUAL`, then `EDITOR`, then `vi`, with quoted argv but
+no shell expansion. GUI editors must wait (`code --wait`). Editor exit is not
+consent: previewed bytes require default-No acceptance. Errors retain scratch
+edits and name the path. Copilot native worktree instructions require valid
+`applyTo` frontmatter; never silently rewrite accepted edits.
+
+The first noncanonical keep/edit warns and saves v2 ownership.
+**v1.2.18-rc.5 refuses v2 in managed-state readers/writers**, potentially
+including workspace owner discovery. This is not a universal disable switch:
+rc.5 checkout `tws new` may still create logical branch/stack metadata without
+reading the ledger, leaving template bytes and acknowledgements unchanged.
+Use the newer CLI consistently. No eager v1 conversion or automatic downgrade,
+even after clearing the last override. Do not strip metadata. All managed
+batch decisions precede effects and separate ordinary-removal consent, without
+writer locks during interaction. Later failures retain per-feature progress
+and recovery; do not claim cross-feature atomicity.
+
+Known inherited limitation: materialized external feature rename can leave
+stale Git backpointers ([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)).
+This candidate preserves acknowledgements during metadata moves but does not
+repair that Git behavior.
 
 ### Cross-Worktree Decisions
 

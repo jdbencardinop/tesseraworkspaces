@@ -18,9 +18,10 @@ import (
 )
 
 const (
-	managedTemplateStateVersion = 1
-	managedTemplateStateName    = ".tws-templates.json"
-	managedTemplateLockName     = ".tws-templates.lock"
+	managedTemplateStateVersion    = 1
+	managedTemplateOverrideVersion = 2
+	managedTemplateStateName       = ".tws-templates.json"
+	managedTemplateLockName        = ".tws-templates.lock"
 )
 
 type ManagedTemplateRole string
@@ -75,9 +76,10 @@ func ValidateManagedTemplateReplan(
 }
 
 type ManagedTemplateOwnedFile struct {
-	Path   string `json:"path"`
-	SHA256 string `json:"sha256"`
-	Mode   uint32 `json:"mode"`
+	Path     string                   `json:"path"`
+	SHA256   string                   `json:"sha256"`
+	Mode     uint32                   `json:"mode"`
+	Override *ManagedTemplateOverride `json:"override,omitempty"`
 }
 
 type ManagedTemplateOwnedLink struct {
@@ -134,6 +136,7 @@ type ManagedTemplatePlanRequest struct {
 	RetireWorktree      string
 	InjectInto          string
 	InjectIntoSet       bool
+	ResolveConflicts    bool
 }
 
 type ManagedTemplateRemoval struct {
@@ -168,6 +171,10 @@ type ManagedTemplatePlan struct {
 	ownedSourceChecks  []ManagedTemplateOwnedFile
 	metadataIdentity   managedObjectIdentity
 	featureIdentity    managedObjectIdentity
+	fileChecks         []managedTemplateFileCheck
+	conflicts          []ManagedTemplateConflict
+	decisions          []managedTemplateDecision
+	baseFingerprint    string
 }
 
 type ManagedTemplateSourceEvidence struct {
@@ -329,7 +336,7 @@ func loadManagedTemplateState(featurePath string) (ManagedTemplateState, []byte,
 }
 
 func validateManagedTemplateState(state ManagedTemplateState, allowPending bool) error {
-	if state.Version != managedTemplateStateVersion {
+	if state.Version != managedTemplateStateVersion && state.Version != managedTemplateOverrideVersion {
 		return fmt.Errorf("unsupported version %d", state.Version)
 	}
 	if state.Roles == nil {
@@ -380,6 +387,9 @@ func validateManagedTemplateState(state ManagedTemplateState, allowPending bool)
 			}
 			if file.Mode > 0o777 {
 				return fmt.Errorf("%s file %q has invalid mode", role, file.Path)
+			}
+			if err := validateManagedTemplateOverride(state.Version, role, roleState, file); err != nil {
+				return fmt.Errorf("%s file %q: %w", role, file.Path, err)
 			}
 		}
 		if role != ManagedTemplateRoleWorktree && len(roleState.Links) > 0 {
@@ -546,6 +556,10 @@ func PlanManagedTemplate(request ManagedTemplatePlanRequest) (*ManagedTemplatePl
 	if err != nil {
 		return nil, err
 	}
+	if stateBefore.Exists != (len(rawState) > 0) ||
+		(stateBefore.Exists && stateBefore.Hash != digestBytes(rawState)) {
+		return nil, errors.New("managed ownership ledger changed while collecting planning evidence")
+	}
 	globalCfg, repoCfg, err := LoadTemplateConfigLayersE(request.Workspace.RepoRoot)
 	if err != nil {
 		return nil, err
@@ -599,6 +613,12 @@ func PlanManagedTemplate(request ManagedTemplatePlanRequest) (*ManagedTemplatePl
 		return nil, err
 	}
 	plan.Fingerprint = fingerprint
+	plan.baseFingerprint = fingerprint
+	if len(plan.conflicts) > 0 && !request.ResolveConflicts {
+		conflict := plan.conflicts[0]
+		return nil, fmt.Errorf("feature %q role=%s destination %q is not unchanged owned content: %s; use --resolve-conflicts in a terminal to review it",
+			request.Feature, conflict.Role, conflict.Destination, conflict.Reason)
+	}
 	return plan, nil
 }
 
@@ -623,6 +643,9 @@ func validateManagedTemplateRequest(request *ManagedTemplatePlanRequest) error {
 		if err := ValidateManagedTemplateAgent(request.Agent); err != nil {
 			return err
 		}
+	}
+	if request.ResolveConflicts && (request.LinkMaterializeOnly || request.RetireWorktree != "") {
+		return errors.New("conflict resolution is only available for managed add/template sync")
 	}
 	seen := make(map[ManagedTemplateRole]bool)
 	for _, role := range request.Roles {
@@ -1011,9 +1034,46 @@ func planManagedRoleFiles(
 			if !owned {
 				return fmt.Errorf("%s destination %s is unmanaged", role, filepath.Join(root, filepath.FromSlash(file.Path)))
 			}
-			if err := matchOwnedFile(observation, old); err != nil {
-				return fmt.Errorf("%s destination %s is not unchanged owned content: %w", role, filepath.Join(root, filepath.FromSlash(file.Path)), err)
+			if observation.Kind != "file" {
+				return fmt.Errorf("%s destination %s is not unchanged owned content: path type is %s, not a regular file", role, filepath.Join(root, filepath.FromSlash(file.Path)), observation.Kind)
 			}
+			if observation.Mode != old.Mode {
+				return fmt.Errorf("%s destination %s is not unchanged owned content: mode changed from %04o to %04o", role, filepath.Join(root, filepath.FromSlash(file.Path)), old.Mode, observation.Mode)
+			}
+		} else if owned && old.Override != nil {
+			return fmt.Errorf("%s customized destination %s is missing; refusing to discard its remembered decision", role, filepath.Join(root, filepath.FromSlash(file.Path)))
+		}
+		if observation.Exists {
+			check, err := newManagedTemplateFileCheck(role, root, file.Path, observation)
+			if err != nil {
+				return err
+			}
+			plan.fileChecks = append(plan.fileChecks, check)
+		}
+		incoming := ManagedTemplateOwnedFile{
+			Path: file.Path, SHA256: digestBytes(file.Data), Mode: uint32(file.Mode.Perm()),
+		}
+		needsDecision := observation.Exists && (observation.Hash != old.SHA256 ||
+			(old.Override != nil && (plan.Request.ResolveConflicts ||
+				!managedTemplateOverrideMatches(old.Override, source, agentSelection, incoming))))
+		if needsDecision {
+			conflict, err := newManagedTemplateConflict(plan, role, root, file, observation, source, agentSelection)
+			if err != nil {
+				return fmt.Errorf("%s destination %s cannot be resolved: %w", role, filepath.Join(root, filepath.FromSlash(file.Path)), err)
+			}
+			conflict.Reason = "remembered override requires review of its incoming proposal or selection"
+			if observation.Hash != old.SHA256 {
+				conflict.Reason = "content digest changed"
+			}
+			plan.conflicts = append(plan.conflicts, conflict)
+			newRole.Files = append(newRole.Files, incoming)
+			delete(oldByPath, file.Path)
+			continue
+		}
+		if owned && old.Override != nil {
+			newRole.Files = append(newRole.Files, cloneManagedTemplateOwnedFile(old))
+			delete(oldByPath, file.Path)
+			continue
 		}
 		if !observation.Exists || observation.Hash != digestBytes(file.Data) ||
 			observation.Mode != uint32(file.Mode.Perm()) {
@@ -1022,12 +1082,14 @@ func planManagedRoleFiles(
 				Data: append([]byte(nil), file.Data...), Mode: file.Mode.Perm(), Before: observation,
 			})
 		}
-		newRole.Files = append(newRole.Files, ManagedTemplateOwnedFile{
-			Path: file.Path, SHA256: digestBytes(file.Data), Mode: uint32(file.Mode.Perm()),
-		})
+		newRole.Files = append(newRole.Files, incoming)
 		delete(oldByPath, file.Path)
 	}
 	for path, old := range oldByPath {
+		if old.Override != nil {
+			return fmt.Errorf("%s customized destination %s is obsolete; customized-file deletion is not supported (even with --allow-managed-removal)",
+				role, filepath.Join(root, filepath.FromSlash(path)))
+		}
 		observation, err := observeManagedFile(root, path)
 		if err != nil {
 			return err
@@ -1038,6 +1100,11 @@ func planManagedRoleFiles(
 		if err := matchOwnedFile(observation, old); err != nil {
 			return fmt.Errorf("%s obsolete destination %s is not unchanged owned content: %w", role, filepath.Join(root, filepath.FromSlash(path)), err)
 		}
+		check, err := newManagedTemplateFileCheck(role, root, path, observation)
+		if err != nil {
+			return err
+		}
+		plan.fileChecks = append(plan.fileChecks, check)
 		plan.Removals = append(plan.Removals, ManagedTemplateRemoval{
 			Feature: plan.Request.Feature, Role: role,
 			Path: filepath.Join(root, filepath.FromSlash(path)), Kind: "file",
@@ -1663,12 +1730,12 @@ func observeManagedFile(rootPath, relative string) (managedFileObservation, erro
 	if err != nil {
 		return managedFileObservation{}, err
 	}
-	if afterIdentity != beforeIdentity || after.Mode().Perm() != before.Mode().Perm() ||
+	if afterIdentity != beforeIdentity || after.Mode() != before.Mode() ||
 		after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) {
 		return managedFileObservation{}, errors.New("regular file changed while hashing")
 	}
 	return managedFileObservation{
-		Exists: true, Kind: "file", Hash: digestBytes(data), Mode: uint32(before.Mode().Perm()),
+		Exists: true, Kind: "file", Hash: digestBytes(data), Mode: managedObservedPermissionMode(before.Mode()),
 		Device: identity.Device, Inode: identity.Inode,
 	}, nil
 }
@@ -1749,6 +1816,16 @@ func matchOwnedWorktreeIdentity(
 }
 
 func managedGitTracked(worktreeRoot, relative string) (bool, error) {
+	marker := filepath.Join(worktreeRoot, ".git")
+	info, markerErr := os.Lstat(marker)
+	if markerErr != nil {
+		return false, fmt.Errorf("checking whether %s is tracked: Git worktree marker is unavailable: %w",
+			filepath.Join(worktreeRoot, filepath.FromSlash(relative)), markerErr)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || (!info.IsDir() && !info.Mode().IsRegular()) {
+		return false, fmt.Errorf("checking whether %s is tracked: Git worktree marker is unsafe",
+			filepath.Join(worktreeRoot, filepath.FromSlash(relative)))
+	}
 	cmd := exec.Command("git", "-C", worktreeRoot, "--literal-pathspecs",
 		"ls-files", "--error-unmatch", "--", filepath.ToSlash(relative))
 	var stderr bytes.Buffer
@@ -1779,6 +1856,10 @@ func managedFileKind(mode fs.FileMode) string {
 	default:
 		return "special"
 	}
+}
+
+func managedObservedPermissionMode(mode fs.FileMode) uint32 {
+	return uint32(mode.Perm() | mode&(fs.ModeSetuid|fs.ModeSetgid|fs.ModeSticky))
 }
 
 func matchOwnedFile(observation managedFileObservation, owned ManagedTemplateOwnedFile) error {
@@ -1826,6 +1907,12 @@ func rejectManagedParentSymlinks(rootPath, relative string) error {
 func ApplyManagedTemplatePlan(plan *ManagedTemplatePlan) error {
 	if plan == nil {
 		return errors.New("managed template plan is nil")
+	}
+	if len(plan.PendingConflicts()) > 0 {
+		return errors.New("managed template plan has unresolved conflicts; no effects were applied")
+	}
+	if err := revalidateManagedTemplateFileChecks(plan, nil, false); err != nil {
+		return err
 	}
 	if err := validateManagedOwnedSourceFiles(
 		plan.Request.FeaturePath, plan.ownedSourceChecks,
@@ -2043,6 +2130,7 @@ func managedTemplateProgressError(completed, total int, cause error) error {
 }
 
 func marshalManagedTemplateState(state ManagedTemplateState) ([]byte, error) {
+	state = cloneManagedTemplateState(state)
 	normalizeManagedTemplateState(&state)
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
@@ -2058,6 +2146,9 @@ func cloneManagedTemplateState(state ManagedTemplateState) ManagedTemplateState 
 	}
 	for role, roleState := range state.Roles {
 		roleState.Files = append([]ManagedTemplateOwnedFile(nil), roleState.Files...)
+		for i, file := range roleState.Files {
+			roleState.Files[i] = cloneManagedTemplateOwnedFile(file)
+		}
 		roleState.Links = append([]ManagedTemplateOwnedLink(nil), roleState.Links...)
 		out.Roles[role] = roleState
 	}
@@ -2114,9 +2205,35 @@ func normalizeManagedTemplatePlan(plan *ManagedTemplatePlan) {
 	sort.Slice(plan.SourceEvidence, func(i, j int) bool {
 		return plan.SourceEvidence[i].Path < plan.SourceEvidence[j].Path
 	})
+	sort.Slice(plan.fileChecks, func(i, j int) bool {
+		if plan.fileChecks[i].Role != plan.fileChecks[j].Role {
+			return plan.fileChecks[i].Role < plan.fileChecks[j].Role
+		}
+		return plan.fileChecks[i].Relative < plan.fileChecks[j].Relative
+	})
+	sort.Slice(plan.conflicts, func(i, j int) bool {
+		if plan.conflicts[i].Role != plan.conflicts[j].Role {
+			return plan.conflicts[i].Role < plan.conflicts[j].Role
+		}
+		return plan.conflicts[i].Path < plan.conflicts[j].Path
+	})
+	sort.Slice(plan.decisions, func(i, j int) bool {
+		if plan.decisions[i].Role != plan.decisions[j].Role {
+			return plan.decisions[i].Role < plan.decisions[j].Role
+		}
+		return plan.decisions[i].Path < plan.decisions[j].Path
+	})
 }
 
 func managedTemplatePlanFingerprint(plan *ManagedTemplatePlan) (string, error) {
+	type removalFP struct {
+		Feature string                 `json:"feature"`
+		Role    ManagedTemplateRole    `json:"role"`
+		Path    string                 `json:"path"`
+		Kind    string                 `json:"kind"`
+		File    managedFileObservation `json:"file_before"`
+		Link    managedLinkObservation `json:"link_before"`
+	}
 	type fileFP struct {
 		Role     ManagedTemplateRole    `json:"role"`
 		Root     string                 `json:"root"`
@@ -2144,7 +2261,7 @@ func managedTemplatePlanFingerprint(plan *ManagedTemplatePlan) (string, error) {
 		MetadataID  managedObjectIdentity           `json:"metadata_identity"`
 		FeatureID   managedObjectIdentity           `json:"feature_identity"`
 		StateDigest string                          `json:"state_digest"`
-		Removals    []ManagedTemplateRemoval        `json:"removals"`
+		Removals    []removalFP                     `json:"removals"`
 		Files       []fileFP                        `json:"files"`
 		Links       []linkFP                        `json:"links"`
 		Retired     []retiredLinkFP                 `json:"retired_links"`
@@ -2152,15 +2269,23 @@ func managedTemplatePlanFingerprint(plan *ManagedTemplatePlan) (string, error) {
 		Worktrees   []string                        `json:"worktrees"`
 		Evidence    []string                        `json:"worktree_evidence"`
 		Sources     []ManagedTemplateSourceEvidence `json:"source_evidence"`
+		Request     ManagedTemplatePlanRequest      `json:"request"`
+		StateBefore managedFileObservation          `json:"state_before"`
+		Checks      []managedTemplateFileCheck      `json:"file_checks"`
+		Conflicts   []ManagedTemplateConflict       `json:"conflicts"`
+		Decisions   []managedTemplateDecision       `json:"decisions"`
 	}{
 		Feature: plan.Request.Feature, MetadataID: plan.metadataIdentity,
 		FeatureID: plan.featureIdentity, StateDigest: plan.StateBeforeDigest,
 		NewState: plan.NewState, Worktrees: plan.AffectedWorktrees,
 		Evidence: plan.WorktreeEvidence, Sources: plan.SourceEvidence,
+		Request: plan.Request, StateBefore: plan.StateBefore,
+		Checks: plan.fileChecks, Conflicts: plan.conflicts, Decisions: plan.decisions,
 	}
 	for _, removal := range plan.Removals {
-		doc.Removals = append(doc.Removals, ManagedTemplateRemoval{
+		doc.Removals = append(doc.Removals, removalFP{
 			Feature: removal.Feature, Role: removal.Role, Path: removal.Path, Kind: removal.Kind,
+			File: removal.fileBefore, Link: removal.linkBefore,
 		})
 	}
 	for _, write := range plan.Writes {
@@ -2561,7 +2686,24 @@ func ReplanManagedTemplate(plan *ManagedTemplatePlan) (*ManagedTemplatePlan, err
 	if plan == nil {
 		return nil, errors.New("managed template plan is nil")
 	}
-	return PlanManagedTemplate(plan.Request)
+	replanned, err := PlanManagedTemplate(plan.Request)
+	if err != nil {
+		return nil, err
+	}
+	if len(plan.decisions) > 0 {
+		if replanned.baseFingerprint != plan.baseFingerprint {
+			return nil, errors.New("managed template conflict evidence drifted after consent")
+		}
+		for _, decision := range plan.decisions {
+			if digestBytes(decision.data) != decision.SHA256 {
+				return nil, errors.New("accepted managed template content changed in memory")
+			}
+			if err := ResolveManagedTemplateConflict(replanned, decision.Role, decision.Path, decision.Action, decision.data); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return replanned, nil
 }
 
 func ResolveManagedTemplateOwnerWorkspace(metadataRoot, candidateRepo string) (Workspace, bool, error) {

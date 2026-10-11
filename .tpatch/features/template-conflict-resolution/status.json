@@ -2,16 +2,25 @@
   "id": "template-conflict-resolution",
   "slug": "template-conflict-resolution",
   "title": "When applying templates and files conflict, prompt the user in apt/dpkg style: keep existing, use new, show diff, or edit merged. Interactive conflict resolution for tws add --template and tws template sync when inject/ files differ from template files.",
-  "state": "requested",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-05-15T23:50:05Z",
-  "updated_at": "2026-05-15T23:50:05Z",
-  "last_command": "add",
-  "apply": {},
+  "updated_at": "2026-10-11T16:22:36Z",
+  "last_command": "record",
+  "notes": "landed at 2026-10-11T16:24:10Z",
+  "apply": {
+    "completed_at": "2026-10-11T16:15:54Z",
+    "base_commit": "9c634f2a0e8c9e89e620060ec24a6a1df736f446",
+    "has_patch": true
+  },
   "reconcile": {},
   "depends_on": [
     {
       "slug": "template-sync-existing",
+      "kind": "hard"
+    },
+    {
+      "slug": "named-feature-templates",
       "kind": "hard"
     }
   ]

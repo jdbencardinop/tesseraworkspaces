@@ -122,8 +122,9 @@ func TestSyncPlanDocs_FlagWorkflowSurfacesCarryAllFiveLiterals(t *testing.T) {
 // own rule: neither file may carry any of the five flag literals.
 //
 // Released safety features stay in the shipped list. Post-release
-// prioritization advances to role-aware templates after sync safety, injection
-// correctness, and scoped status ship; the negative flag-literal contract is unchanged.
+// prioritization advances to template conflict resolution after sync safety,
+// injection correctness, scoped status, and role-aware templates ship; the
+// negative flag-literal contract is unchanged.
 func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t *testing.T) {
 	literals := []string{"--plan", "--max-replay-per-entry", "--max-replay-total", "--approve-plan", "plan-guard:"}
 
@@ -154,9 +155,13 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 			t.Fatalf("docs/roadmap.md must order: shipped \"rebase plan guard\" (%d) before shipped \"safe reparent/restack\" (%d) before \"Current target:\" (%d) before the prioritized backlog heading (%d)", guardIdx, reparentIdx, targetIdx, backlogIdx)
 		}
 
-		targetTail := ci[targetIdx : targetIdx+min(80, len(ci)-targetIdx)]
-		if !strings.Contains(targetTail, "role-aware templates (issue #2)") {
-			t.Fatalf(`docs/roadmap.md's "Current target:" sentence must name role-aware templates (#2), got: %q`, targetTail)
+		targetTail := ci[targetIdx : targetIdx+min(120, len(ci)-targetIdx)]
+		if !strings.Contains(targetTail, "template-conflict-resolution") ||
+			!strings.Contains(targetTail, "implementation candidate") || !strings.Contains(targetTail, "not released") {
+			t.Fatalf(`docs/roadmap.md's "Current target:" sentence must name template-conflict-resolution as an unreleased implementation candidate, got: %q`, targetTail)
+		}
+		if strings.Contains(ci, "implementation has not started") || strings.Contains(targetTail, "planning only") {
+			t.Fatal("docs/roadmap.md must not describe the implemented candidate as planning only")
 		}
 		if !strings.Contains(normalizeProse(content), "ordinary sync safety (#4) is fully released and verified in v1.2.18-rc.2") {
 			t.Fatal("docs/roadmap.md must retain the verified ordinary-sync release milestone before advancing the target")
@@ -166,6 +171,12 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 		}
 		if !strings.Contains(normalizeProse(content), "scoped status projection (#3) is fully released and verified in v1.2.18-rc.4") {
 			t.Fatal("docs/roadmap.md must retain the verified scoped-status release milestone before advancing the target")
+		}
+		if !strings.Contains(normalizeProse(content), "role-aware templates (#2) are fully released and verified in v1.2.18-rc.5") {
+			t.Fatal("docs/roadmap.md must retain the verified role-aware template release milestone before advancing the target")
+		}
+		if !strings.Contains(normalizeProse(content), "issues #4, #1, #3, and #2 are closed after their verified releases") {
+			t.Fatal("docs/roadmap.md must distinguish the completed issue queue from the standalone conflict-resolution follow-up")
 		}
 		previous := backlogIdx
 		for _, issue := range []string{"[#4:", "[#1:", "[#3:", "[#2:"} {
@@ -222,9 +233,13 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 			t.Fatalf("docs/engineering-workflow.md must order: the shipped-slices heading (%d) before \"rebase plan guard\" (%d) before slice 13's \"safe reparent/restack\" (%d) before \"Next roadmap work:\" (%d)", shippedIdx, guardIdx, reparentIdx, nextFeatureIdx)
 		}
 
-		nextTail := ci[nextFeatureIdx : nextFeatureIdx+min(80, len(ci)-nextFeatureIdx)]
-		if !strings.Contains(nextTail, "role-aware templates (issue #2)") {
-			t.Fatalf(`docs/engineering-workflow.md's "Next roadmap work:" sentence must name role-aware templates (#2), got: %q`, nextTail)
+		nextTail := ci[nextFeatureIdx : nextFeatureIdx+min(120, len(ci)-nextFeatureIdx)]
+		if !strings.Contains(nextTail, "template-conflict-resolution") ||
+			!strings.Contains(nextTail, "implementation candidate") || !strings.Contains(nextTail, "not released") {
+			t.Fatalf(`docs/engineering-workflow.md's "Next roadmap work:" sentence must name template-conflict-resolution as an unreleased implementation candidate, got: %q`, nextTail)
+		}
+		if strings.Contains(ci, "implementation has not started") || strings.Contains(nextTail, "planning only") {
+			t.Fatal("docs/engineering-workflow.md must not describe the implemented candidate as planning only")
 		}
 		if !strings.Contains(normalizeProse(content), "ordinary sync safety (#4) is fully released and verified in v1.2.18-rc.2") {
 			t.Fatal("docs/engineering-workflow.md must retain the verified ordinary-sync release milestone before advancing the target")
@@ -234,6 +249,9 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 		}
 		if !strings.Contains(normalizeProse(content), "scoped status projection (#3) is fully released and verified in v1.2.18-rc.4") {
 			t.Fatal("docs/engineering-workflow.md must retain the verified scoped-status release milestone before advancing the target")
+		}
+		if !strings.Contains(normalizeProse(content), "role-aware templates (#2) are fully released and verified in v1.2.18-rc.5") {
+			t.Fatal("docs/engineering-workflow.md must retain the verified role-aware template release milestone before advancing the target")
 		}
 
 		assertNoFlagLiteral(t, "docs/engineering-workflow.md", content)

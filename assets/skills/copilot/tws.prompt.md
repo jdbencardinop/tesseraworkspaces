@@ -12,7 +12,7 @@ You are working in a project that uses `tws` for feature-scoped workspaces with 
 
 `tws` is a compiled Go binary on PATH. Invoke it directly:
 
-- `tws add <feature> [-n <branch>] [--open] [--template <dir-or-name>] [--worktree-template <ref>] [--orchestrator-template <ref>] [--agent claude|copilot]` — Create a legacy or managed feature
+- `tws add <feature> [-n <branch>] [--open] [--template <dir-or-name>] [--worktree-template <ref>] [--orchestrator-template <ref>] [--agent claude|copilot] [--resolve-conflicts]` — Create a legacy or managed feature
 - `tws new <feature> <branch> [--base <parent>] [--force]` — Create worktree branch
 - `tws open [feature] [branch] [--tmux] [--no-agent]` — Open worktree and run agent
 - `tws sync <feature> [--push] [--verbose] [--continue] [--abort] [--fetch|--no-fetch] [--full|--local-only] [--only <entry>|--from <entry>]` — Rebase worktrees in dependency order, optionally scoped
@@ -42,7 +42,7 @@ You are working in a project that uses `tws` for feature-scoped workspaces with 
 - `tws config show/set/get` — Manage configuration
 - `tws close <feature> <branch>` — Close a session: refuses while a direct record is live, then kills tmux
 - `tws template add/list/show/remove` — Manage global/per-repository named template packages
-- `tws template sync <feature> [--template <dir-or-name>] [--scope worktree|orchestrator|both] [--allow-managed-removal]` — Backfill legacy templates or refresh managed roles
+- `tws template sync <feature> [--template <dir-or-name>] [--scope worktree|orchestrator|both] [--resolve-conflicts] [--allow-managed-removal]` — Backfill legacy templates or refresh managed roles
 
 ## Stacked & Divergent Branches
 
@@ -104,8 +104,9 @@ frontmatter and feature-root `AGENTS.md`. Claude uses
 `inject/CLAUDE.local.md` and `CLAUDE.md`.
 
 `.tws-templates.json` is the only ownership authority. Same-content unmanaged
-files, modified owned files, symlinks, tracked destinations, and changed links
-must refuse; never recommend deleting state or forcing adoption. Obsolete
+files, symlinks, tracked destinations, and changed links must refuse;
+unacknowledged modified owned files refuse by default. Never recommend
+deleting state or forcing adoption. Obsolete
 unchanged owned files and links are listed exactly and require default-No
 `y`/`yes`, or `--allow-managed-removal` for unattended consent. The flag still
 prints the warning and never overrides a conflict.
@@ -131,6 +132,52 @@ successful ledger publication and revalidation; failures retain and report
 exact paths, and retries fail closed. This is not multi-file atomic and cannot
 capture later writes through an already-open descriptor after final
 verification.
+
+### Explicit text conflict review — implementation candidate, not released
+
+Only managed add/template sync supports `--resolve-conflicts`. It is not a
+managed selector or legacy migration. The terminal menu offers
+keep/replace/diff/edit/cancel (`k/r/d/e/c`), default cancel, only for
+ledger-owned regular UTF-8/no-NUL text with unchanged permissions. Binary or
+permission conflicts, unmanaged files, symlinks/parents, missing sources,
+tracked injection collisions, invalid metadata, changed identities, and
+pending recovery remain hard refusals.
+
+Keep/edit remembers effective local ownership separately from the incoming
+rendered proposal. Ordinary repeat sync preserves unchanged overrides
+noninteractively. Changed incoming bytes/mode, source/renderer selection, or
+later unacknowledged local edits need a new decision. Explicit review also
+includes unchanged overrides and requires a real terminal: piped answers or
+keep-all/replace-all are not consent. Replace clears one; results equal to
+incoming are canonical. Missing or obsolete customized files refuse, including
+with `--allow-managed-removal` or `--force`; customized deletion is excluded.
+
+Diff shows final rendered native/manifest output, two-way and unpaged with
+escaped controls; no external diff/textconv/drivers or three-way base is used.
+Edit starts from current bytes in private staging outside feature/worktree/registry
+roots, with a separate incoming reference. Editor precedence: `VISUAL`,
+`EDITOR`, `vi`, quoted argv without shell expansion. GUI editors must wait
+(`code --wait`). Exit is not acceptance; preview needs explicit default-No
+consent. Editor/validation errors retain edits and report the scratch path.
+Copilot kept/edited native worktree content requires valid `applyTo`
+frontmatter; accepted bytes are never silently rerendered.
+
+First noncanonical keep/edit warns and writes v2 ownership.
+**v1.2.18-rc.5 refuses v2 in managed-state readers/writers**, potentially
+including workspace owner discovery. This is not a universal disable switch:
+rc.5 checkout `tws new` may still create logical branch/stack metadata without
+reading the ledger, leaving template bytes and acknowledgements unchanged.
+Use the newer CLI consistently; no eager v1 conversion or automatic downgrade,
+even after clearing all overrides. Do not strip metadata. All managed batch
+preflight and choices finish before effects, with separate ordinary-removal
+consent afterward and no writer lock while prompting/editing. Cancellation
+applies nothing; later errors retain per-feature progress/recovery and do not
+promise cross-feature atomicity.
+
+Known inherited limitation: materialized external feature rename can leave
+stale Git backpointers ([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)).
+This candidate preserves acknowledgements during metadata moves but does not
+repair that Git behavior.
 
 ## Decisions
 

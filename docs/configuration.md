@@ -100,6 +100,68 @@ inject files or orchestrator-only managed updates. `tws inject ... --into .`
 explicitly overrides a configured non-root target for that invocation; an
 explicit non-root `--into` does not.
 
+### Managed conflict decisions (implementation candidate, not released)
+
+`tws add <feature> --resolve-conflicts` and
+`tws template sync <feature>|--all --resolve-conflicts` explicitly review
+selected ledger-owned regular UTF-8/no-NUL text. There is no configuration key
+for an automatic or unattended conflict policy: the flag is not a managed
+selector, does not migrate legacy features, and cannot accompany directory
+templates. Permission drift, unmanaged files, symlinks, tracked injection
+collisions, missing sources, invalid identities/metadata, and pending recovery
+remain hard refusals.
+
+The terminal menu offers keep/replace/diff/edit/cancel and defaults to cancel.
+Keep/edit acknowledges only the effective bytes/mode and the current rendered
+incoming proposal, bound to the saved source/role/path/renderer. An ordinary
+repeat with unchanged evidence preserves it noninteractively. Changed incoming
+bytes/mode or selection, or an unacknowledged local edit, needs another
+decision. Explicit review with the flag includes unchanged overrides and
+requires a real terminal; piped answers are not consent. Replace clears an
+override; accepted bytes equal to incoming are canonical.
+
+The first noncanonical keep/edit upgrades `.tws-templates.json` to **v2** after
+a warning. v1 is still readable without eager conversion; v2 remains v2 after
+the last override is cleared. **v1.2.18-rc.5 refuses v2 in managed-state
+readers/writers** instead of ignoring decisions and may refuse workspace owner
+discovery while scanning another feature. This is not a universal disable
+switch: rc.5 checkout `tws new` may still create logical branch/stack metadata
+without reading the ledger, leaving template bytes and acknowledgements
+unchanged. Use the newer CLI consistently throughout an affected workspace.
+There is no downgrade or metadata-stripping command.
+
+Editor environment precedence is nonempty `VISUAL`, then `EDITOR`, then `vi`.
+Commands support quoted arguments but no shell interpolation, expansion,
+pipelines, or evaluation; the absolute staged path is passed separately.
+
+```sh
+VISUAL='code --wait' tws template sync auth --resolve-conflicts
+```
+
+GUI editors must wait for completion. Staging uses `TMPDIR` (or the platform
+temporary base), and refuses a base inside feature, worktree, or registry
+roots, including physical case aliases. Directories are 0700 and files 0600;
+safe regular atomic saves are
+accepted, symlinks/hardlinks and changed parents are not. A separate snapshot
+contains the final rendered incoming bytes. Diff is two-way, plain/unpaged,
+escapes terminal controls, and runs no external diff/textconv/drivers.
+Edited output is previewed and requires default-No acceptance; editor exit
+alone is not consent. Editor/validation failures preserve scratch edits and
+report their location. Native Copilot worktree content must retain valid
+`applyTo` frontmatter; accepted bytes are never silently rewritten.
+
+Missing or obsolete customized files are preserved/refused, never recreated
+or deleted to discard a decision. `--allow-managed-removal` remains separate
+consent for exact listed ordinary unchanged obsolete paths, not a conflict
+policy. All managed preflight and decisions precede any mixed-batch effects,
+without holding writer reservations during prompts. Failures after execution
+retain per-feature progress and recovery, not all-file/cross-feature atomicity.
+
+Known inherited limitation: materialized external feature rename can leave
+stale Git backpointers ([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)).
+Acknowledgements survive metadata moves, but this candidate does not repair
+that Git behavior or make them portable in exports.
+
 Each key is the absolute path to a git repository. The value is the workspace root where features and worktrees are stored for that repo.
 
 If no entry exists for the current repo, tesseraworkspaces defaults to a sibling directory named `<repo>.tws/` next to the repo.

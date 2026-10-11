@@ -53,8 +53,9 @@ implementations.
 
 Each feature persists resolved role origins, agents, regular-file
 hashes/modes, and owned external links in `.tws-templates.json`. Never tell an
-operator to delete that state or adopt a same-content file. Modified,
-unmanaged, symlinked, or tracked destinations are hard conflicts. Eligible
+operator to delete that state or adopt a same-content file. Unacknowledged
+modified content refuses by default; unmanaged, symlinked, or tracked
+destinations are hard conflicts. Eligible
 unchanged removals are listed exactly and require default-No `y`/`yes`
 confirmation. `--allow-managed-removal` is narrow unattended consent; it still
 prints the warning and cannot override a conflict.
@@ -78,6 +79,49 @@ cleaned only after successful ledger publication; failures retain and report
 them, and retries refuse. Do not describe this as multi-file atomicity or as
 protecting writes made later through an already-open descriptor after final
 verification.
+
+**Conflict resolution (implementation candidate, not released):**
+`tws template sync <feature>|--all --resolve-conflicts` or managed
+`tws add <feature> --resolve-conflicts` offers keep/replace/diff/edit/cancel
+(`k/r/d/e/c`), default cancel. The flag is not a managed selector and cannot
+edit legacy templates. Resolve only ledger-owned regular UTF-8/no-NUL text
+with unchanged permissions. Unmanaged collisions, symlinks/parents, changed
+worktree/link identities, tracked paths, missing sources, and pending recovery
+remain hard refusals.
+
+Keep/edit saves effective local bytes separately from the incoming rendered
+proposal. Ordinary unchanged repeat sync preserves the acknowledgement;
+changed incoming bytes/mode, source/renderer selection, or unacknowledged
+local edits needs a new decision. Explicit review includes unchanged overrides
+and requires a terminal; never pipe consent or automate keep-all/replace-all.
+Replace clears an override; an output equal to incoming is canonical.
+Missing or obsolete customizations refuse, even with removal consent or force.
+
+Diff is plain/unpaged two-way output with escaped controls and no external
+diff/textconv/drivers. Edit uses private staging outside feature/worktree/registry
+roots, not live assets, plus a rendered incoming reference. Editor selection
+is `VISUAL`, then `EDITOR`, then `vi`, using quoted argv without a shell.
+Use `code --wait` for a waiting GUI editor. Exit is not consent: preview
+requires default-No acceptance. Failures retain scratch edits at the reported
+path. Kept/edited Copilot worktree instructions need valid `applyTo`
+frontmatter; never silently rewrite accepted content.
+
+First noncanonical keep/edit warns and saves v2 ownership.
+**v1.2.18-rc.5 refuses v2 in managed-state readers/writers**, potentially
+including workspace owner discovery. This is not a universal disable switch:
+rc.5 checkout `tws new` may still create logical branch/stack metadata without
+reading the ledger, leaving template bytes and acknowledgements unchanged.
+Use the newer CLI consistently; no eager v1 conversion or automatic downgrade
+is provided. Entire managed batches finish hard preflight and choices before
+effects, then confirm ordinary unchanged removals separately. Hold no writer
+lock during human/editor interaction. Cancellation leaves every feature,
+legacy member, and add branch/session untouched; later failures retain
+per-feature progress/recovery rather than cross-feature atomicity.
+
+Known inherited limitation: materialized external feature rename can leave
+stale Git backpointers ([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)).
+This candidate preserves acknowledgements during metadata moves but does not
+repair that Git behavior.
 
 ### Communicate with worktree agents
 ```sh

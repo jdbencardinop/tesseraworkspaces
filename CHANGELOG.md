@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+- **Managed template conflict resolution (implementation candidate, not released)**
+  — managed `tws add` and `tws template sync` accept explicit
+  `--resolve-conflicts` for ledger-owned regular UTF-8/no-NUL text with
+  unchanged permissions. The terminal-only keep/replace/diff/edit/cancel menu
+  defaults to cancel. Two-way diff uses final rendered incoming bytes with escaped
+  controls, no pager, external diff, textconv, or repository drivers.
+  Editing uses private staging outside feature/worktree/registry roots,
+  `VISUAL` → `EDITOR` → `vi` quoted argv without shell interpretation, and
+  a separate default-No acceptance after preview; GUI editors must wait, e.g.
+  `code --wait`. Editor/validation failures retain scratch edits with their
+  location. Kept/edited native Copilot worktree content requires valid
+  `applyTo` frontmatter and is never silently rewritten.
+  Keep/edit persists effective ownership separately from the acknowledged
+  incoming proposal. Ordinary repeat sync preserves matching decisions;
+  changed incoming bytes/mode, selection, or unacknowledged local edits need
+  another decision. Explicit review also includes unchanged overrides;
+  replace clears one and equal-to-incoming outcomes are canonical.
+  The first noncanonical decision upgrades ownership to v2 after warning:
+  **v1.2.18-rc.5 refuses v2 in managed-state readers/writers**, potentially
+  including workspace owner discovery. This is not a universal disable switch:
+  rc.5 checkout `tws new` may still create logical branch/stack metadata without
+  reading the ledger, leaving template bytes and acknowledgements unchanged.
+  Use the newer CLI consistently; v1 is not eagerly converted and v2 never
+  automatically downgrades. Missing/obsolete customized files refuse even with
+  `--allow-managed-removal` or `--force`. Legacy copying, unmanaged/symlink,
+  permission/tracking/identity, and recovery refusals remain protected; the
+  flag is not a managed selector and piped/unattended decisions are unsupported.
+  Every managed batch preflight and decision precedes any managed/legacy/add
+  branch/session effects, followed by separate ordinary-removal consent.
+  Decisions survive evidence-bound locked replanning; unwritten kept and
+  already-equal files are checked before state publication and cleanup.
+  Existing preserve-before-mutate recovery remains per-feature, not all-file
+  or cross-feature atomicity. Lifecycle/context paths retain strict effective
+  ownership and never launch a resolver. The inherited materialized external
+  feature-rename defect can leave stale Git backpointers
+  ([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)); this
+  candidate preserves acknowledgements but does not repair that Git behavior.
 - **Named, role-aware managed templates** — `tws template add/list/show/remove`
   now manages independent global and per-repository package copies outside the
   legacy templates directory. `tws add` and `tws template sync` accept named

@@ -421,7 +421,8 @@ tws template sync auth --allow-managed-removal
 ```
 
 Managed files are owned only through feature-local `.tws-templates.json`.
-Matching bytes are not ownership. Modified owned files, unmanaged files or
+Matching bytes are not ownership. Unacknowledged modified owned files refuse
+by default. Unmanaged files or
 symlinks, tracked worktree paths, recreated same-target links, changed
 worktree identities, and corrupt link mappings always refuse.
 Eligible unchanged removals print every exact path and ask default-No; only
@@ -451,6 +452,53 @@ copies are cleaned only after successful ledger publication; failures retain
 and report them, and retries fail closed. This provides no multi-file
 atomicity and cannot capture later writes through an already-open descriptor
 after final verification.
+
+### Managed text resolution — implementation candidate, not released
+
+```sh
+tws template sync auth --resolve-conflicts
+tws template sync auth --scope worktree --resolve-conflicts
+tws add auth --resolve-conflicts       # existing managed selection only
+VISUAL='code --wait' tws template sync auth --resolve-conflicts
+```
+
+- Only ledger-owned regular UTF-8/no-NUL text with unchanged permissions can
+  be resolved. No legacy editor, unmanaged adoption, symlink following,
+  binary/permission conflict override, or recovery bypass.
+- Choices: `keep`/`replace`/`diff`/`edit`/`cancel` (`k/r/d/e/c`); empty input
+  cancels. Two-way diff compares **rendered incoming** bytes, including native and
+  manifest output, with escaped controls and no pager/external diff/textconv.
+- Keep/edit remembers the current local bytes and incoming proposal
+  separately. Repeat ordinary sync preserves an unchanged override. Changed
+  incoming bytes/mode, source/renderer, or later local edits need a new decision.
+  Explicit `--resolve-conflicts` also reviews unchanged overrides; replace
+  clears one, and results equal to incoming are canonical.
+- New decisions require a real terminal; pipes and keep-all/replace-all are
+  not consent. The flag alone never selects managed roles or migrates legacy.
+- Editor: `VISUAL`, then `EDITOR`, then `vi`, with quoted argv but no shell
+  expansion. Use a waiting GUI editor such as `code --wait`. Edit private
+  staging outside feature/worktree/registry roots, not live files; exit is not
+  acceptance. Previewed output requires default-No `y`/`yes`. Failures retain
+  scratch edits and name their path. Copilot worktree edits/keeps require valid
+  `applyTo` frontmatter and are not silently rerendered.
+- First noncanonical keep/edit saves **v2** ownership after warning. Released
+  **v1.2.18-rc.5 refuses v2 in managed-state readers/writers**; workspace owner
+  discovery may also fail. This is not a universal disable switch: rc.5 checkout
+  `tws new` may still create logical branch/stack metadata without reading the
+  ledger, leaving template bytes and acknowledgements unchanged. Use the newer
+  CLI consistently. No eager v1 conversion or automatic downgrade.
+- Missing/obsolete customized files always refuse. `--allow-managed-removal`
+  only approves separately listed ordinary unchanged removals, not customized
+  deletion or text choices; add's `--force` does not bypass this.
+- Mixed batches preflight all managed targets and collect every decision
+  before managed or legacy effects. Cancellation/declined removal applies
+  nothing. Later failures retain per-feature progress/recovery; there is no
+  cross-feature atomicity.
+
+Known inherited limitation: materialized external feature rename can leave
+stale Git backpointers ([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)).
+This candidate preserves acknowledgements during metadata moves, not a repair
+of that Git behavior.
 
 ## Configuration
 

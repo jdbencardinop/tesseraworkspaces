@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "feature": "template-conflict-resolution",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_efdcd421a40a",
+      "kind": "record",
+      "patch_sha256": "b5fca1d3828686ce0d6529a086fa8ee13f7516cffc04baa218b57d683fa58992",
+      "git_patch_id": "0d5762bf344147b1cd161c28026d0e476adaabd4",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "eb072fc58fec9fb9182b692ac7370935af0d8890420e107bb9ea05716561b131",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "",
+      "base_commit": "9c634f2a0e8c9e89e620060ec24a6a1df736f446",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [
+          "CHANGELOG.md",
+          "README.md",
+          "assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md",
+          "assets/skills/claude/tesseraworkspaces/SKILL.md",
+          "assets/skills/copilot/tws.prompt.md",
+          "docs/cheatsheet.md",
+          "docs/configuration.md",
+          "docs/engineering-workflow.md",
+          "docs/roadmap.md",
+          "internal/cli/add.go",
+          "internal/cli/managed_template.go",
+          "internal/cli/managed_template_conflict.go",
+          "internal/cli/managed_template_editor_unix.go",
+          "internal/cli/named_template_conflict_docs_test.go",
+          "internal/cli/named_template_conflict_lifecycle_test.go",
+          "internal/cli/named_template_conflict_phase_test.go",
+          "internal/cli/named_template_conflict_revision_test.go",
+          "internal/cli/named_template_conflict_test.go",
+          "internal/cli/named_template_final_regression_test.go",
+          "internal/cli/named_template_test.go",
+          "internal/cli/sync_plan_docs_test.go",
+          "internal/cli/template.go",
+          "internal/template_conflict.go",
+          "internal/template_conflict_fs_unix.go",
+          "internal/template_conflict_revision_test.go",
+          "internal/template_conflict_test.go",
+          "internal/template_managed.go",
+          "internal/template_preserve.go"
+        ],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "CHANGELOG.md",
+        "README.md",
+        "assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md",
+        "assets/skills/claude/tesseraworkspaces/SKILL.md",
+        "assets/skills/copilot/tws.prompt.md",
+        "docs/cheatsheet.md",
+        "docs/configuration.md",
+        "docs/engineering-workflow.md",
+        "docs/roadmap.md",
+        "internal/cli/add.go",
+        "internal/cli/managed_template.go",
+        "internal/cli/managed_template_conflict.go",
+        "internal/cli/managed_template_editor_unix.go",
+        "internal/cli/named_template_conflict_docs_test.go",
+        "internal/cli/named_template_conflict_lifecycle_test.go",
+        "internal/cli/named_template_conflict_phase_test.go",
+        "internal/cli/named_template_conflict_revision_test.go",
+        "internal/cli/named_template_conflict_test.go",
+        "internal/cli/named_template_final_regression_test.go",
+        "internal/cli/named_template_test.go",
+        "internal/cli/sync_plan_docs_test.go",
+        "internal/cli/template.go",
+        "internal/template_conflict.go",
+        "internal/template_conflict_fs_unix.go",
+        "internal/template_conflict_revision_test.go",
+        "internal/template_conflict_test.go",
+        "internal/template_managed.go",
+        "internal/template_preserve.go"
+      ],
+      "dependencies": [
+        {
+          "slug": "named-feature-templates",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "23aac2724ac59b4ebcc3fa50c9c20c1a02be11857e42c1ab8d60b5b89a076212",
+          "parent_recipe_sha256": "997bd1273f33537ca90e3fcfcae43eddcb342d8db664dd8a2f3c7ae7316c2370"
+        },
+        {
+          "slug": "template-sync-existing",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 0,
+          "parent_patch_sha256": ""
+        }
+      ],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}

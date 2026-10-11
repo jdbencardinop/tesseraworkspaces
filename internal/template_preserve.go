@@ -87,18 +87,19 @@ type managedPrivateMetadata struct {
 }
 
 type managedRecoveryRoot struct {
-	displayPath  string
-	root         *os.Root
-	rootIdentity managedObjectIdentity
-	feature      string
-	opDir        string
-	journal      string
-	journalFile  managedPrivateMetadata
-	preserved    []managedPreservedObject
-	staged       []managedStagedObject
-	intentFiles  []managedPrivateMetadata
-	nextIntent   int
-	cleaned      bool
+	displayPath       string
+	root              *os.Root
+	rootIdentity      managedObjectIdentity
+	feature           string
+	opDir             string
+	journal           string
+	journalFile       managedPrivateMetadata
+	preserved         []managedPreservedObject
+	staged            []managedStagedObject
+	intentFiles       []managedPrivateMetadata
+	nextIntent        int
+	cleaned           bool
+	validateUnwritten func() error
 }
 
 func managedRecoveryResidue(rootPath string) (string, error) {
@@ -579,6 +580,11 @@ func (tx *managedRecoveryRoot) publish(staged managedStagedObject, destination s
 	if err := tx.recordIntent(intent); err != nil {
 		return err
 	}
+	if destination == managedTemplateStateName && tx.validateUnwritten != nil {
+		if err := tx.validateUnwritten(); err != nil {
+			return err
+		}
+	}
 	sourceParentPath := filepath.Dir(staged.path)
 	sourceParent, _, err := managedOpenPinnedDirectory(tx.root, sourceParentPath, false)
 	if err != nil {
@@ -617,6 +623,11 @@ func (tx *managedRecoveryRoot) preserveFile(destination string, expected managed
 		PrivatePath: recovery, Kind: "file", ExpectedFile: &expected,
 	}); err != nil {
 		return err
+	}
+	if destination == managedTemplateStateName && tx.validateUnwritten != nil {
+		if err := tx.validateUnwritten(); err != nil {
+			return err
+		}
 	}
 	if err := managedRenameNoReplace(tx.root, destination, recovery); err != nil {
 		return err
@@ -723,6 +734,11 @@ func (tx *managedRecoveryRoot) preflightCleanup() error {
 					filepath.Join(tx.displayPath, preserved.recovery), err)
 			}
 		}
+		if tx.validateUnwritten != nil {
+			if err := tx.validateUnwritten(); err != nil {
+				return err
+			}
+		}
 	}
 	for _, preserved := range tx.preserved {
 		if preserved.kind == "file" {
@@ -810,6 +826,11 @@ func (tx *managedRecoveryRoot) preflightCleanup() error {
 }
 
 func (tx *managedRecoveryRoot) cleanupVerified() error {
+	if tx.validateUnwritten != nil {
+		if err := tx.validateUnwritten(); err != nil {
+			return err
+		}
+	}
 	for _, preserved := range tx.preserved {
 		intent := managedPendingIntent{
 			Effect: "cleanup-private", OriginalPath: preserved.active,
@@ -908,6 +929,11 @@ func (tx *managedRecoveryRoot) removeVerifiedPrivate(
 	expectedFile managedFileObservation,
 	expectedLink managedLinkObservation,
 ) error {
+	if tx.validateUnwritten != nil {
+		if err := tx.validateUnwritten(); err != nil {
+			return err
+		}
+	}
 	if kind == "file" {
 		got, err := observeManagedFileRoot(tx.root, path)
 		if err != nil {
@@ -931,6 +957,11 @@ func (tx *managedRecoveryRoot) removeVerifiedPrivate(
 }
 
 func (tx *managedRecoveryRoot) removeVerifiedMetadata(metadata managedPrivateMetadata) error {
+	if tx.validateUnwritten != nil {
+		if err := tx.validateUnwritten(); err != nil {
+			return err
+		}
+	}
 	got, err := observeManagedFileRoot(tx.root, metadata.path)
 	if err != nil {
 		return err
@@ -1012,13 +1043,13 @@ func observeManagedFileRoot(root *os.Root, relative string) (managedFileObservat
 		return managedFileObservation{}, err
 	}
 	if beforeIdentity != identity || afterIdentity != identity ||
-		before.Mode().Perm() != after.Mode().Perm() ||
+		before.Mode() != after.Mode() ||
 		before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
 		return managedFileObservation{}, errors.New("regular file changed while hashing")
 	}
 	return managedFileObservation{
 		Exists: true, Kind: "file", Hash: digestBytes(data),
-		Mode: uint32(before.Mode().Perm()), Device: identity.Device, Inode: identity.Inode,
+		Mode: managedObservedPermissionMode(before.Mode()), Device: identity.Device, Inode: identity.Inode,
 	}, nil
 }
 
@@ -1086,6 +1117,9 @@ func applyManagedTemplatePlanPreserved(plan *ManagedTemplatePlan) (retErr error)
 		if err != nil {
 			return err
 		}
+		featureTx.validateUnwritten = func() error {
+			return revalidateManagedTemplateFileChecks(plan, featureRoot, true)
+		}
 	}
 	worktreeTx := make(map[string]*managedRecoveryRoot)
 	for path, paths := range worktreePaths {
@@ -1106,6 +1140,9 @@ func applyManagedTemplatePlanPreserved(plan *ManagedTemplatePlan) (retErr error)
 			return managedPendingApplyError(txErr, featureTx, worktreeTx)
 		}
 		worktreeTx[path] = tx
+		tx.validateUnwritten = func() error {
+			return revalidateManagedTemplateFileChecks(plan, featureRoot, true)
+		}
 	}
 	defer func() {
 		for _, tx := range worktreeTx {
@@ -1254,6 +1291,11 @@ func applyManagedTemplatePlanPreserved(plan *ManagedTemplatePlan) (retErr error)
 					featureTx, worktreeTx)
 			}
 		}
+		if err := revalidateManagedTemplateFileChecks(plan, featureRoot, true); err != nil {
+			return managedPendingApplyError(managedTemplateProgressError(completed, totalEffects,
+				fmt.Errorf("unwritten managed content changed before ledger publication: %w", err)),
+				featureTx, worktreeTx)
+		}
 		if err := revalidateManagedOwnedLinks(plan); err != nil {
 			return managedPendingApplyError(managedTemplateProgressError(completed, totalEffects,
 				fmt.Errorf("managed link ownership changed before ledger publication: %w", err)),
@@ -1321,6 +1363,15 @@ func applyManagedTemplatePlanPreserved(plan *ManagedTemplatePlan) (retErr error)
 }
 
 func revalidateManagedOwnedLinks(plan *ManagedTemplatePlan) error {
+	worktreeSelected := false
+	for _, role := range plan.Request.Roles {
+		worktreeSelected = worktreeSelected || role == ManagedTemplateRoleWorktree
+	}
+	if !worktreeSelected {
+		// An unselected role is copied verbatim, not re-adopted. Its worktrees
+		// intentionally have no observations in an orchestrator-only plan.
+		return nil
+	}
 	role, ok := plan.NewState.Roles[string(ManagedTemplateRoleWorktree)]
 	if !ok || len(role.Links) == 0 {
 		return nil

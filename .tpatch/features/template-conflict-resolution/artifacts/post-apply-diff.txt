@@ -1,0 +1,18 @@
+ CHANGELOG.md                                       |  37 +++++
+ README.md                                          |  80 +++++++++-
+ .../claude/tesseraworkspaces-orchestrator/SKILL.md |  48 +++++-
+ assets/skills/claude/tesseraworkspaces/SKILL.md    |  45 +++++-
+ assets/skills/copilot/tws.prompt.md                |  55 ++++++-
+ docs/cheatsheet.md                                 |  50 +++++-
+ docs/configuration.md                              |  62 ++++++++
+ docs/engineering-workflow.md                       |  59 +++++--
+ docs/roadmap.md                                    |  82 +++++++---
+ internal/cli/add.go                                |  25 ++-
+ internal/cli/managed_template.go                   |  41 +++--
+ .../cli/named_template_final_regression_test.go    |   4 +-
+ internal/cli/named_template_test.go                |   9 +-
+ internal/cli/sync_plan_docs_test.go                |  34 +++-
+ internal/cli/template.go                           |  37 ++++-
+ internal/template_managed.go                       | 176 +++++++++++++++++++--
+ internal/template_preserve.go                      |  79 +++++++--
+ 17 files changed, 801 insertions(+), 122 deletions(-)

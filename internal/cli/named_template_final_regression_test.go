@@ -162,8 +162,8 @@ func TestManagedTemplateOwningConfigFlowsToLaunchAndInjection(t *testing.T) {
 		}
 		text := string(data)
 		if !strings.Contains(text, "tmux new-session") ||
-			!strings.Contains(text, "tmux send-keys") ||
-			!strings.Contains(text, "claude") || strings.Contains(text, "copilot") {
+			!strings.Contains(text, "tmux send-keys -t config-tmux-entry claude Enter") ||
+			strings.Contains(text, "tmux send-keys -t config-tmux-entry copilot") {
 			t.Fatalf("managed tmux launch used secondary config:\n%s", text)
 		}
 	})
