@@ -84,11 +84,13 @@ Shipped foundations:
   reconstructs only the matching recovery reservation. v1.2.16 only fails closed for same-feature sync after envelope
   birth; do not use an older tws while any reparent is active or recoverable.
 
-Current target: **template-conflict-resolution** (implementation candidate, not released) — explicit
-interactive choices for managed-owned regular text files, remembered keep/edit
-decisions, and two-way diff/staged editing are implemented for review.
-Full validation, independent terminal/downgrade smoke, record/replay, and
-single-feature landing remain required; publication is not authorized.
+Current target: **external feature rename (#5)** (not started) — repair stale
+Git worktree backpointers after moving a feature with materialized worktrees.
+This is a separate backlog boundary; analysis and implementation require
+their own approval.
+Template conflict resolution is fully released and verified in
+`v1.2.18-rc.6` at `5b531a8`: explicit interactive choices for managed-owned
+regular text files, remembered keep/edit decisions, and two-way staged editing.
 Role-aware templates (#2) are fully released and verified in `v1.2.18-rc.5` at
 `9c634f2`: independent worktree/orchestrator selections, global/per-repository
 defaults, scoped synchronization, native agent guidance, and ownership-tracked
@@ -98,12 +100,13 @@ the requested feature plus shared workspace evidence, with bounded probes and
 the existing versioned schema. Ordinary sync safety (#4) is fully released and
 verified in `v1.2.18-rc.2`. Slash-containing worktree injection (#1) is fully
 released and verified in `v1.2.18-rc.3`, including verified external worktree
-discovery and explicit checkout injection refusal. All four milestones have
+discovery and explicit checkout injection refusal. All five milestones have
 successful main/tag CI.
 
 The approved delivery order **#4, #1, #3, #2** is complete. Keep each existing
 tpatch feature as its own implementation boundary; the mapping below records
-the delivered queue and its separate follow-up, not permission to combine
+the delivered queue, the separate template follow-up, and the next repair,
+not permission to combine
 unrelated fixes. Lane B runtime-boundary
 coordination is complete; its remaining provider PRDs do not block this
 tws-local template feature.
@@ -150,7 +153,8 @@ For decoupled names, `StackEntry.Name` identifies the tws worktree while `StackE
 | 2 | Shipped: v1.2.18-rc.3 | [#1: slash-containing worktree injection](https://github.com/jdbencardinop/tesseraworkspaces/issues/1) | [`fix-inject-slash-worktree-discovery`](../.tpatch/features/fix-inject-slash-worktree-discovery/request.md) |
 | 3 | Shipped: v1.2.18-rc.4 | [#3: avoid building unrelated feature status](https://github.com/jdbencardinop/tesseraworkspaces/issues/3) | [`scoped-status-projection`](../.tpatch/features/scoped-status-projection/request.md) |
 | 4 | Shipped: v1.2.18-rc.5 | [#2: role-aware templates](https://github.com/jdbencardinop/tesseraworkspaces/issues/2) | [`named-feature-templates`](../.tpatch/features/named-feature-templates/request.md) |
-| 5 | Current: P2 implementation candidate, not released | Standalone follow-up; #2 is complete | [`template-conflict-resolution`](../.tpatch/features/template-conflict-resolution/request.md) |
+| 5 | Shipped: v1.2.18-rc.6 | Standalone follow-up; #2 is complete | [`template-conflict-resolution`](../.tpatch/features/template-conflict-resolution/request.md) |
+| 6 | Next: planning not started | [#5: external feature rename backpointers](https://github.com/jdbencardinop/tesseraworkspaces/issues/5) | New, separate repair boundary; not registered yet |
 
 Issues #4, #1, #3, and #2 are closed after their verified releases.
 [`named-feature-templates`](../.tpatch/features/named-feature-templates/request.md)
@@ -161,19 +165,22 @@ Legacy directory-based templates retain copy-if-missing behavior; named
 templates or role flags opt into managed updates. Save each feature's role
 selections so later default changes do not silently retarget it.
 
-The released managed contract refuses unmanaged files or symlinks and modified owned
-files. Obsolete, unchanged owned files may be removed only after an exact-path
+Managed updates refuse unmanaged files or symlinks. Modified owned content
+still refuses by default unless eligible for explicit text conflict resolution.
+Obsolete, unchanged owned files may be removed only after an exact-path
 warning and default-No confirmation, or explicit unattended consent;
 declining leaves the update unapplied. This narrow deletion consent belongs
 to the shipped managed template contract.
 
-The current implementation candidate is the separate
+The separate
 [`template-conflict-resolution`](../.tpatch/features/template-conflict-resolution/request.md)
-keep/replace/diff/edit slice. Its
+keep/replace/diff/edit slice shipped in
+[v1.2.18-rc.6](https://github.com/jdbencardinop/tesseraworkspaces/releases/tag/v1.2.18-rc.6).
+Its
 [analysis](../.tpatch/features/template-conflict-resolution/analysis.md),
 [specification](../.tpatch/features/template-conflict-resolution/spec.md), and
 [exploration](../.tpatch/features/template-conflict-resolution/exploration.md)
-remain the approved contract, not a release claim. The candidate adds explicit
+remain the approved implementation contract. The release adds explicit
 interactive opt-in for managed-owned regular text files only, remembering
 keep/edit until the incoming rendered proposal or source/renderer selection
 changes; later unacknowledged local edits still need a new decision. Explicit
@@ -199,7 +206,7 @@ or changes to Git mutation safety.
 
 Known inherited limitation, separately tracked by user request:
 [#5 — materialized external feature rename leaves stale Git backpointers](https://github.com/jdbencardinop/tesseraworkspaces/issues/5).
-The conflict-resolution candidate preserves acknowledgements during feature
+The released conflict resolver preserves acknowledgements during feature
 metadata moves but does not repair that Git behavior. Keep this open follow-up
 separate from the completed #4, #1, #3, #2 delivery queue.
 
@@ -212,7 +219,7 @@ follow-up does not displace the issue queue above.
 ## Agent integration — P2
 
 - **Named feature templates (shipped: v1.2.18-rc.5)**: manage a global/per-repo template registry with `add`, `list`, `show`, and `remove`. Independently select and persist worktree and orchestrator roles, with defaults for unconfigured roles and role-scoped sync. A template contains `feature/` assets for the feature root and `inject/` assets for the worktree injection source. Render native agent guidance and optional skill references without copying canonical skill bodies. Track ownership, refuse conflicts, and require consent before removing unchanged owned files; retain legacy directory-template behavior.
-- **Template conflict resolution (implementation candidate, not released)**: managed-owned text only, explicit terminal keep/replace/diff/edit/cancel, remembered local overrides, v2 metadata when needed, and staged two-way editing with separate acceptance. Review and release gates remain outstanding. Legacy copying and ownership/recovery protections remain unchanged; customized-file deletion and automatic three-way merging are excluded.
+- **Template conflict resolution (released in v1.2.18-rc.6)**: managed-owned text only, explicit terminal keep/replace/diff/edit/cancel, remembered local overrides, v2 metadata when needed, and staged two-way editing with separate acceptance. Ubuntu/macOS main and tag CI are verified. Legacy copying and ownership/recovery protections remain unchanged; customized-file deletion and automatic three-way merging are excluded.
 - **Agent-aware context files**: map local instructions to conventions understood by Claude, Copilot, Codex, and other configured agents.
 - **Copilot and Codex hooks**: install supported decision-reading integrations or warn clearly when the configured agent has no hook adapter.
 - **Explicit decision acknowledgement**: allow feature-root orchestration with `tws decisions ack --branch <name>`.

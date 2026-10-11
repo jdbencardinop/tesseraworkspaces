@@ -453,7 +453,7 @@ and report them, and retries fail closed. This provides no multi-file
 atomicity and cannot capture later writes through an already-open descriptor
 after final verification.
 
-### Managed text resolution — implementation candidate, not released
+### Managed text resolution — released in v1.2.18-rc.6
 
 ```sh
 tws template sync auth --resolve-conflicts
@@ -497,7 +497,7 @@ VISUAL='code --wait' tws template sync auth --resolve-conflicts
 
 Known inherited limitation: materialized external feature rename can leave
 stale Git backpointers ([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)).
-This candidate preserves acknowledgements during metadata moves, not a repair
+This release preserves acknowledgements during metadata moves, not a repair
 of that Git behavior.
 
 ## Configuration

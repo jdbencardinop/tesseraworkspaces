@@ -100,7 +100,7 @@ inject files or orchestrator-only managed updates. `tws inject ... --into .`
 explicitly overrides a configured non-root target for that invocation; an
 explicit non-root `--into` does not.
 
-### Managed conflict decisions (implementation candidate, not released)
+### Managed conflict decisions (released in v1.2.18-rc.6)
 
 `tws add <feature> --resolve-conflicts` and
 `tws template sync <feature>|--all --resolve-conflicts` explicitly review
@@ -159,7 +159,7 @@ retain per-feature progress and recovery, not all-file/cross-feature atomicity.
 
 Known inherited limitation: materialized external feature rename can leave
 stale Git backpointers ([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)).
-Acknowledgements survive metadata moves, but this candidate does not repair
+Acknowledgements survive metadata moves, but this release does not repair
 that Git behavior or make them portable in exports.
 
 Each key is the absolute path to a git repository. The value is the workspace root where features and worktrees are stored for that repo.

@@ -207,7 +207,7 @@ report exact paths, and retries fail closed. This does not promise multi-file
 atomicity or preserve writes arriving later through an already-open descriptor
 after final verification.
 
-**Conflict resolver — implementation candidate, not released.** Only managed
+**Conflict resolver — released in v1.2.18-rc.6.** Only managed
 `tws add` / `tws template sync` accept `--resolve-conflicts`; it is not a managed
 selector or legacy migration. A real terminal offers keep/replace/diff/edit/cancel
 (`k/r/d/e/c`), default cancel, for owned regular UTF-8/no-NUL text with unchanged
@@ -242,7 +242,7 @@ and recovery; do not claim cross-feature atomicity.
 
 Known inherited limitation: materialized external feature rename can leave
 stale Git backpointers ([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)).
-This candidate preserves acknowledgements during metadata moves but does not
+This release preserves acknowledgements during metadata moves but does not
 repair that Git behavior.
 
 ### Cross-Worktree Decisions

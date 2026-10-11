@@ -80,7 +80,7 @@ them, and retries refuse. Do not describe this as multi-file atomicity or as
 protecting writes made later through an already-open descriptor after final
 verification.
 
-**Conflict resolution (implementation candidate, not released):**
+**Conflict resolution (released in v1.2.18-rc.6):**
 `tws template sync <feature>|--all --resolve-conflicts` or managed
 `tws add <feature> --resolve-conflicts` offers keep/replace/diff/edit/cancel
 (`k/r/d/e/c`), default cancel. The flag is not a managed selector and cannot
@@ -120,7 +120,7 @@ per-feature progress/recovery rather than cross-feature atomicity.
 
 Known inherited limitation: materialized external feature rename can leave
 stale Git backpointers ([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)).
-This candidate preserves acknowledgements during metadata moves but does not
+This release preserves acknowledgements during metadata moves but does not
 repair that Git behavior.
 
 ### Communicate with worktree agents

@@ -2,7 +2,10 @@
 
 ## Unreleased
 
-- **Managed template conflict resolution (implementation candidate, not released)**
+Latest prerelease: [v1.2.18-rc.6](https://github.com/jdbencardinop/tesseraworkspaces/releases/tag/v1.2.18-rc.6).
+The release-candidate notes below remain part of the next stable release.
+
+- **Managed template conflict resolution (released in v1.2.18-rc.6)**
   — managed `tws add` and `tws template sync` accept explicit
   `--resolve-conflicts` for ledger-owned regular UTF-8/no-NUL text with
   unchanged permissions. The terminal-only keep/replace/diff/edit/cancel menu
@@ -38,7 +41,7 @@
   ownership and never launch a resolver. The inherited materialized external
   feature-rename defect can leave stale Git backpointers
   ([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)); this
-  candidate preserves acknowledgements but does not repair that Git behavior.
+  release preserves acknowledgements but does not repair that Git behavior.
 - **Named, role-aware managed templates** — `tws template add/list/show/remove`
   now manages independent global and per-repository package copies outside the
   legacy templates directory. `tws add` and `tws template sync` accept named

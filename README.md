@@ -330,7 +330,7 @@ removes only regular files and external links whose recorded hash, mode,
 filesystem identity, exact Git-worktree identity, source mapping, and link
 target still match. Same-content files without ownership metadata,
 tracked paths, and symlinks are never adoption candidates. Unacknowledged
-modified owned files refuse by default; the candidate resolver below is an
+modified owned files refuse by default; the resolver below is an
 explicit, text-only exception. When an update would retire unchanged owned paths, tws prints every
 feature, role, kind, and exact path, then asks default-No:
 
@@ -366,7 +366,7 @@ Retries fail closed while that evidence remains. This is not a multi-file
 transaction and cannot preserve later writes made through an already-open
 descriptor to an old object after its final successful verification.
 
-#### Managed text conflict resolution (implementation candidate, not released)
+#### Managed text conflict resolution (released in v1.2.18-rc.6)
 
 ```sh
 tws template sync auth --resolve-conflicts
@@ -434,7 +434,7 @@ and retained recovery; neither all-file nor cross-feature atomicity is claimed.
 Known inherited limitation: renaming an external feature with materialized
 worktrees can leave stale Git backpointers
 ([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)).
-Acknowledgements survive feature metadata moves; this candidate does not
+Acknowledgements survive feature metadata moves; this release does not
 repair that Git behavior.
 
 ### Multi-Repo Workspaces

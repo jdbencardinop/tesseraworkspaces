@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestNamedTemplateConflictCandidateDocumentation(t *testing.T) {
+func TestNamedTemplateConflictReleasedDocumentation(t *testing.T) {
 	for _, surface := range []string{
 		"README.md", "docs/cheatsheet.md", "docs/configuration.md", "CHANGELOG.md",
 		"assets/skills/claude/tesseraworkspaces/SKILL.md",
@@ -15,7 +15,7 @@ func TestNamedTemplateConflictCandidateDocumentation(t *testing.T) {
 		t.Run(surface, func(t *testing.T) {
 			content := normalizeProse(readRepoDoc(t, surface))
 			for _, claim := range []string{
-				"--resolve-conflicts", "implementation candidate", "not released",
+				"--resolve-conflicts", "released in v1.2.18-rc.6",
 				"keep", "replace", "diff", "edit", "cancel", "terminal", "unmanaged",
 				"two-way", "rendered", "code --wait", "applyto", "v2",
 				"v1.2.18-rc.5 refuses v2", "workspace owner discovery",

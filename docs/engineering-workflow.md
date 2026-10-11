@@ -64,11 +64,13 @@ Current shipped checkout slices:
 The opt-in global workspace registry is also shipped for stable cross-repository
 discovery, health checks, and moved-target repair.
 
-Next roadmap work: **template-conflict-resolution** (implementation candidate, not released) — explicit
-interactive resolution of managed-owned regular text files, with remembered
-keep/edit decisions and two-way diff/staged editing is implemented for review.
-Independent terminal/downgrade smoke, full gates, review, record/replay, and
-single-feature landing remain required. Publication is not authorized.
+Next roadmap work: **external feature rename (#5)** (not started) — repair
+stale Git worktree backpointers after moving an external feature with
+materialized worktrees. Keep this a separate implementation boundary;
+analysis and implementation require their own approval.
+Template conflict resolution is fully released and verified in
+`v1.2.18-rc.6` at `5b531a8`: explicit interactive resolution of managed-owned
+regular text files, remembered keep/edit decisions, and two-way staged editing.
 Role-aware templates (#2) are fully released and verified in
 `v1.2.18-rc.5` at `9c634f2`: independent worktree/orchestrator selections,
 global/per-repository defaults, scoped synchronization, native agent guidance,
@@ -78,7 +80,7 @@ Scoped status projection (#3) is fully released and verified in
 workspace evidence, with bounded probes and the existing versioned schema.
 Ordinary sync safety (#4) is fully released and verified in `v1.2.18-rc.2`.
 Slash-containing worktree injection (#1) is fully released and verified in
-`v1.2.18-rc.3`, including explicit checkout injection refusal. All four
+`v1.2.18-rc.3`, including explicit checkout injection refusal. All five
 milestones have successful main/tag CI, and issues #4, #1, #3, and #2 are closed.
 Preserve those status,
 sync/reparent/session, and injection behaviors.
@@ -87,14 +89,15 @@ The shipped `named-feature-templates` boundary is complete; issue #2 required
 safe conflict refusal, not the deferred interactive editor. Legacy
 directory-based templates retain copy-if-missing behavior; named templates
 or role flags opt into managed updates with saved per-feature selections.
-The released managed contract refuses unmanaged files or symlinks and modified owned
-files. Removing obsolete, unchanged owned files requires an exact-path
+Managed updates refuse unmanaged files or symlinks. Modified owned content
+still refuses by default unless eligible for explicit text conflict resolution.
+Removing obsolete, unchanged owned files requires an exact-path
 warning and default-No confirmation, or explicit unattended consent;
 declining leaves the update unapplied. This narrow deletion consent is not
 interactive conflict resolution.
 
 Keep `template-conflict-resolution` a separate feature, not unfinished #2 work.
-The implementation candidate excludes legacy templates, unmanaged collisions,
+The shipped resolver excludes legacy templates, unmanaged collisions,
 symlinks, permission drift, and unresolved recovery. It remembers keep/edit only
 for the acknowledged local content and incoming rendered proposal; changed
 template content or an unacknowledged local edit requires another decision.
@@ -109,13 +112,14 @@ locks or recovery state to block unrelated older commands. The
 [analysis](../.tpatch/features/template-conflict-resolution/analysis.md),
 [specification](../.tpatch/features/template-conflict-resolution/spec.md), and
 [exploration](../.tpatch/features/template-conflict-resolution/exploration.md)
-define the approved implementation boundary. The candidate carries decisions
+define the approved implementation boundary. The resolver carries decisions
 through locked replanning and checks unwritten accepted files before ledger
 publication and cleanup. Existing v1 is not eagerly converted; a first
 noncanonical decision saves v2, with no automatic downgrade. Explicit review
 includes unchanged overrides and requires a terminal; editor exit is not
-consent. Keep the status at implementation candidate until the required
-reviews, verification, and landing are complete; no release is claimed.
+consent. The release completed the required reviews, verification, landing,
+and Ubuntu/macOS main and tag CI. Keep the versioned tpatch artifacts as the
+historical implementation record rather than rewriting them after publication.
 See [`roadmap.md`](roadmap.md).
 
 Known inherited limitation: materialized external feature rename can leave
