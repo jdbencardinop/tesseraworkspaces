@@ -2545,11 +2545,13 @@ sleep 30
 	if budget.launchedCount() != 1 {
 		t.Fatalf("launched commands = %d, want 1", budget.launchedCount())
 	}
+	// A successfully started child can exhaust the budget before its first
+	// shell write; the launch counter above still proves exactly one dispatch.
 	data, err := os.ReadFile(logPath)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
-	if strings.Count(string(data), "git\n") != 1 {
+	if len(data) != 0 && string(data) != "git\n" {
 		t.Fatalf("actual dispatch log = %q", data)
 	}
 }
