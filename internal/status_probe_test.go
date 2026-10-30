@@ -17,13 +17,29 @@ import (
 func writeStatusProbeScript(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "probe")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nset -eu\n"+body), 0o755); err != nil {
+	script := "#!/bin/sh\nset -eu\n" +
+		"if [ \"${TWS_STATUS_PROBE_FIXTURE_SETUP:-}\" = 1 ]; then exit 0; fi\n" + body
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(path, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	initializeStatusProbeScript(t, path)
 	return path
+}
+
+func initializeStatusProbeScript(t *testing.T, path string) {
+	t.Helper()
+	// Initialize a fresh executable before measuring probe behavior, without
+	// logging or running its body. Cold executable checks can exceed the budget.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path)
+	cmd.Env = append(os.Environ(), "TWS_STATUS_PROBE_FIXTURE_SETUP=1")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("initializing status probe fixture: %v\n%s", err, output)
+	}
 }
 
 func statusProbePIDGone(pid int) bool {
@@ -263,6 +279,7 @@ func TestRealTmuxInventoryRetainsSessionsWhenPaneProbeTimesOut(t *testing.T) {
 	dir := t.TempDir()
 	shim := filepath.Join(dir, "tmux")
 	script := `#!/bin/sh
+if [ "${TWS_STATUS_PROBE_FIXTURE_SETUP:-}" = 1 ]; then exit 0; fi
 case "$1" in
   list-sessions) printf 'tws-auth\n' ;;
   list-panes) sleep 30 ;;
@@ -271,6 +288,7 @@ esac
 	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	initializeStatusProbeScript(t, shim)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	budget := newStatusProbeBudget(context.Background(), 300*time.Millisecond, 2*time.Second)
 	defer budget.Close()
