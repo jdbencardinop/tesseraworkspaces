@@ -159,8 +159,8 @@ retain per-feature progress and recovery, not all-file/cross-feature atomicity.
 
 Published v1.2.18-rc.6 retains the external rename/backpointer defect
 ([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)).
-The unreleased external rename implementation candidate fixes future renames;
-#5 remains open. It preserves dirty work, index/ref identities, and v1/v2
+External feature rename is released in v1.2.18-rc.7 and fixes future renames;
+#5 is closed. It preserves dirty work, index/ref identities, and v1/v2
 template bytes, link identities, selections, and acknowledgements without
 re-rendering or making them portable in exports. A later explicit template
 sync can require new consent when the feature name changes rendered guidance.

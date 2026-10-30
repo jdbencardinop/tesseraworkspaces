@@ -355,7 +355,7 @@ func TestFeatureRenameDocsAndHelp(t *testing.T) {
 		"assets/skills/copilot/tws.prompt.md",
 	} {
 		content := normalizeProse(readRepoDoc(t, path))
-		for _, phrase := range []string{"unreleased", "--continue", "--abort", "future", "older tws", "separate effects", "old-path registrations"} {
+		for _, phrase := range []string{"released in v1.2.18-rc.7", "--continue", "--abort", "future", "older tws", "separate effects", "old-path registrations"} {
 			if !strings.Contains(content, phrase) {
 				t.Errorf("%s must explain feature rename %q", path, phrase)
 			}

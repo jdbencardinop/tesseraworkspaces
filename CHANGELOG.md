@@ -2,10 +2,10 @@
 
 ## Unreleased
 
-Latest prerelease: [v1.2.18-rc.6](https://github.com/jdbencardinop/tesseraworkspaces/releases/tag/v1.2.18-rc.6).
+Latest prerelease: [v1.2.18-rc.7](https://github.com/jdbencardinop/tesseraworkspaces/releases/tag/v1.2.18-rc.7).
 The release-candidate notes below remain part of the next stable release.
 
-- **External feature rename (#5), implementation candidate — unreleased**
+- **External feature rename (#5), released in v1.2.18-rc.7**
   — future `tws rename feature OLD NEW` operations preserve ordinary dirty
   work, index bytes, refs, and managed v1/v2 bytes/link identities/overrides.
   Complete physical Git inventory, exclusive directory movement, and exact
@@ -32,7 +32,8 @@ The release-candidate notes below remain part of the next stable release.
   Do not use an older tws while rename is active or recoverable. Rename never
   re-renders templates; a later explicit sync may need new consent for guidance
   embedding the new feature name. Checkout behavior is unchanged. Issue #5
-  remains open; this candidate is not part of published v1.2.18-rc.6.
+  is closed after verified Ubuntu/macOS main and tag CI. This fixes future
+  renames, not layouts already broken by v1.2.18-rc.6 or older releases.
 - **Managed template conflict resolution (released in v1.2.18-rc.6)**
   — managed `tws add` and `tws template sync` accept explicit
   `--resolve-conflicts` for ledger-owned regular UTF-8/no-NUL text with
@@ -69,8 +70,8 @@ The release-candidate notes below remain part of the next stable release.
   ownership and never launch a resolver. The inherited materialized external
   feature-rename defect can leave stale Git backpointers
   ([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)); published
-  rc.6 preserves acknowledgements but does not include the separate unreleased
-  rename candidate above.
+  rc.6 preserves acknowledgements but does not include the separate rename
+  fix released in v1.2.18-rc.7 above.
 - **Named, role-aware managed templates** — `tws template add/list/show/remove`
   now manages independent global and per-repository package copies outside the
   legacy templates directory. `tws add` and `tws template sync` accept named

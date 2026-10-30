@@ -174,11 +174,11 @@ consent afterward and no writer lock while prompting/editing. Cancellation
 applies nothing; later errors retain per-feature progress/recovery and do not
 promise cross-feature atomicity.
 
-## External feature rename (unreleased implementation candidate)
+## External feature rename (released in v1.2.18-rc.7)
 
 Published v1.2.18-rc.6 retains the external rename/backpointer defect
-([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)); #5 remains
-open. This candidate fixes future external renames, not arbitrary older broken
+([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)); #5 is now
+closed. The rc.7 fix covers future external renames, not arbitrary older broken
 layouts:
 
 ```sh

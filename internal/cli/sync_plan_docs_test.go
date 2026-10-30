@@ -122,8 +122,8 @@ func TestSyncPlanDocs_FlagWorkflowSurfacesCarryAllFiveLiterals(t *testing.T) {
 // own rule: neither file may carry any of the five flag literals.
 //
 // Released safety features stay in the shipped list. Post-release
-// prioritization advances to external feature rename after sync safety,
-// injection correctness, scoped status, and both template slices ship; the
+// prioritization advances to scoped standalone push after sync safety,
+// injection correctness, scoped status, both template slices, and rename ship; the
 // negative flag-literal contract is unchanged.
 func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t *testing.T) {
 	literals := []string{"--plan", "--max-replay-per-entry", "--max-replay-total", "--approve-plan", "plan-guard:"}
@@ -156,12 +156,12 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 		}
 
 		targetTail := ci[targetIdx : targetIdx+min(120, len(ci)-targetIdx)]
-		if !strings.Contains(targetTail, "external feature rename (#5)") ||
-			!strings.Contains(targetTail, "implementation candidate") || !strings.Contains(targetTail, "unreleased") {
-			t.Fatalf(`docs/roadmap.md's "Current target:" sentence must name external feature rename (#5) as an unreleased implementation candidate, got: %q`, targetTail)
+		if !strings.Contains(targetTail, "scoped standalone push (#6)") ||
+			!strings.Contains(targetTail, "path b preparation") {
+			t.Fatalf(`docs/roadmap.md's "Current target:" sentence must name scoped standalone push (#6) as Path B preparation, got: %q`, targetTail)
 		}
-		if !strings.Contains(content, "fix-external-feature-rename-backpointers") {
-			t.Fatal("docs/roadmap.md must link the separate prepared issue-five feature boundary")
+		if !strings.Contains(content, "scoped-push-selection") {
+			t.Fatal("docs/roadmap.md must name the separate issue-six feature boundary")
 		}
 		if !strings.Contains(normalizeProse(content), "ordinary sync safety (#4) is fully released and verified in v1.2.18-rc.2") {
 			t.Fatal("docs/roadmap.md must retain the verified ordinary-sync release milestone before advancing the target")
@@ -178,14 +178,17 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 		if !strings.Contains(normalizeProse(content), "template conflict resolution is fully released and verified in v1.2.18-rc.6") {
 			t.Fatal("docs/roadmap.md must retain the verified conflict-resolution release milestone before advancing the target")
 		}
-		if !strings.Contains(normalizeProse(content), "issues #4, #1, #3, and #2 are closed after their verified releases") {
-			t.Fatal("docs/roadmap.md must distinguish the completed issue queue from the standalone conflict-resolution follow-up")
+		if !strings.Contains(normalizeProse(content), "external feature rename (#5) is fully released and verified in v1.2.18-rc.7") {
+			t.Fatal("docs/roadmap.md must retain the verified rename release milestone before advancing the target")
+		}
+		if !strings.Contains(normalizeProse(content), "issues #4, #1, #3, #2, and #5 are closed after their verified releases") {
+			t.Fatal("docs/roadmap.md must distinguish the completed issue queue from scoped-push preparation")
 		}
 		previous := backlogIdx
-		for _, issue := range []string{"[#4:", "[#1:", "[#3:", "[#2:"} {
+		for _, issue := range []string{"[#4:", "[#1:", "[#3:", "[#2:", "[#5:", "[#6:"} {
 			index := strings.Index(ci, issue)
 			if index <= previous {
-				t.Fatalf("docs/roadmap.md must order the backlog as #4, #1, #3, #2; %s is at %d after %d", issue, index, previous)
+				t.Fatalf("docs/roadmap.md must order the backlog as #4, #1, #3, #2, #5, #6; %s is at %d after %d", issue, index, previous)
 			}
 			previous = index
 		}
@@ -237,12 +240,12 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 		}
 
 		nextTail := ci[nextFeatureIdx : nextFeatureIdx+min(120, len(ci)-nextFeatureIdx)]
-		if !strings.Contains(nextTail, "external feature rename (#5)") ||
-			!strings.Contains(nextTail, "implementation candidate") || !strings.Contains(nextTail, "unreleased") {
-			t.Fatalf(`docs/engineering-workflow.md's "Next roadmap work:" sentence must name external feature rename (#5) as an unreleased implementation candidate, got: %q`, nextTail)
+		if !strings.Contains(nextTail, "scoped standalone push (#6)") ||
+			!strings.Contains(nextTail, "path b preparation") {
+			t.Fatalf(`docs/engineering-workflow.md's "Next roadmap work:" sentence must name scoped standalone push (#6) as Path B preparation, got: %q`, nextTail)
 		}
-		if !strings.Contains(content, "fix-external-feature-rename-backpointers") {
-			t.Fatal("docs/engineering-workflow.md must link the separate prepared issue-five feature boundary")
+		if !strings.Contains(content, "scoped-push-selection") {
+			t.Fatal("docs/engineering-workflow.md must name the separate issue-six feature boundary")
 		}
 		if !strings.Contains(normalizeProse(content), "ordinary sync safety (#4) is fully released and verified in v1.2.18-rc.2") {
 			t.Fatal("docs/engineering-workflow.md must retain the verified ordinary-sync release milestone before advancing the target")
@@ -258,6 +261,9 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 		}
 		if !strings.Contains(normalizeProse(content), "template conflict resolution is fully released and verified in v1.2.18-rc.6") {
 			t.Fatal("docs/engineering-workflow.md must retain the verified conflict-resolution release milestone before advancing the target")
+		}
+		if !strings.Contains(normalizeProse(content), "external feature rename (#5) is fully released and verified in v1.2.18-rc.7") {
+			t.Fatal("docs/engineering-workflow.md must retain the verified rename release milestone before advancing the target")
 		}
 
 		assertNoFlagLiteral(t, "docs/engineering-workflow.md", content)

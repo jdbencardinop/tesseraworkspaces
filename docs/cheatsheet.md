@@ -497,8 +497,8 @@ VISUAL='code --wait' tws template sync auth --resolve-conflicts
 
 Published v1.2.18-rc.6 still has the external rename/backpointer defect
 ([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)).
-The unreleased implementation candidate below preserves acknowledgements and
-repairs Git bindings for future renames; #5 remains open.
+External feature rename is released in v1.2.18-rc.7. It preserves
+acknowledgements and Git bindings for future renames; #5 is closed.
 
 ## Configuration
 

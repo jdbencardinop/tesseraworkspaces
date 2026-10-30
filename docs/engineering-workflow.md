@@ -64,13 +64,18 @@ Current shipped checkout slices:
 The opt-in global workspace registry is also shipped for stable cross-repository
 discovery, health checks, and moved-target repair.
 
-Next roadmap work: **external feature rename (#5)** (implementation candidate; unreleased) — preserve
-Git worktree bindings when moving an external feature with
-materialized worktrees. Path B analysis, specification, and exploration are
-implemented in the approved boundary under
+Next roadmap work: **scoped standalone push (#6)** — Path B preparation.
+The separate `scoped-push-selection` boundary adds logical entry/subtree
+publication in external and checkout modes, with selected-only dry-run and
+durable continuation, while preserving unscoped behavior. Existing scoped
+sync-plus-push already publishes its selected scope; do not duplicate its
+selector or fabricate a sync transaction for standalone publication.
+Implementation and RC publication are authorized through the established
+independent review, frozen-candidate gates, record/replay, and landing process.
+External feature rename (#5) is fully released and verified in
+`v1.2.18-rc.7` at `d38b442` under
 [`fix-external-feature-rename-backpointers`](../.tpatch/features/fix-external-feature-rename-backpointers/request.md).
-Issue #5 remains open. Independent review, frozen-candidate full gates,
-record/replay, and landing remain required; publication needs separate approval.
+Issue #5 is closed after successful Ubuntu/macOS main and tag/release CI.
 Template conflict resolution is fully released and verified in
 `v1.2.18-rc.6` at `5b531a8`: explicit interactive resolution of managed-owned
 regular text files, remembered keep/edit decisions, and two-way staged editing.
@@ -83,8 +88,8 @@ Scoped status projection (#3) is fully released and verified in
 workspace evidence, with bounded probes and the existing versioned schema.
 Ordinary sync safety (#4) is fully released and verified in `v1.2.18-rc.2`.
 Slash-containing worktree injection (#1) is fully released and verified in
-`v1.2.18-rc.3`, including explicit checkout injection refusal. All five
-milestones have successful main/tag CI, and issues #4, #1, #3, and #2 are closed.
+`v1.2.18-rc.3`, including explicit checkout injection refusal. All six
+milestones have successful main/tag CI, and issues #4, #1, #3, #2, and #5 are closed.
 Preserve those status,
 sync/reparent/session, and injection behaviors.
 
@@ -125,7 +130,7 @@ and Ubuntu/macOS main and tag CI. Keep the versioned tpatch artifacts as the
 historical implementation record rather than rewriting them after publication.
 See [`roadmap.md`](roadmap.md).
 
-The #5 candidate preserves ordinary dirty work and updates only verified pointer
+The shipped #5 fix preserves ordinary dirty work and updates only verified pointer
 files for future external renames. Repository-wide Git repair is excluded
 because even an explicit path can repair unrelated siblings. Success requires
 complete Git links/registrations at the final location; interruptions use
@@ -146,11 +151,22 @@ inode-CAS or preservation of later writes through already-open descriptors.
 
 Published v1.2.18-rc.6 limitation: materialized external feature rename can leave
 stale Git backpointers ([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)).
-The unreleased #5 candidate fixes future renames without re-rendering templates
+The external rename fix released in v1.2.18-rc.7 covers future renames without re-rendering templates
 or changing v1/v2 ownership/link identities and acknowledgements. A later
 explicit template sync may need new consent for guidance embedding the new
 feature name. It does not repair older broken layouts. Export retains its established omission
 of ledger data from archives while preserving effective bytes and the live ledger.
+
+The approved #6 scope publishes selected active refs from verified repositories
+without requiring materialized worktrees, creating worktrees, or switching the
+checkout. Existing no-selector behavior remains unchanged, including the
+standalone checkout refusal. Its new publication state must be independently
+typed, freeze selected identities and lease authority, preserve confirmed
+successes, and never retry with an unguarded or feature-wide push. Cancellation
+abandons remaining publication, not already-published remote refs. Dry-run is
+local-only with honest unknown remote state. Preserve rename admission across
+selected-root fallback and all effects; do not probe unrelated worktrees or
+clear their reparent follow-up rows.
 
 ## Tpatch workflow
 

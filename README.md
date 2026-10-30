@@ -434,9 +434,9 @@ and retained recovery; neither all-file nor cross-feature atomicity is claimed.
 Published **v1.2.18-rc.6** preserves acknowledgements during metadata moves but
 still has the external rename/backpointer defect
 ([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)).
-The separate implementation candidate below is **unreleased**; #5 remains open.
+External feature rename is **released in v1.2.18-rc.7**; #5 is closed.
 
-### External Feature Rename (implementation candidate)
+### External Feature Rename (released in v1.2.18-rc.7)
 
 ```sh
 tws rename feature old-name new-name

@@ -240,11 +240,11 @@ batch decisions precede effects and separate ordinary-removal consent, without
 writer locks during interaction. Later failures retain per-feature progress
 and recovery; do not claim cross-feature atomicity.
 
-### External feature rename (unreleased implementation candidate)
+### External feature rename (released in v1.2.18-rc.7)
 
 Published v1.2.18-rc.6 retains the external rename/backpointer defect
-([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)); #5 remains
-open. This candidate fixes future renames, not arbitrary older broken layouts:
+([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)); #5 is now
+closed. The rc.7 fix covers future renames, not arbitrary older broken layouts:
 
 ```sh
 tws rename feature OLD NEW
