@@ -1,0 +1,93 @@
+{
+  "base_commit": "54f214f080f82ac66b44e3d16de4cf7f8f285419",
+  "feature": "fix-reparent-completion-context",
+  "planning_files": {
+    ".tpatch/features/fix-reparent-completion-context/analysis.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "66b1bb63c8545f9703489a9edd5267698da05da9029056710fe1a9548c4b7b9b"
+    },
+    ".tpatch/features/fix-reparent-completion-context/exploration.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "9a314b850435f999e970d35dd22d4df3a3f703c9bd4e254697aca284af878597"
+    },
+    ".tpatch/features/fix-reparent-completion-context/request.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "e668754057a7e5b3c3bb655f5992091b1f41f3226abbd6de0960aec747e1457f"
+    },
+    ".tpatch/features/fix-reparent-completion-context/spec.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "8763fd2e2f68570226ebdb91d38ccfd46ecbc69194403548a6cb4b75e8b17227"
+    }
+  },
+  "product_files": {
+    "CHANGELOG.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "799cc9d217046d2cd3b7884df31c99e3a809fa7e6b8411c41f4ad6563ea66b57"
+    },
+    "README.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "ac9333a7995e013d1200aa21fab4766f6923377ab35050e8d97a011af01b003a"
+    },
+    "assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "b20638cb86f4c33f66494686e3ddc4614d36b4999b3f85afa9db9479643d13da"
+    },
+    "assets/skills/claude/tesseraworkspaces/SKILL.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "31e56f5838c2c9bc96eb8a1a8a221a7aecf4bd5fb05b4b6bbd7841e8ea16649b"
+    },
+    "assets/skills/copilot/tws.prompt.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "8ae954be635d2eb2fb35b9c9571012b2de03e1421f85ab1ca4a1a1d768fdda3d"
+    },
+    "docs/cheatsheet.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "6fc2d9188e61209c9a75bc5fa0056f87cf0009c4857e2559c03e92131b9ddaeb"
+    },
+    "docs/configuration.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "9462aa297f0b8314970ae3bd866523bf37259aecd44ef6c0e5c6159d968ed6c7"
+    },
+    "docs/engineering-workflow.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "4ed6e409f80a9da11a0d779cc6264cf9d998479e9038def217a96cd805932044"
+    },
+    "docs/roadmap.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "59fb50a929a0e2d21d5b6bb793d7ee5f77348c9eecd130a149b73228e2566820"
+    },
+    "internal/cli/push_selection_docs_test.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "68072aac7db430ffe26efa3dec144bf035761f06edb041122e4fb3f010c7ee6b"
+    },
+    "internal/cli/stack_reparent.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "bd2dacefe739ba83199430f756af4ea2728c2e06bc3085e7494cf88b29b291fb"
+    },
+    "internal/cli/stack_reparent_completion_test.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "ffbd7891850e4fa27b4aab628ad739e5ba7475ec783ccd3cb5bec237889af78c"
+    },
+    "internal/cli/sync_plan_docs_test.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "599171b8522108564113b02625b4529a8848adff146dbaf47c542306814495fd"
+    }
+  }
+}

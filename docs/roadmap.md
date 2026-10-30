@@ -84,12 +84,18 @@ Shipped foundations:
   reconstructs only the matching recovery reservation. v1.2.16 only fails closed for same-feature sync after envelope
   birth; do not use an older tws while any reparent is active or recoverable.
 
-Current target: **scoped standalone push (#6)** — Path B implementation candidate (unreleased).
-The separate `scoped-push-selection` boundary supplies the publication
-counterpart to the existing shared logical entry/subtree selector. New scoped
-flags support external and checkout modes; unscoped behavior remains unchanged.
+Current target: **reparent completion context (#7)** — Path B implementation candidate (unreleased).
+The separate `fix-reparent-completion-context` boundary aligns shell completion
+with the execution-selected feature layout and target-entry repository.
+Completion stays read-only and local-only; execution and candidate eligibility
+remain unchanged.
 Implementation and RC publication are authorized through the established
 review, validation, replay, and landing process.
+Scoped standalone push (#6) is fully released and verified in
+`v1.2.18-rc.8` at `54f214f`, with successful Ubuntu/macOS main and tag/release
+CI and exact-tag version checks. Its `scoped-push-selection` boundary supplies
+logical entry/subtree publication in external and checkout modes while
+preserving unscoped behavior.
 External feature rename (#5) is fully released and verified in
 `v1.2.18-rc.7` at `d38b442`, with successful Ubuntu/macOS main and tag/release CI.
 Template conflict resolution is fully released and verified in
@@ -104,17 +110,15 @@ the requested feature plus shared workspace evidence, with bounded probes and
 the existing versioned schema. Ordinary sync safety (#4) is fully released and
 verified in `v1.2.18-rc.2`. Slash-containing worktree injection (#1) is fully
 released and verified in `v1.2.18-rc.3`, including verified external worktree
-discovery and explicit checkout injection refusal. All six milestones have
+discovery and explicit checkout injection refusal. All seven milestones have
 successful main/tag CI.
 
 The approved delivery order **#4, #1, #3, #2** is complete. Keep each existing
 tpatch feature as its own implementation boundary; the mapping below records
-the delivered queue, the separate template/rename follow-ups, and the next
-publication boundary,
-not permission to combine
-unrelated fixes. Lane B runtime-boundary
-coordination is complete; its remaining provider PRDs do not block this
-tws-local publication feature.
+the delivered queue, the separate template/rename/publication follow-ups, and
+the current completion boundary, not permission to combine unrelated fixes.
+Lane B runtime-boundary coordination is complete; its remaining provider PRDs
+do not block this completion-only fix.
 
 Follow-ups explicitly owned by later features rather than by `tws status`:
 
@@ -160,9 +164,10 @@ For decoupled names, `StackEntry.Name` identifies the tws worktree while `StackE
 | 4 | Shipped: v1.2.18-rc.5 | [#2: role-aware templates](https://github.com/jdbencardinop/tesseraworkspaces/issues/2) | [`named-feature-templates`](../.tpatch/features/named-feature-templates/request.md) |
 | 5 | Shipped: v1.2.18-rc.6 | Standalone follow-up; #2 is complete | [`template-conflict-resolution`](../.tpatch/features/template-conflict-resolution/request.md) |
 | 6 | Shipped: v1.2.18-rc.7 | [#5: external feature rename backpointers](https://github.com/jdbencardinop/tesseraworkspaces/issues/5) | [`fix-external-feature-rename-backpointers`](../.tpatch/features/fix-external-feature-rename-backpointers/request.md) |
-| 7 | Current: unreleased implementation candidate | [#6: scoped standalone push](https://github.com/jdbencardinop/tesseraworkspaces/issues/6) | `scoped-push-selection` |
+| 7 | Shipped: v1.2.18-rc.8 | [#6: scoped standalone push](https://github.com/jdbencardinop/tesseraworkspaces/issues/6) | [`scoped-push-selection`](../.tpatch/features/scoped-push-selection/request.md) |
+| 8 | Current: unreleased implementation candidate | [#7: reparent completion context](https://github.com/jdbencardinop/tesseraworkspaces/issues/7) | [`fix-reparent-completion-context`](../.tpatch/features/fix-reparent-completion-context/request.md) |
 
-Issues #4, #1, #3, #2, and #5 are closed after their verified releases.
+Issues #4, #1, #3, #2, #5, and #6 are closed after their verified releases.
 [`named-feature-templates`](../.tpatch/features/named-feature-templates/request.md)
 shipped in [v1.2.18-rc.5](https://github.com/jdbencardinop/tesseraworkspaces/releases/tag/v1.2.18-rc.5),
 with successful Ubuntu/macOS main and tag CI and exact-tag binary checks.
@@ -240,7 +245,7 @@ submodules, and unsupported path-bearing configuration/alternates remain out
 of scope. Keep its published tpatch artifacts as the historical implementation
 record rather than rewriting them after release.
 
-The current #6 boundary adds standalone selected publication, not another sync
+The shipped #6 boundary adds standalone selected publication, not another sync
 selector. An entry selection publishes only that logical entry; a subtree
 selection includes the entry and its transitive descendants in dependency
 order, not ancestors or neighboring stacks. Existing scoped sync-plus-push and
@@ -259,11 +264,12 @@ results. Local-only dry-run must show exact selected local intent and mark
 remote state unverified. Shared reparent follow-up handling must preserve
 unselected rows and avoid probing unrelated repositories/worktrees.
 
-Nonblocking reparent follow-up:
+Current completion-only follow-up:
 [`fix-reparent-completion-context`](../.tpatch/features/fix-reparent-completion-context/request.md)
 aligns shell-completion candidates with the execution-selected external feature
 root and target-entry repository. Explicit execution remains protected; this
-follow-up does not displace the issue queue above.
+unreleased #7 candidate does not change the reparent planner, execution,
+mutation safety, or the shipped publication boundary.
 
 ## Agent integration — P2
 

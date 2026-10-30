@@ -218,6 +218,8 @@ If no entry exists for the current repo, tesseraworkspaces defaults to a sibling
 
 ### Scoped publication ownership and Git configuration
 
+Selected standalone push was **released in `v1.2.18-rc.8`**.
+
 Selected standalone push never searches unrelated features/worktrees for a
 default publisher. It proves the selected repository using an explicit
 `workspaces` mapping, the conventional `<repo>.tws` root, a matching controlling

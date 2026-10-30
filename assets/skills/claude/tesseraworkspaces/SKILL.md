@@ -68,6 +68,13 @@ recorded one — a squash-merged or abandoned parent, a branch that should hang
 off `main` instead of a sibling. Reach for `tws sync` when the parents are
 right and only their tips moved.
 
+Completion uses the execution-selected feature layout, including external
+`TWS_ROOT`. It suggests logical entries first; `--onto` excludes the target and
+its logical descendants, then adds sorted local Git branches from the known
+target's repository (including its explicit `repo`). Without a target, no
+repository is guessed. Completion never fetches or writes; unavailable or
+refused context is silent. Suggestions do not waive execution's safety checks.
+
 A fresh reparent is always guarded. The preview and execution use the same
 replay limit flag(s) and values; execution additionally carries
 `--approve-plan <fingerprint>`. A limitless preview has a null fingerprint.
@@ -317,7 +324,7 @@ tws push <feature> --continue               # finish only unconfirmed entries
 tws push <feature> --cancel                 # abandon remainder; no remote rollback
 ```
 
-**Selected standalone push (unreleased candidate, Git 2.45+):** `--only` selects one logical
+**Selected standalone push (released in v1.2.18-rc.8, Git 2.45+):** `--only` selects one logical
 entry; `--from` selects its transitive descendants, parent first, never ancestors
 or neighboring stacks. Both external and checkout modes publish verified local
 refs without worktrees, checkout, rebase or upstream changes. Archived selectors

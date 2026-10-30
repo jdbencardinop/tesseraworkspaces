@@ -64,14 +64,21 @@ Current shipped checkout slices:
 The opt-in global workspace registry is also shipped for stable cross-repository
 discovery, health checks, and moved-target repair.
 
-Next roadmap work: **scoped standalone push (#6)** — Path B implementation candidate (unreleased).
-The separate `scoped-push-selection` boundary adds logical entry/subtree
-publication in external and checkout modes, with selected-only dry-run and
-durable continuation, while preserving unscoped behavior. Existing scoped
-sync-plus-push already publishes its selected scope; do not duplicate its
-selector or fabricate a sync transaction for standalone publication.
+Next roadmap work: **reparent completion context (#7)** — Path B implementation candidate (unreleased).
+The separate `fix-reparent-completion-context` boundary aligns shell completion
+with the execution-selected feature layout and target-entry repository.
+Completion stays read-only and local-only; preserve logical/Git name separation,
+candidate eligibility and ordering, and all existing execution safety.
 Implementation and RC publication are authorized through the established
 independent review, frozen-candidate gates, record/replay, and landing process.
+Scoped standalone push (#6) is fully released and verified in
+`v1.2.18-rc.8` at `54f214f`, with successful Ubuntu/macOS main and tag/release
+CI and exact-tag version checks. Its `scoped-push-selection` boundary adds
+logical entry/subtree publication in external and checkout modes, with
+selected-only dry-run and durable continuation while preserving unscoped
+behavior. Issue #6 is closed. Existing scoped sync-plus-push still publishes
+its selected scope; do not duplicate its selector or fabricate a sync
+transaction for standalone publication.
 External feature rename (#5) is fully released and verified in
 `v1.2.18-rc.7` at `d38b442` under
 [`fix-external-feature-rename-backpointers`](../.tpatch/features/fix-external-feature-rename-backpointers/request.md).
@@ -88,8 +95,8 @@ Scoped status projection (#3) is fully released and verified in
 workspace evidence, with bounded probes and the existing versioned schema.
 Ordinary sync safety (#4) is fully released and verified in `v1.2.18-rc.2`.
 Slash-containing worktree injection (#1) is fully released and verified in
-`v1.2.18-rc.3`, including explicit checkout injection refusal. All six
-milestones have successful main/tag CI, and issues #4, #1, #3, #2, and #5 are closed.
+`v1.2.18-rc.3`, including explicit checkout injection refusal. All seven
+milestones have successful main/tag CI, and issues #4, #1, #3, #2, #5, and #6 are closed.
 Preserve those status,
 sync/reparent/session, and injection behaviors.
 
@@ -157,7 +164,7 @@ explicit template sync may need new consent for guidance embedding the new
 feature name. It does not repair older broken layouts. Export retains its established omission
 of ledger data from archives while preserving effective bytes and the live ledger.
 
-The approved #6 scope publishes selected active refs from verified repositories
+The shipped #6 scope publishes selected active refs from verified repositories
 without requiring materialized worktrees, creating worktrees, or switching the
 checkout. Existing no-selector behavior remains unchanged, including the
 standalone checkout refusal. Its new publication state must be independently
@@ -168,13 +175,15 @@ local-only with honest unknown remote state. Preserve rename admission across
 selected-root fallback and all effects; do not probe unrelated worktrees or
 clear their reparent follow-up rows.
 
-The candidate uses its own strict version-one publication journal, shared
+The shipped publication feature uses its own strict version-one journal, shared
 feature/checkout mutation reservations, exact token-owned object protection,
 and explicit continuation/cancellation. It keeps terminal receipts so visible
 outcomes can repeat their durability barriers. Pending state excludes current
 mutators even after process death or lock removal; it is not a fabricated sync
-transaction and does not promise universal old-binary blocking. Independent
-review, replay, landing and CI publication still precede release of #6.
+transaction and does not promise universal old-binary blocking. The rc.8
+release completed independent review, replay, landing and verified CI
+publication. Keep its published tpatch artifacts as historical evidence;
+the current #7 completion candidate does not change its runtime scope.
 
 ## Tpatch workflow
 

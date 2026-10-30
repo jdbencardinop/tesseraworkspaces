@@ -1,0 +1,10 @@
+{
+  "feature": "fix-reparent-completion-context",
+  "base_commit": "54f214f080f82ac66b44e3d16de4cf7f8f285419",
+  "manifest_sha256": "7ebd802adbc9a3bf1782596c45b7ad4e120d5ff69e518986929fe38a721b35d9",
+  "recipe_sha256": "65705a713a963ad32f88366199212f48fa237f50d65947e02293bda1879e3bd4",
+  "existing_preimages_verified": 12,
+  "new_paths_proven_absent": 1,
+  "postimages_verified": 13,
+  "passed": true
+}

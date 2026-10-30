@@ -30,7 +30,7 @@ func TestScopedPushHelpAndGuidance(t *testing.T) {
 	} {
 		t.Run(path, func(t *testing.T) {
 			text := normalizeProse(readRepoDoc(t, path))
-			for _, guidance := range []string{"--only", "--from", "--continue", "--cancel", "unverified", "inclusion", "unreleased", "terminal receipt"} {
+			for _, guidance := range []string{"--only", "--from", "--continue", "--cancel", "unverified", "inclusion", "released in v1.2.18-rc.8", "terminal receipt"} {
 				if !strings.Contains(text, guidance) {
 					t.Errorf("%s omits standalone publication guidance %q", path, guidance)
 				}

@@ -148,7 +148,7 @@ func stackReparentCmd() *cobra.Command {
 			case 0:
 				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
 			case 1:
-				return reparentEntryCandidates(args[0], ""), cobra.ShellCompDirectiveNoFileComp
+				return reparentCompletionCandidates(args[0], ""), cobra.ShellCompDirectiveNoFileComp
 			}
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
@@ -392,24 +392,41 @@ func reparentOntoCompletion(cmd *cobra.Command, args []string, toComplete string
 	if len(args) > 1 {
 		target = args[1]
 	}
-	out := reparentEntryCandidates(args[0], target)
-	out = append(out, reparentBranchCandidates()...)
-	return out, cobra.ShellCompDirectiveNoFileComp
+	return reparentCompletionCandidates(args[0], target), cobra.ShellCompDirectiveNoFileComp
 }
 
-// reparentEntryCandidates lists the feature's stack entry names, excluding the
-// target and every descendant of it. Completion failures are silent: an
-// unresolvable workspace offers no candidates rather than an error.
-func reparentEntryCandidates(feature, target string) []string {
-	ws, err := internal.RequireWorkspace()
+// reparentCompletionCandidates resolves one read-only execution context. Without
+// a target it offers only logical entries; a known target also selects the Git
+// repository. Any context failure is silent and never falls back to caller refs.
+func reparentCompletionCandidates(feature, target string) []string {
+	ws, err := requireReparentWorkspace(internal.LoadConfig())
 	if err != nil {
 		return nil
 	}
 	if internal.GuardFeatureName(ws.MetadataRoot, feature) != nil {
 		return nil
 	}
-	featurePath, err := ws.ResolveFeaturePath(feature)
+	var featurePath string
+	if ws.Mode == internal.ModeCheckout {
+		featurePath, err = ws.ResolveFeaturePath(feature)
+	} else {
+		root := strings.TrimSpace(os.Getenv("TWS_ROOT"))
+		if root == "" {
+			root = ws.MetadataRoot
+		}
+		var layout externalSyncLayout
+		layout, err = resolveExternalSyncLayout(ws, root, feature)
+		featurePath = layout.FeaturePath
+	}
 	if err != nil {
+		return nil
+	}
+	if _, err := featureRenameRouteAdmission(ws.Mode, feature, featurePath, true); err != nil {
+		return nil
+	}
+	if err := internal.RefusePendingScopedPush(internal.ScopedPushLocation{
+		Mode: ws.Mode, Feature: feature, FeaturePath: featurePath, MetadataRoot: ws.MetadataRoot,
+	}); err != nil {
 		return nil
 	}
 	stack, err := internal.LoadStack(featurePath)
@@ -417,13 +434,19 @@ func reparentEntryCandidates(feature, target string) []string {
 		return nil
 	}
 	excluded := map[string]bool{}
+	repoRoot := ""
 	if target != "" {
-		excluded[target] = true
-		closure, cerr := internal.ReparentClosureOrder(stack, target)
-		if cerr == nil {
-			for _, e := range closure {
-				excluded[e.Name] = true
-			}
+		repo, err := internal.ResolveReparentTargetRepository(ws.Mode, featurePath, ws.RepoRoot, target)
+		if err != nil {
+			return nil
+		}
+		repoRoot = repo.Root
+		closure, err := internal.ReparentClosureOrder(stack, target)
+		if err != nil {
+			return nil
+		}
+		for _, e := range closure {
+			excluded[e.Name] = true
 		}
 	}
 	out := make([]string, 0, len(stack.Branches))
@@ -433,18 +456,17 @@ func reparentEntryCandidates(feature, target string) []string {
 		}
 		out = append(out, e.Name)
 	}
+	if repoRoot != "" {
+		out = append(out, reparentBranchCandidates(repoRoot)...)
+	}
 	return out
 }
 
 // reparentBranchCandidates lists local branch names through the shipped
 // single-`for-each-ref` inventory. It is a completion-only probe and never
 // participates in a plan or a run.
-func reparentBranchCandidates() []string {
-	ws, err := internal.RequireWorkspace()
-	if err != nil || ws.RepoRoot == "" {
-		return nil
-	}
-	inv := internal.BuildBranchRefInventory(ws.RepoRoot)
+func reparentBranchCandidates(repoRoot string) []string {
+	inv := internal.BuildBranchRefInventory(repoRoot)
 	if !inv.Available {
 		return nil
 	}

@@ -2,10 +2,16 @@
 
 ## Unreleased
 
-Latest prerelease: [v1.2.18-rc.7](https://github.com/jdbencardinop/tesseraworkspaces/releases/tag/v1.2.18-rc.7).
+Latest prerelease: [v1.2.18-rc.8](https://github.com/jdbencardinop/tesseraworkspaces/releases/tag/v1.2.18-rc.8).
 The release-candidate notes below remain part of the next stable release.
 
-- **Scoped standalone push (#6), unreleased implementation candidate**
+- **Reparent completion context (#7), unreleased implementation candidate**
+  — logical entries come from the execution-selected feature layout, including
+  external `TWS_ROOT`; a known target's repository supplies Git destinations.
+  Completion preserves logical descendant exclusion, archive eligibility and
+  ordering, never guesses a repository without a target, and silently refuses
+  unavailable context. It never fetches or writes state; execution is unchanged.
+- **Scoped standalone push (#6), released in v1.2.18-rc.8**
   — `tws push <feature> --only <logical-entry>` / `--from <logical-entry>`
   publishes exactly the selected entry/subtree in external and checkout modes,
   including active refs without materialized worktrees. This new route requires
@@ -41,7 +47,8 @@ The release-candidate notes below remain part of the next stable release.
   settings cannot add tags/mirror/matching/prune/submodule pushes; user hooks
   remain enabled. Legacy no-selector external leniency and standalone checkout
   refusal remain unchanged. No cross-ref/cross-repository atomicity or remote
-  rollback is claimed. Use the new binary while pending; #6 is not yet released.
+  rollback is claimed. Use the new binary while pending. Issue #6 is closed
+  after verified Ubuntu/macOS main and tag/release CI and exact-tag version checks.
 - **External feature rename (#5), released in v1.2.18-rc.7**
   — future `tws rename feature OLD NEW` operations preserve ordinary dirty
   work, index bytes, refs, and managed v1/v2 bytes/link identities/overrides.

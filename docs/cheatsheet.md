@@ -243,7 +243,7 @@ tws sync auth --fetch                # input refs: fetch first (external default
   recovery follows the journal's phase and restores the marker exclusively.
   Mixed legacy/transactional records require manual inspection, never deletion.
 
-### Selected standalone push (unreleased candidate)
+### Selected standalone push (released in v1.2.18-rc.8)
 
 ```sh
 tws push auth --only api --dry-run       # local-only exact intent; remote unverified
@@ -344,6 +344,11 @@ tws stack reparent auth --continue                                    # resume a
 tws stack reparent auth --abort                                       # roll back
 ```
 
+- Completion reads logical entries from the execution-selected feature, including
+  external `TWS_ROOT`. With a known target, `--onto` excludes its logical
+  descendant closure, then adds sorted local Git branches from that target's
+  repository, not the caller's. Without a target, no repository is guessed.
+  Completion never fetches or writes; unavailable or refused context is silent.
 - A **fresh execution is always guarded**: it requires `--approve-plan` plus at
   least one of `--max-replay-per-entry` / `--max-replay-total`. There is no
   unguarded reparent route.

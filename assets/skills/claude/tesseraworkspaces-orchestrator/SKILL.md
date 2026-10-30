@@ -270,7 +270,7 @@ refusal — while a refusal tws already performs (dirty tree, held lock,
 unresolvable base, incomplete previous run) keeps its own wording and carries
 no marker.
 
-### Publish only the intended entries (unreleased candidate)
+### Publish only the intended entries (released in v1.2.18-rc.8)
 
 Use standalone `push --only` for one logical entry or `push --from` for its
 transitive descendants, parent first. Do not include ancestors/neighbors.
@@ -330,6 +330,13 @@ tws stack reparent <feature> <entry> --onto <dest> \
 tws stack reparent <feature> --continue                               # resume
 tws stack reparent <feature> --abort                                  # roll back
 ```
+
+Completion uses the execution-selected feature layout, including external
+`TWS_ROOT`. It suggests logical entries first; `--onto` excludes the target and
+its logical descendants, then adds sorted local Git branches from the known
+target's repository (including its explicit `repo`). Without a target, no
+repository is guessed. Completion never fetches or writes; unavailable or
+refused context is silent. Suggestions do not waive execution's safety checks.
 
 Use the same replay limit flag(s) and values on preview and execution. A
 limitless preview has a null fingerprint and cannot be approved.

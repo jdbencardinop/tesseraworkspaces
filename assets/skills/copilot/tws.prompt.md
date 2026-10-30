@@ -45,7 +45,7 @@ You are working in a project that uses `tws` for feature-scoped workspaces with 
 - `tws template add/list/show/remove` — Manage global/per-repository named template packages
 - `tws template sync <feature> [--template <dir-or-name>] [--scope worktree|orchestrator|both] [--resolve-conflicts] [--allow-managed-removal]` — Backfill legacy templates or refresh managed roles
 
-## Selected standalone publication (unreleased candidate)
+## Selected standalone publication (released in v1.2.18-rc.8)
 
 `tws push <feature> --only <entry>` publishes one logical entry; `--from <entry>`
 publishes its transitive descendants, parent first, never ancestors/neighbors.
@@ -125,6 +125,13 @@ When the recorded parent itself is wrong — squash-merged, abandoned, or never 
 tws stack reparent auth auth-middleware --onto main --plan --max-replay-total 20
 tws stack reparent auth auth-middleware --onto main --approve-plan <fingerprint> --max-replay-total 20
 ```
+
+Completion uses the execution-selected feature layout, including external
+`TWS_ROOT`. It suggests logical entries first; `--onto` excludes the target and
+its logical descendants, then adds sorted local Git branches from the known
+target's repository (including its explicit `repo`). Without a target, no
+repository is guessed. Completion never fetches or writes; unavailable or
+refused context is silent. Suggestions do not waive execution's safety checks.
 
 A fresh reparent is always guarded: preview and execution use the same replay
 limit flag(s) and values, and execution adds `--approve-plan`. A limitless

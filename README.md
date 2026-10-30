@@ -660,7 +660,8 @@ control. There is no cross-ref/cross-repository atomicity or remote rollback.
 
 Without selectors/recovery flags, legacy external push remains lenient and
 skips missing worktrees; standalone checkout push still refuses.
-Issue #6 is an **unreleased implementation candidate**, not an rc.7 feature.
+Issue #6 was **released in `v1.2.18-rc.8`** and is closed after verified
+Ubuntu/macOS main and tag/release CI and exact-tag version checks.
 
 ## All Commands
 
@@ -722,6 +723,14 @@ tws stack reparent auth auth-middleware --onto main \
 tws stack reparent auth --continue     # resume forward
 tws stack reparent auth --abort        # roll back
 ```
+
+Shell completion uses the execution-selected feature layout, including external
+`TWS_ROOT`. Entries are logical stack names in declaration order. Once the target
+entry is known, `--onto` excludes that logical entry and its descendants, then
+adds sorted local Git branches from the target's repository, including an
+explicit entry `repo`. Without a target, only logical entries are suggested.
+Completion never fetches or writes state; unavailable or refused context silently
+offers no candidates. Suggestions do not replace execution's safety checks.
 
 The stored base is canonical: a stack-entry destination stores its logical
 entry name, a named literal ref stores its full `refs/...` name, and a raw

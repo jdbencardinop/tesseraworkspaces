@@ -1,0 +1,68 @@
+{
+  "feature": "fix-reparent-completion-context",
+  "candidate": "v2",
+  "base_commit": "54f214f080f82ac66b44e3d16de4cf7f8f285419",
+  "manifest_sha256": "7ebd802adbc9a3bf1782596c45b7ad4e120d5ff69e518986929fe38a721b35d9",
+  "product_files": 13,
+  "intent_files": 4,
+  "reviews": {
+    "receipt": "reviews.json",
+    "all_three_scopes_approved": true,
+    "models": ["gpt-6-astra", "gpt-6-astra", "gpt-6-astra"],
+    "same_manifest_verified_before_and_after": true,
+    "remaining_blockers": []
+  },
+  "ordinary_environment_gates": {
+    "tests": {"command": "go test ./... -count=1 -timeout 40m", "exit_code": 0, "seconds": 1171.61},
+    "vet": {"command": "go vet ./...", "exit_code": 0},
+    "lint": {"command": "golangci-lint run ./...", "exit_code": 0, "cache": "fresh owned cache"},
+    "build": {"command": "make build", "exit_code": 0},
+    "diff": {"command": "git diff --check", "exit_code": 0},
+    "dag": {"command": "tpatch feature deps --validate-all", "exit_code": 0},
+    "linux_cross_build": {"target": "linux/amd64", "cgo_enabled": false, "exit_code": 0}
+  },
+  "actual_cli_validation": {
+    "cases": 7,
+    "all_passed": true,
+    "binary_sha256": "83de4d8cd3f0467aba134f385e8b392e4ce978cc5bcc4d82cf04b04cc43a32c9",
+    "coverage": [
+      "execution-selected feature rather than caller/configured feature",
+      "known target's explicit secondary repository",
+      "external, checkout and legacy layout ordering/exclusion",
+      "silent unavailable/untrusted context with no caller-ref fallback",
+      "no Git-repository guess before selecting a target",
+      "complete Git/workspace snapshots and no remote contact"
+    ]
+  },
+  "replay": {
+    "patch_sha256": "cf533d0cac41025fe5667ec0ffdc272a8b529f4604616e6e9941ebbccdf0b1fb",
+    "recipe_sha256": "65705a713a963ad32f88366199212f48fa237f50d65947e02293bda1879e3bd4",
+    "original_generated_recipe_sha256": "19d5170d4e77e90a412981a322676534bdc8a88a7cc1d0da6136f9441b72e12a",
+    "operations": 13,
+    "exact_existing_preimages": 12,
+    "new_paths_proven_absent": 1,
+    "fresh_exact_base_recipe_replays": 2,
+    "all_postimages_matched": true,
+    "private_index_patch_replay": "passed",
+    "historical_recipe_generation_receipts_unchanged": true
+  },
+  "verifier": {
+    "command": "tpatch verify fix-reparent-completion-context --no-write --json",
+    "exit_code": 2,
+    "limitation": "inherited open-feature-dir canonical-parent materialization at 128da627dd26697695b09738ac522e56ab387dfa",
+    "baseline_evidence": "separately reproduced before the preceding scoped-push feature; published parent validation receipts document the same limitation",
+    "independent_exact_base_recipe_and_patch_replays": "passed",
+    "owner": "repair-historical-tpatch-artifacts",
+    "historical_artifacts_and_dependencies_not_rewritten": true
+  },
+  "prior_release": {
+    "tag": "v1.2.18-rc.8",
+    "commit": "54f214f080f82ac66b44e3d16de4cf7f8f285419",
+    "main_ci": 41068735370,
+    "tag_ci": 41074548419,
+    "published_at": "2026-10-30T15:26:42Z",
+    "verified_before_this_landing": true
+  },
+  "authorization": "Explicit autonomous overnight Path B implementation, review, landing, push and separate RC after successful main and tag/release CI.",
+  "publication_claim": "This is preland evidence; no issue-7 release is claimed."
+}

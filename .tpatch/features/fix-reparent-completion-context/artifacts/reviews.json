@@ -1,0 +1,30 @@
+{
+  "feature": "fix-reparent-completion-context",
+  "candidate": "v2",
+  "base_commit": "54f214f080f82ac66b44e3d16de4cf7f8f285419",
+  "manifest_sha256": "7ebd802adbc9a3bf1782596c45b7ad4e120d5ff69e518986929fe38a721b35d9",
+  "product_files": 13,
+  "intent_files": 4,
+  "reviews": [
+    {
+      "scope": "completion correctness and tests",
+      "model": "gpt-6-astra",
+      "verdict": "approved-for-scope",
+      "manifest_verified_before_and_after": true
+    },
+    {
+      "scope": "context integration and read-only isolation",
+      "model": "gpt-6-astra",
+      "verdict": "approved-for-scope",
+      "manifest_verified_before_and_after": true
+    },
+    {
+      "scope": "CLI UX and verified-release handoff",
+      "model": "gpt-6-astra",
+      "verdict": "approved-for-scope",
+      "manifest_verified_before_and_after": true
+    }
+  ],
+  "resolved_review_finding": "Only the new test's expected secondary repository path was canonicalized; original alias inputs and exact repository assertions remain.",
+  "remaining_review_blockers": []
+}

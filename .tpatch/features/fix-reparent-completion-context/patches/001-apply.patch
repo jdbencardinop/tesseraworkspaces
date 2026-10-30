@@ -1,0 +1,853 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 9716f0a..fa8c18d 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,10 +2,16 @@
+ 
+ ## Unreleased
+ 
+-Latest prerelease: [v1.2.18-rc.7](https://github.com/jdbencardinop/tesseraworkspaces/releases/tag/v1.2.18-rc.7).
++Latest prerelease: [v1.2.18-rc.8](https://github.com/jdbencardinop/tesseraworkspaces/releases/tag/v1.2.18-rc.8).
+ The release-candidate notes below remain part of the next stable release.
+ 
+-- **Scoped standalone push (#6), unreleased implementation candidate**
++- **Reparent completion context (#7), unreleased implementation candidate**
++  — logical entries come from the execution-selected feature layout, including
++  external `TWS_ROOT`; a known target's repository supplies Git destinations.
++  Completion preserves logical descendant exclusion, archive eligibility and
++  ordering, never guesses a repository without a target, and silently refuses
++  unavailable context. It never fetches or writes state; execution is unchanged.
++- **Scoped standalone push (#6), released in v1.2.18-rc.8**
+   — `tws push <feature> --only <logical-entry>` / `--from <logical-entry>`
+   publishes exactly the selected entry/subtree in external and checkout modes,
+   including active refs without materialized worktrees. This new route requires
+@@ -41,7 +47,8 @@ The release-candidate notes below remain part of the next stable release.
+   settings cannot add tags/mirror/matching/prune/submodule pushes; user hooks
+   remain enabled. Legacy no-selector external leniency and standalone checkout
+   refusal remain unchanged. No cross-ref/cross-repository atomicity or remote
+-  rollback is claimed. Use the new binary while pending; #6 is not yet released.
++  rollback is claimed. Use the new binary while pending. Issue #6 is closed
++  after verified Ubuntu/macOS main and tag/release CI and exact-tag version checks.
+ - **External feature rename (#5), released in v1.2.18-rc.7**
+   — future `tws rename feature OLD NEW` operations preserve ordinary dirty
+   work, index bytes, refs, and managed v1/v2 bytes/link identities/overrides.
+diff --git a/README.md b/README.md
+index 38499d9..1ecdf6d 100644
+--- a/README.md
++++ b/README.md
+@@ -660,7 +660,8 @@ control. There is no cross-ref/cross-repository atomicity or remote rollback.
+ 
+ Without selectors/recovery flags, legacy external push remains lenient and
+ skips missing worktrees; standalone checkout push still refuses.
+-Issue #6 is an **unreleased implementation candidate**, not an rc.7 feature.
++Issue #6 was **released in `v1.2.18-rc.8`** and is closed after verified
++Ubuntu/macOS main and tag/release CI and exact-tag version checks.
+ 
+ ## All Commands
+ 
+@@ -723,6 +724,14 @@ tws stack reparent auth --continue     # resume forward
+ tws stack reparent auth --abort        # roll back
+ ```
+ 
++Shell completion uses the execution-selected feature layout, including external
++`TWS_ROOT`. Entries are logical stack names in declaration order. Once the target
++entry is known, `--onto` excludes that logical entry and its descendants, then
++adds sorted local Git branches from the target's repository, including an
++explicit entry `repo`. Without a target, only logical entries are suggested.
++Completion never fetches or writes state; unavailable or refused context silently
++offers no candidates. Suggestions do not replace execution's safety checks.
++
+ The stored base is canonical: a stack-entry destination stores its logical
+ entry name, a named literal ref stores its full `refs/...` name, and a raw
+ object-id destination stores the full lowercase OID. The ref commit is
+diff --git a/assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md b/assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md
+index 623ec07..ec05e84 100644
+--- a/assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md
++++ b/assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md
+@@ -270,7 +270,7 @@ refusal — while a refusal tws already performs (dirty tree, held lock,
+ unresolvable base, incomplete previous run) keeps its own wording and carries
+ no marker.
+ 
+-### Publish only the intended entries (unreleased candidate)
++### Publish only the intended entries (released in v1.2.18-rc.8)
+ 
+ Use standalone `push --only` for one logical entry or `push --from` for its
+ transitive descendants, parent first. Do not include ancestors/neighbors.
+@@ -331,6 +331,13 @@ tws stack reparent <feature> --continue                               # resume
+ tws stack reparent <feature> --abort                                  # roll back
+ ```
+ 
++Completion uses the execution-selected feature layout, including external
++`TWS_ROOT`. It suggests logical entries first; `--onto` excludes the target and
++its logical descendants, then adds sorted local Git branches from the known
++target's repository (including its explicit `repo`). Without a target, no
++repository is guessed. Completion never fetches or writes; unavailable or
++refused context is silent. Suggestions do not waive execution's safety checks.
++
+ Use the same replay limit flag(s) and values on preview and execution. A
+ limitless preview has a null fingerprint and cannot be approved.
+ The preview moves no branch and writes no tws state; may fetch according to
+diff --git a/assets/skills/claude/tesseraworkspaces/SKILL.md b/assets/skills/claude/tesseraworkspaces/SKILL.md
+index 6536b52..9546022 100644
+--- a/assets/skills/claude/tesseraworkspaces/SKILL.md
++++ b/assets/skills/claude/tesseraworkspaces/SKILL.md
+@@ -68,6 +68,13 @@ recorded one — a squash-merged or abandoned parent, a branch that should hang
+ off `main` instead of a sibling. Reach for `tws sync` when the parents are
+ right and only their tips moved.
+ 
++Completion uses the execution-selected feature layout, including external
++`TWS_ROOT`. It suggests logical entries first; `--onto` excludes the target and
++its logical descendants, then adds sorted local Git branches from the known
++target's repository (including its explicit `repo`). Without a target, no
++repository is guessed. Completion never fetches or writes; unavailable or
++refused context is silent. Suggestions do not waive execution's safety checks.
++
+ A fresh reparent is always guarded. The preview and execution use the same
+ replay limit flag(s) and values; execution additionally carries
+ `--approve-plan <fingerprint>`. A limitless preview has a null fingerprint.
+@@ -317,7 +324,7 @@ tws push <feature> --continue               # finish only unconfirmed entries
+ tws push <feature> --cancel                 # abandon remainder; no remote rollback
+ ```
+ 
+-**Selected standalone push (unreleased candidate, Git 2.45+):** `--only` selects one logical
++**Selected standalone push (released in v1.2.18-rc.8, Git 2.45+):** `--only` selects one logical
+ entry; `--from` selects its transitive descendants, parent first, never ancestors
+ or neighboring stacks. Both external and checkout modes publish verified local
+ refs without worktrees, checkout, rebase or upstream changes. Archived selectors
+diff --git a/assets/skills/copilot/tws.prompt.md b/assets/skills/copilot/tws.prompt.md
+index 1acac36..4f8cad1 100644
+--- a/assets/skills/copilot/tws.prompt.md
++++ b/assets/skills/copilot/tws.prompt.md
+@@ -45,7 +45,7 @@ You are working in a project that uses `tws` for feature-scoped workspaces with
+ - `tws template add/list/show/remove` — Manage global/per-repository named template packages
+ - `tws template sync <feature> [--template <dir-or-name>] [--scope worktree|orchestrator|both] [--resolve-conflicts] [--allow-managed-removal]` — Backfill legacy templates or refresh managed roles
+ 
+-## Selected standalone publication (unreleased candidate)
++## Selected standalone publication (released in v1.2.18-rc.8)
+ 
+ `tws push <feature> --only <entry>` publishes one logical entry; `--from <entry>`
+ publishes its transitive descendants, parent first, never ancestors/neighbors.
+@@ -126,6 +126,13 @@ tws stack reparent auth auth-middleware --onto main --plan --max-replay-total 20
+ tws stack reparent auth auth-middleware --onto main --approve-plan <fingerprint> --max-replay-total 20
+ ```
+ 
++Completion uses the execution-selected feature layout, including external
++`TWS_ROOT`. It suggests logical entries first; `--onto` excludes the target and
++its logical descendants, then adds sorted local Git branches from the known
++target's repository (including its explicit `repo`). Without a target, no
++repository is guessed. Completion never fetches or writes; unavailable or
++refused context is silent. Suggestions do not waive execution's safety checks.
++
+ A fresh reparent is always guarded: preview and execution use the same replay
+ limit flag(s) and values, and execution adds `--approve-plan`. A limitless
+ preview has a null fingerprint. Destination storage is canonical: a stack-entry destination stores the logical entry name, a named literal ref stores its full `refs/...` name, and a raw object-id destination stores the full lowercase OID. It commits every moved branch in one race-atomic compare-and-swap transaction (crash-atomic only on the reftable backend), has exactly one commit point requiring both durable post-image `stack.yaml` and planned-or-no-op refs, and recovers **forward** past that point. Git refs, `stack.yaml` metadata, and worktree/index state are three separate effects; runtime state is durable recovery evidence, not a transactional effect. `--continue` and `--abort` take the whole frozen decision from persisted state and never accept an approval token, destination, cutoff, limit or fetch flag. While a reparent is recorded, `tws sync <feature>` refuses on every verb. Checkout mode blocks opening every feature in that workspace, serializes checkout sync/reparent mutations across features, and rejects non-empty entry `repo` values; external direct/tmux/all launches publish scoped intent before their final mutation check. tws changes no remote ref and no pull request; real top-level external push holds the feature mutation lock across all entries, clears obsolete follow-up rows before lease preflight, waits for a proven commit point, then warns and uses `--force-with-lease --force-if-includes`. Every mutating external sync route holds that same lock through rebase, metadata, optional push and remote follow-up clearing, rechecks reparent state after claiming, and releases last. If the checkout-global lock is absent, current tws scans every feature's recoverable checkout sync/reparent state before fresh mutation and recovery reconstructs only its own reservation. Checkout feature-directory opens hold the workspace launch intent through the agent/shell after a final guard check. Different stored `repo` spellings on one logical edge are refused even when they resolve to one common directory.
+diff --git a/docs/cheatsheet.md b/docs/cheatsheet.md
+index f991936..44c93f2 100644
+--- a/docs/cheatsheet.md
++++ b/docs/cheatsheet.md
+@@ -243,7 +243,7 @@ tws sync auth --fetch                # input refs: fetch first (external default
+   recovery follows the journal's phase and restores the marker exclusively.
+   Mixed legacy/transactional records require manual inspection, never deletion.
+ 
+-### Selected standalone push (unreleased candidate)
++### Selected standalone push (released in v1.2.18-rc.8)
+ 
+ ```sh
+ tws push auth --only api --dry-run       # local-only exact intent; remote unverified
+@@ -344,6 +344,11 @@ tws stack reparent auth --continue                                    # resume a
+ tws stack reparent auth --abort                                       # roll back
+ ```
+ 
++- Completion reads logical entries from the execution-selected feature, including
++  external `TWS_ROOT`. With a known target, `--onto` excludes its logical
++  descendant closure, then adds sorted local Git branches from that target's
++  repository, not the caller's. Without a target, no repository is guessed.
++  Completion never fetches or writes; unavailable or refused context is silent.
+ - A **fresh execution is always guarded**: it requires `--approve-plan` plus at
+   least one of `--max-replay-per-entry` / `--max-replay-total`. There is no
+   unguarded reparent route.
+diff --git a/docs/configuration.md b/docs/configuration.md
+index 30d24cd..1cf4fff 100644
+--- a/docs/configuration.md
++++ b/docs/configuration.md
+@@ -218,6 +218,8 @@ If no entry exists for the current repo, tesseraworkspaces defaults to a sibling
+ 
+ ### Scoped publication ownership and Git configuration
+ 
++Selected standalone push was **released in `v1.2.18-rc.8`**.
++
+ Selected standalone push never searches unrelated features/worktrees for a
+ default publisher. It proves the selected repository using an explicit
+ `workspaces` mapping, the conventional `<repo>.tws` root, a matching controlling
+diff --git a/docs/engineering-workflow.md b/docs/engineering-workflow.md
+index d4c1eb6..3b514dc 100644
+--- a/docs/engineering-workflow.md
++++ b/docs/engineering-workflow.md
+@@ -64,14 +64,21 @@ Current shipped checkout slices:
+ The opt-in global workspace registry is also shipped for stable cross-repository
+ discovery, health checks, and moved-target repair.
+ 
+-Next roadmap work: **scoped standalone push (#6)** — Path B implementation candidate (unreleased).
+-The separate `scoped-push-selection` boundary adds logical entry/subtree
+-publication in external and checkout modes, with selected-only dry-run and
+-durable continuation, while preserving unscoped behavior. Existing scoped
+-sync-plus-push already publishes its selected scope; do not duplicate its
+-selector or fabricate a sync transaction for standalone publication.
++Next roadmap work: **reparent completion context (#7)** — Path B implementation candidate (unreleased).
++The separate `fix-reparent-completion-context` boundary aligns shell completion
++with the execution-selected feature layout and target-entry repository.
++Completion stays read-only and local-only; preserve logical/Git name separation,
++candidate eligibility and ordering, and all existing execution safety.
+ Implementation and RC publication are authorized through the established
+ independent review, frozen-candidate gates, record/replay, and landing process.
++Scoped standalone push (#6) is fully released and verified in
++`v1.2.18-rc.8` at `54f214f`, with successful Ubuntu/macOS main and tag/release
++CI and exact-tag version checks. Its `scoped-push-selection` boundary adds
++logical entry/subtree publication in external and checkout modes, with
++selected-only dry-run and durable continuation while preserving unscoped
++behavior. Issue #6 is closed. Existing scoped sync-plus-push still publishes
++its selected scope; do not duplicate its selector or fabricate a sync
++transaction for standalone publication.
+ External feature rename (#5) is fully released and verified in
+ `v1.2.18-rc.7` at `d38b442` under
+ [`fix-external-feature-rename-backpointers`](../.tpatch/features/fix-external-feature-rename-backpointers/request.md).
+@@ -88,8 +95,8 @@ Scoped status projection (#3) is fully released and verified in
+ workspace evidence, with bounded probes and the existing versioned schema.
+ Ordinary sync safety (#4) is fully released and verified in `v1.2.18-rc.2`.
+ Slash-containing worktree injection (#1) is fully released and verified in
+-`v1.2.18-rc.3`, including explicit checkout injection refusal. All six
+-milestones have successful main/tag CI, and issues #4, #1, #3, #2, and #5 are closed.
++`v1.2.18-rc.3`, including explicit checkout injection refusal. All seven
++milestones have successful main/tag CI, and issues #4, #1, #3, #2, #5, and #6 are closed.
+ Preserve those status,
+ sync/reparent/session, and injection behaviors.
+ 
+@@ -157,7 +164,7 @@ explicit template sync may need new consent for guidance embedding the new
+ feature name. It does not repair older broken layouts. Export retains its established omission
+ of ledger data from archives while preserving effective bytes and the live ledger.
+ 
+-The approved #6 scope publishes selected active refs from verified repositories
++The shipped #6 scope publishes selected active refs from verified repositories
+ without requiring materialized worktrees, creating worktrees, or switching the
+ checkout. Existing no-selector behavior remains unchanged, including the
+ standalone checkout refusal. Its new publication state must be independently
+@@ -168,13 +175,15 @@ local-only with honest unknown remote state. Preserve rename admission across
+ selected-root fallback and all effects; do not probe unrelated worktrees or
+ clear their reparent follow-up rows.
+ 
+-The candidate uses its own strict version-one publication journal, shared
++The shipped publication feature uses its own strict version-one journal, shared
+ feature/checkout mutation reservations, exact token-owned object protection,
+ and explicit continuation/cancellation. It keeps terminal receipts so visible
+ outcomes can repeat their durability barriers. Pending state excludes current
+ mutators even after process death or lock removal; it is not a fabricated sync
+-transaction and does not promise universal old-binary blocking. Independent
+-review, replay, landing and CI publication still precede release of #6.
++transaction and does not promise universal old-binary blocking. The rc.8
++release completed independent review, replay, landing and verified CI
++publication. Keep its published tpatch artifacts as historical evidence;
++the current #7 completion candidate does not change its runtime scope.
+ 
+ ## Tpatch workflow
+ 
+diff --git a/docs/roadmap.md b/docs/roadmap.md
+index 287eee0..44088b2 100644
+--- a/docs/roadmap.md
++++ b/docs/roadmap.md
+@@ -84,12 +84,18 @@ Shipped foundations:
+   reconstructs only the matching recovery reservation. v1.2.16 only fails closed for same-feature sync after envelope
+   birth; do not use an older tws while any reparent is active or recoverable.
+ 
+-Current target: **scoped standalone push (#6)** — Path B implementation candidate (unreleased).
+-The separate `scoped-push-selection` boundary supplies the publication
+-counterpart to the existing shared logical entry/subtree selector. New scoped
+-flags support external and checkout modes; unscoped behavior remains unchanged.
++Current target: **reparent completion context (#7)** — Path B implementation candidate (unreleased).
++The separate `fix-reparent-completion-context` boundary aligns shell completion
++with the execution-selected feature layout and target-entry repository.
++Completion stays read-only and local-only; execution and candidate eligibility
++remain unchanged.
+ Implementation and RC publication are authorized through the established
+ review, validation, replay, and landing process.
++Scoped standalone push (#6) is fully released and verified in
++`v1.2.18-rc.8` at `54f214f`, with successful Ubuntu/macOS main and tag/release
++CI and exact-tag version checks. Its `scoped-push-selection` boundary supplies
++logical entry/subtree publication in external and checkout modes while
++preserving unscoped behavior.
+ External feature rename (#5) is fully released and verified in
+ `v1.2.18-rc.7` at `d38b442`, with successful Ubuntu/macOS main and tag/release CI.
+ Template conflict resolution is fully released and verified in
+@@ -104,17 +110,15 @@ the requested feature plus shared workspace evidence, with bounded probes and
+ the existing versioned schema. Ordinary sync safety (#4) is fully released and
+ verified in `v1.2.18-rc.2`. Slash-containing worktree injection (#1) is fully
+ released and verified in `v1.2.18-rc.3`, including verified external worktree
+-discovery and explicit checkout injection refusal. All six milestones have
++discovery and explicit checkout injection refusal. All seven milestones have
+ successful main/tag CI.
+ 
+ The approved delivery order **#4, #1, #3, #2** is complete. Keep each existing
+ tpatch feature as its own implementation boundary; the mapping below records
+-the delivered queue, the separate template/rename follow-ups, and the next
+-publication boundary,
+-not permission to combine
+-unrelated fixes. Lane B runtime-boundary
+-coordination is complete; its remaining provider PRDs do not block this
+-tws-local publication feature.
++the delivered queue, the separate template/rename/publication follow-ups, and
++the current completion boundary, not permission to combine unrelated fixes.
++Lane B runtime-boundary coordination is complete; its remaining provider PRDs
++do not block this completion-only fix.
+ 
+ Follow-ups explicitly owned by later features rather than by `tws status`:
+ 
+@@ -160,9 +164,10 @@ For decoupled names, `StackEntry.Name` identifies the tws worktree while `StackE
+ | 4 | Shipped: v1.2.18-rc.5 | [#2: role-aware templates](https://github.com/jdbencardinop/tesseraworkspaces/issues/2) | [`named-feature-templates`](../.tpatch/features/named-feature-templates/request.md) |
+ | 5 | Shipped: v1.2.18-rc.6 | Standalone follow-up; #2 is complete | [`template-conflict-resolution`](../.tpatch/features/template-conflict-resolution/request.md) |
+ | 6 | Shipped: v1.2.18-rc.7 | [#5: external feature rename backpointers](https://github.com/jdbencardinop/tesseraworkspaces/issues/5) | [`fix-external-feature-rename-backpointers`](../.tpatch/features/fix-external-feature-rename-backpointers/request.md) |
+-| 7 | Current: unreleased implementation candidate | [#6: scoped standalone push](https://github.com/jdbencardinop/tesseraworkspaces/issues/6) | `scoped-push-selection` |
++| 7 | Shipped: v1.2.18-rc.8 | [#6: scoped standalone push](https://github.com/jdbencardinop/tesseraworkspaces/issues/6) | [`scoped-push-selection`](../.tpatch/features/scoped-push-selection/request.md) |
++| 8 | Current: unreleased implementation candidate | [#7: reparent completion context](https://github.com/jdbencardinop/tesseraworkspaces/issues/7) | [`fix-reparent-completion-context`](../.tpatch/features/fix-reparent-completion-context/request.md) |
+ 
+-Issues #4, #1, #3, #2, and #5 are closed after their verified releases.
++Issues #4, #1, #3, #2, #5, and #6 are closed after their verified releases.
+ [`named-feature-templates`](../.tpatch/features/named-feature-templates/request.md)
+ shipped in [v1.2.18-rc.5](https://github.com/jdbencardinop/tesseraworkspaces/releases/tag/v1.2.18-rc.5),
+ with successful Ubuntu/macOS main and tag CI and exact-tag binary checks.
+@@ -240,7 +245,7 @@ submodules, and unsupported path-bearing configuration/alternates remain out
+ of scope. Keep its published tpatch artifacts as the historical implementation
+ record rather than rewriting them after release.
+ 
+-The current #6 boundary adds standalone selected publication, not another sync
++The shipped #6 boundary adds standalone selected publication, not another sync
+ selector. An entry selection publishes only that logical entry; a subtree
+ selection includes the entry and its transitive descendants in dependency
+ order, not ancestors or neighboring stacks. Existing scoped sync-plus-push and
+@@ -259,11 +264,12 @@ results. Local-only dry-run must show exact selected local intent and mark
+ remote state unverified. Shared reparent follow-up handling must preserve
+ unselected rows and avoid probing unrelated repositories/worktrees.
+ 
+-Nonblocking reparent follow-up:
++Current completion-only follow-up:
+ [`fix-reparent-completion-context`](../.tpatch/features/fix-reparent-completion-context/request.md)
+ aligns shell-completion candidates with the execution-selected external feature
+ root and target-entry repository. Explicit execution remains protected; this
+-follow-up does not displace the issue queue above.
++unreleased #7 candidate does not change the reparent planner, execution,
++mutation safety, or the shipped publication boundary.
+ 
+ ## Agent integration — P2
+ 
+diff --git a/internal/cli/push_selection_docs_test.go b/internal/cli/push_selection_docs_test.go
+index ff076f4..5a2ae1b 100644
+--- a/internal/cli/push_selection_docs_test.go
++++ b/internal/cli/push_selection_docs_test.go
+@@ -30,7 +30,7 @@ func TestScopedPushHelpAndGuidance(t *testing.T) {
+ 	} {
+ 		t.Run(path, func(t *testing.T) {
+ 			text := normalizeProse(readRepoDoc(t, path))
+-			for _, guidance := range []string{"--only", "--from", "--continue", "--cancel", "unverified", "inclusion", "unreleased", "terminal receipt"} {
++			for _, guidance := range []string{"--only", "--from", "--continue", "--cancel", "unverified", "inclusion", "released in v1.2.18-rc.8", "terminal receipt"} {
+ 				if !strings.Contains(text, guidance) {
+ 					t.Errorf("%s omits standalone publication guidance %q", path, guidance)
+ 				}
+diff --git a/internal/cli/stack_reparent.go b/internal/cli/stack_reparent.go
+index 1b28ea5..902ce6d 100644
+--- a/internal/cli/stack_reparent.go
++++ b/internal/cli/stack_reparent.go
+@@ -148,7 +148,7 @@ func stackReparentCmd() *cobra.Command {
+ 			case 0:
+ 				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
+ 			case 1:
+-				return reparentEntryCandidates(args[0], ""), cobra.ShellCompDirectiveNoFileComp
++				return reparentCompletionCandidates(args[0], ""), cobra.ShellCompDirectiveNoFileComp
+ 			}
+ 			return nil, cobra.ShellCompDirectiveNoFileComp
+ 		},
+@@ -392,38 +392,61 @@ func reparentOntoCompletion(cmd *cobra.Command, args []string, toComplete string
+ 	if len(args) > 1 {
+ 		target = args[1]
+ 	}
+-	out := reparentEntryCandidates(args[0], target)
+-	out = append(out, reparentBranchCandidates()...)
+-	return out, cobra.ShellCompDirectiveNoFileComp
++	return reparentCompletionCandidates(args[0], target), cobra.ShellCompDirectiveNoFileComp
+ }
+ 
+-// reparentEntryCandidates lists the feature's stack entry names, excluding the
+-// target and every descendant of it. Completion failures are silent: an
+-// unresolvable workspace offers no candidates rather than an error.
+-func reparentEntryCandidates(feature, target string) []string {
+-	ws, err := internal.RequireWorkspace()
++// reparentCompletionCandidates resolves one read-only execution context. Without
++// a target it offers only logical entries; a known target also selects the Git
++// repository. Any context failure is silent and never falls back to caller refs.
++func reparentCompletionCandidates(feature, target string) []string {
++	ws, err := requireReparentWorkspace(internal.LoadConfig())
+ 	if err != nil {
+ 		return nil
+ 	}
+ 	if internal.GuardFeatureName(ws.MetadataRoot, feature) != nil {
+ 		return nil
+ 	}
+-	featurePath, err := ws.ResolveFeaturePath(feature)
++	var featurePath string
++	if ws.Mode == internal.ModeCheckout {
++		featurePath, err = ws.ResolveFeaturePath(feature)
++	} else {
++		root := strings.TrimSpace(os.Getenv("TWS_ROOT"))
++		if root == "" {
++			root = ws.MetadataRoot
++		}
++		var layout externalSyncLayout
++		layout, err = resolveExternalSyncLayout(ws, root, feature)
++		featurePath = layout.FeaturePath
++	}
+ 	if err != nil {
+ 		return nil
+ 	}
++	if _, err := featureRenameRouteAdmission(ws.Mode, feature, featurePath, true); err != nil {
++		return nil
++	}
++	if err := internal.RefusePendingScopedPush(internal.ScopedPushLocation{
++		Mode: ws.Mode, Feature: feature, FeaturePath: featurePath, MetadataRoot: ws.MetadataRoot,
++	}); err != nil {
++		return nil
++	}
+ 	stack, err := internal.LoadStack(featurePath)
+ 	if err != nil {
+ 		return nil
+ 	}
+ 	excluded := map[string]bool{}
++	repoRoot := ""
+ 	if target != "" {
+-		excluded[target] = true
+-		closure, cerr := internal.ReparentClosureOrder(stack, target)
+-		if cerr == nil {
+-			for _, e := range closure {
+-				excluded[e.Name] = true
+-			}
++		repo, err := internal.ResolveReparentTargetRepository(ws.Mode, featurePath, ws.RepoRoot, target)
++		if err != nil {
++			return nil
++		}
++		repoRoot = repo.Root
++		closure, err := internal.ReparentClosureOrder(stack, target)
++		if err != nil {
++			return nil
++		}
++		for _, e := range closure {
++			excluded[e.Name] = true
+ 		}
+ 	}
+ 	out := make([]string, 0, len(stack.Branches))
+@@ -433,18 +456,17 @@ func reparentEntryCandidates(feature, target string) []string {
+ 		}
+ 		out = append(out, e.Name)
+ 	}
++	if repoRoot != "" {
++		out = append(out, reparentBranchCandidates(repoRoot)...)
++	}
+ 	return out
+ }
+ 
+ // reparentBranchCandidates lists local branch names through the shipped
+ // single-`for-each-ref` inventory. It is a completion-only probe and never
+ // participates in a plan or a run.
+-func reparentBranchCandidates() []string {
+-	ws, err := internal.RequireWorkspace()
+-	if err != nil || ws.RepoRoot == "" {
+-		return nil
+-	}
+-	inv := internal.BuildBranchRefInventory(ws.RepoRoot)
++func reparentBranchCandidates(repoRoot string) []string {
++	inv := internal.BuildBranchRefInventory(repoRoot)
+ 	if !inv.Available {
+ 		return nil
+ 	}
+diff --git a/internal/cli/stack_reparent_completion_test.go b/internal/cli/stack_reparent_completion_test.go
+new file mode 100644
+index 0000000..63e2143
+--- /dev/null
++++ b/internal/cli/stack_reparent_completion_test.go
+@@ -0,0 +1,298 @@
++package cli
++
++import (
++	"errors"
++	"os"
++	"path/filepath"
++	"reflect"
++	"strings"
++	"testing"
++
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
++	"github.com/spf13/cobra"
++)
++
++func assertReparentCompletion(t *testing.T, flag string, args, want []string) {
++	t.Helper()
++	cmd, _, err := stackCmd().Find([]string{"reparent"})
++	if err != nil {
++		t.Fatal(err)
++	}
++	fn := cmd.ValidArgsFunction
++	if flag != "" {
++		var ok bool
++		fn, ok = cmd.GetFlagCompletionFunc(flag)
++		if !ok || fn == nil {
++			t.Fatalf("--%s has no registered completion", flag)
++		}
++	}
++	stdout, stderr := syncCaptureStreams(t, func() {
++		got, directive := fn(cmd, args, "")
++		if !reflect.DeepEqual(got, want) || directive != cobra.ShellCompDirectiveNoFileComp {
++			t.Errorf("%v --%s: completion = %v (%v), want %v (NoFileComp)", args, flag, got, directive, want)
++		}
++	})
++	if stdout != "" || stderr != "" {
++		t.Fatalf("completion was not silent: stdout=%q stderr=%q", stdout, stderr)
++	}
++}
++
++func TestStackReparentCompletion_SelectedFeatureAndTargetRepository(t *testing.T) {
++	f := newInjectFixture(t, "feature")
++	injectGit(t, f.repo, "branch", "caller-only")
++	if err := internal.SaveStack(f.featurePath, internal.Stack{Branches: []internal.StackEntry{{
++		Name: "configured-only", Branch: "caller-only", Base: "main",
++	}}}); err != nil {
++		t.Fatal(err)
++	}
++	secondary := createInjectRepo(t, f.root, "secondary")
++	canonicalSecondary, err := filepath.EvalSymlinks(secondary)
++	if err != nil {
++		t.Fatal(err)
++	}
++	for _, branch := range []string{"z-topic", "topic/target", "a-destination", "topic/child"} {
++		injectGit(t, secondary, "branch", branch)
++	}
++	selectedRoot := filepath.Join(f.root, "selected")
++	selectedFeature := mustMkdir(t, filepath.Join(selectedRoot, f.feature))
++	stack := internal.Stack{Branches: []internal.StackEntry{
++		{Name: "z-logical", Branch: "z-topic", Base: "main", Repo: secondary},
++		{Name: "logical/target", Branch: "topic/target", Base: "z-logical", Repo: secondary},
++		{Name: "child/leaf", Branch: "topic/child", Base: "logical/target", Repo: secondary},
++		{Name: "archived", Base: "main", Repo: secondary, Archived: true},
++		{Name: "a-logical", Branch: "a-destination", Base: "main", Repo: secondary},
++		{Name: "grandchild", Base: "child/leaf", Repo: secondary, Archived: true},
++		{Name: "other-repo", Branch: "caller-only", Base: "logical/target", Repo: f.repo},
++	}}
++	if err := internal.SaveStack(selectedFeature, stack); err != nil {
++		t.Fatal(err)
++	}
++	worktree := filepath.Join(selectedFeature, "worktrees", "logical", "target")
++	injectGit(t, secondary, "worktree", "add", worktree, "topic/target")
++	t.Setenv("TWS_ROOT", selectedRoot)
++	logical := []string{"z-logical", "logical/target", "child/leaf", "archived", "a-logical", "grandchild", "other-repo"}
++	destinations := []string{"z-logical", "archived", "a-logical", "other-repo", "a-destination", "main", "topic/child", "topic/target", "z-topic"}
++	before := featureRenameReviewSnapshot(t, f.root)
++	wrapper := newSyncGitWrapper(t, false)
++	wrapper.around(t, func() {
++		assertReparentCompletion(t, "", []string{f.feature}, logical)
++		assertReparentCompletion(t, "onto", nil, nil)
++		assertReparentCompletion(t, "onto", []string{f.feature}, logical)
++		assertReparentCompletion(t, "onto", []string{f.feature, "missing-target"}, nil)
++		assertReparentCompletion(t, "onto", []string{f.feature, "logical/target"}, destinations)
++		stdout, stderr, code := runTWSExecute(t, "__complete", "stack", "reparent", f.feature, "logical/target", "--onto", "")
++		if code != 0 || stdout != strings.Join(destinations, "\n")+"\n:4\n" ||
++			(stderr != "" && !strings.Contains(stderr, "Completion ended with directive")) {
++			t.Fatalf("Cobra completion: exit=%d stdout=%q stderr=%q", code, stdout, stderr)
++		}
++		t.Run("linked-worktree", func(t *testing.T) {
++			t.Chdir(worktree)
++			assertReparentCompletion(t, "onto", []string{f.feature, "logical/target"}, destinations)
++		})
++	})
++	inventories := 0
++	for _, record := range wrapper.records(t) {
++		switch record.Verb {
++		case "rev-parse":
++		case "for-each-ref":
++			inventories++
++			if !argvHas(record.Argv, canonicalSecondary) {
++				t.Fatalf("branch inventory borrowed the caller repository: %v", record.Argv)
++			}
++		default:
++			t.Fatalf("completion ran a non-inventory Git command: %v", record.Argv)
++		}
++	}
++	if inventories != 3 {
++		t.Fatalf("completion ran %d branch inventories, want one per known-target callback (3)", inventories)
++	}
++	if got := featureRenameReviewSnapshot(t, f.root); got != before {
++		t.Fatal("completion changed repository, remote, worktree, or workspace files")
++	}
++	t.Run("configured-fallback", func(t *testing.T) {
++		if err := os.Remove(internal.StackPath(selectedFeature)); err != nil {
++			t.Fatal(err)
++		}
++		before := featureRenameReviewSnapshot(t, f.root)
++		assertReparentCompletion(t, "", []string{f.feature}, []string{"configured-only"})
++		assertReparentCompletion(t, "onto", []string{f.feature, "configured-only"}, []string{"caller-only", "main"})
++		if featureRenameReviewSnapshot(t, f.root) != before {
++			t.Fatal("completion changed the configured fallback")
++		}
++	})
++}
++
++func TestStackReparentCompletion_CheckoutLayouts(t *testing.T) {
++	for _, layout := range []string{"namespaced", "legacy"} {
++		t.Run(layout, func(t *testing.T) {
++			f := newInjectFixture(t, "feature")
++			root := mustMkdir(t, filepath.Join(f.repo, ".tws"))
++			if err := os.WriteFile(filepath.Join(root, "config.yaml"), []byte("workspace_mode: checkout\n"), 0o600); err != nil {
++				t.Fatal(err)
++			}
++			featurePath := filepath.Join(root, "features", f.feature)
++			otherPath := filepath.Join(root, f.feature)
++			if layout == "legacy" {
++				featurePath, otherPath = otherPath, featurePath
++			}
++			mustMkdir(t, featurePath)
++			injectGit(t, f.repo, "branch", "topic/target")
++			stack := internal.Stack{Branches: []internal.StackEntry{
++				{Name: "logical/target", Branch: "topic/target", Base: "main"},
++				{Name: "archived", Base: "main", Archived: true},
++			}}
++			if err := internal.SaveStack(featurePath, stack); err != nil {
++				t.Fatal(err)
++			}
++			if err := internal.SaveStack(f.featurePath, internal.Stack{Branches: []internal.StackEntry{{Name: "wrong-mode"}}}); err != nil {
++				t.Fatal(err)
++			}
++			t.Setenv("TWS_ROOT", f.workspace)
++			before := featureRenameReviewSnapshot(t, f.root)
++			assertReparentCompletion(t, "", []string{f.feature}, []string{"logical/target", "archived"})
++			assertReparentCompletion(t, "onto", []string{f.feature, "logical/target"}, []string{"archived", "main", "topic/target"})
++			if featureRenameReviewSnapshot(t, f.root) != before {
++				t.Fatal("checkout completion changed files")
++			}
++			stack.Branches[0].Repo = f.repo
++			if err := internal.SaveStack(featurePath, stack); err != nil {
++				t.Fatal(err)
++			}
++			assertReparentCompletion(t, "onto", []string{f.feature, "logical/target"}, nil)
++			stack.Branches[0].Repo = ""
++			if err := internal.SaveStack(featurePath, stack); err != nil {
++				t.Fatal(err)
++			}
++			mustMkdir(t, otherPath)
++			assertReparentCompletion(t, "", []string{f.feature}, nil)
++			assertReparentCompletion(t, "onto", []string{f.feature, "logical/target"}, nil)
++		})
++	}
++}
++
++func TestStackReparentCompletion_UnavailableContext(t *testing.T) {
++	f := newInjectFixture(t, "feature")
++	t.Setenv("TWS_ROOT", f.workspace)
++	stack := internal.Stack{Branches: []internal.StackEntry{
++		{Name: "target", Branch: "topic/target", Base: "main"},
++		{Name: "destination", Base: "main"},
++	}}
++	if err := internal.SaveStack(f.featurePath, stack); err != nil {
++		t.Fatal(err)
++	}
++	for _, feature := range []string{"missing", "../escape"} {
++		assertReparentCompletion(t, "", []string{feature}, nil)
++		assertReparentCompletion(t, "onto", []string{feature, "target"}, nil)
++	}
++	assertReparentCompletion(t, "onto", []string{f.feature, "unknown"}, nil)
++	for _, test := range []struct {
++		name string
++		edit func(*internal.Stack)
++	}{
++		{"missing-repository", func(s *internal.Stack) { s.Branches[0].Repo = filepath.Join(f.root, "missing-repo") }},
++		{"duplicate-name", func(s *internal.Stack) { s.Branches[1].Name = "target" }},
++		{"duplicate-git-branch", func(s *internal.Stack) { s.Branches[1].Branch = "topic/target" }},
++		{"cycle", func(s *internal.Stack) {
++			s.Branches[0].Base = "destination"
++			s.Branches[1].Base = "target"
++		}},
++	} {
++		t.Run(test.name, func(t *testing.T) {
++			current := internal.Stack{Branches: append([]internal.StackEntry{}, stack.Branches...)}
++			test.edit(&current)
++			if err := internal.SaveStack(f.featurePath, current); err != nil {
++				t.Fatal(err)
++			}
++			before := featureRenameReviewSnapshot(t, f.root)
++			assertReparentCompletion(t, "onto", []string{f.feature, "target"}, nil)
++			if featureRenameReviewSnapshot(t, f.root) != before {
++				t.Fatal("unavailable completion changed files")
++			}
++		})
++	}
++	for _, contents := range []string{"branches: [invalid", ""} {
++		if err := os.WriteFile(internal.StackPath(f.featurePath), []byte(contents), 0o644); err != nil {
++			t.Fatal(err)
++		}
++		assertReparentCompletion(t, "onto", []string{f.feature, "target"}, nil)
++	}
++	if err := os.Remove(internal.StackPath(f.featurePath)); err != nil {
++		t.Fatal(err)
++	}
++	for _, unreadable := range []bool{false, true} {
++		if unreadable {
++			mustMkdir(t, internal.StackPath(f.featurePath))
++		}
++		assertReparentCompletion(t, "", []string{f.feature}, nil)
++		assertReparentCompletion(t, "onto", []string{f.feature, "target"}, nil)
++	}
++	t.Run("no-workspace", func(t *testing.T) {
++		t.Setenv("TWS_ROOT", "")
++		t.Setenv("HOME", t.TempDir())
++		t.Chdir(t.TempDir())
++		assertReparentCompletion(t, "", []string{f.feature}, nil)
++		assertReparentCompletion(t, "onto", []string{f.feature, "target"}, nil)
++	})
++}
++
++func TestStackReparentCompletion_PendingSelectedRoot(t *testing.T) {
++	for _, pending := range []string{"rename", "publication"} {
++		t.Run(pending, func(t *testing.T) {
++			f := newInjectFixture(t, "feature")
++			if err := internal.SaveStack(f.featurePath, internal.Stack{Branches: []internal.StackEntry{{Name: "configured-only"}}}); err != nil {
++				t.Fatal(err)
++			}
++			root := filepath.Join(f.root, "selected")
++			if err := internal.EnsureExternalWorkspaceMarker(root); err != nil {
++				t.Fatal(err)
++			}
++			featurePath := mustMkdir(t, filepath.Join(root, f.feature))
++			if err := internal.SaveStack(featurePath, internal.Stack{Branches: []internal.StackEntry{{
++				Name: "target", Branch: "selected/target", Base: "main", Repo: f.repo,
++			}}}); err != nil {
++				t.Fatal(err)
++			}
++			injectGit(t, f.repo, "worktree", "add", filepath.Join(featurePath, "worktrees", "target"), "-b", "selected/target")
++			t.Setenv("TWS_ROOT", root)
++			switch pending {
++			case "rename":
++				oldHook := internal.FeatureRenameCheckpoint
++				t.Cleanup(func() { internal.FeatureRenameCheckpoint = oldHook })
++				internal.FeatureRenameCheckpoint = func(step, _ string) error {
++					if step == "after-move" {
++						return internal.ErrFeatureRenameInterrupted
++					}
++					return nil
++				}
++				_, err := internal.RenameExternalFeature(internal.Workspace{
++					Mode: internal.ModeExternal, RepoRoot: f.repo, MetadataRoot: root,
++				}, f.feature, "renamed", "", nil)
++				internal.FeatureRenameCheckpoint = oldHook
++				if !errors.Is(err, internal.ErrFeatureRenameInterrupted) {
++					t.Fatalf("create interrupted rename: %v", err)
++				}
++			case "publication":
++				restore := rejectPushOf(t, filepath.Join(f.root, "primary.git"), "selected/target")
++				defer restore()
++				if _, _, err := runPublication(t, "--only", "target"); err == nil {
++					t.Fatal("expected rejected local publication")
++				}
++				state, err := internal.LoadScopedPushState(internal.ScopedPushLocation{
++					Mode: internal.ModeExternal, Feature: f.feature, FeaturePath: featurePath, MetadataRoot: root,
++				})
++				if err != nil || state == nil || state.Terminal() {
++					t.Fatalf("expected pending publication: state=%+v err=%v", state, err)
++				}
++				if err := os.Remove(internal.StackPath(featurePath)); err != nil {
++					t.Fatal(err)
++				}
++			}
++			before := featureRenameReviewSnapshot(t, f.root)
++			assertReparentCompletion(t, "", []string{f.feature}, nil)
++			assertReparentCompletion(t, "onto", []string{f.feature, "target"}, nil)
++			if featureRenameReviewSnapshot(t, f.root) != before {
++				t.Fatal("completion changed pending selected-root evidence or its configured fallback")
++			}
++		})
++	}
++}
+diff --git a/internal/cli/sync_plan_docs_test.go b/internal/cli/sync_plan_docs_test.go
+index f08bc9b..561de78 100644
+--- a/internal/cli/sync_plan_docs_test.go
++++ b/internal/cli/sync_plan_docs_test.go
+@@ -122,9 +122,9 @@ func TestSyncPlanDocs_FlagWorkflowSurfacesCarryAllFiveLiterals(t *testing.T) {
+ // own rule: neither file may carry any of the five flag literals.
+ //
+ // Released safety features stay in the shipped list. Post-release
+-// prioritization advances to scoped standalone push after sync safety,
+-// injection correctness, scoped status, both template slices, and rename ship; the
+-// negative flag-literal contract is unchanged.
++// prioritization advances to reparent completion after sync safety, injection
++// correctness, scoped status, both template slices, rename, and scoped push ship;
++// the negative flag-literal contract is unchanged.
+ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t *testing.T) {
+ 	literals := []string{"--plan", "--max-replay-per-entry", "--max-replay-total", "--approve-plan", "plan-guard:"}
+ 
+@@ -156,12 +156,12 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t
+ 		}
+ 
+ 		targetTail := ci[targetIdx : targetIdx+min(120, len(ci)-targetIdx)]
+-		if !strings.Contains(targetTail, "scoped standalone push (#6)") ||
++		if !strings.Contains(targetTail, "reparent completion context (#7)") ||
+ 			!strings.Contains(targetTail, "path b implementation candidate") || !strings.Contains(targetTail, "unreleased") {
+-			t.Fatalf(`docs/roadmap.md's "Current target:" sentence must name scoped standalone push (#6) as an unreleased Path B implementation candidate, got: %q`, targetTail)
++			t.Fatalf(`docs/roadmap.md's "Current target:" sentence must name reparent completion context (#7) as an unreleased Path B implementation candidate, got: %q`, targetTail)
+ 		}
+-		if !strings.Contains(content, "scoped-push-selection") {
+-			t.Fatal("docs/roadmap.md must name the separate issue-six feature boundary")
++		if !strings.Contains(content, "fix-reparent-completion-context") {
++			t.Fatal("docs/roadmap.md must name the separate issue-seven feature boundary")
+ 		}
+ 		if !strings.Contains(normalizeProse(content), "ordinary sync safety (#4) is fully released and verified in v1.2.18-rc.2") {
+ 			t.Fatal("docs/roadmap.md must retain the verified ordinary-sync release milestone before advancing the target")
+@@ -181,14 +181,17 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t
+ 		if !strings.Contains(normalizeProse(content), "external feature rename (#5) is fully released and verified in v1.2.18-rc.7") {
+ 			t.Fatal("docs/roadmap.md must retain the verified rename release milestone before advancing the target")
+ 		}
+-		if !strings.Contains(normalizeProse(content), "issues #4, #1, #3, #2, and #5 are closed after their verified releases") {
+-			t.Fatal("docs/roadmap.md must distinguish the completed issue queue from the unreleased scoped-push candidate")
++		if !strings.Contains(normalizeProse(content), "scoped standalone push (#6) is fully released and verified in v1.2.18-rc.8") {
++			t.Fatal("docs/roadmap.md must retain the verified scoped-push release milestone before advancing the target")
++		}
++		if !strings.Contains(normalizeProse(content), "issues #4, #1, #3, #2, #5, and #6 are closed after their verified releases") {
++			t.Fatal("docs/roadmap.md must distinguish the completed issue queue from the unreleased completion candidate")
+ 		}
+ 		previous := backlogIdx
+-		for _, issue := range []string{"[#4:", "[#1:", "[#3:", "[#2:", "[#5:", "[#6:"} {
++		for _, issue := range []string{"[#4:", "[#1:", "[#3:", "[#2:", "[#5:", "[#6:", "[#7:"} {
+ 			index := strings.Index(ci, issue)
+ 			if index <= previous {
+-				t.Fatalf("docs/roadmap.md must order the backlog as #4, #1, #3, #2, #5, #6; %s is at %d after %d", issue, index, previous)
++				t.Fatalf("docs/roadmap.md must order the backlog as #4, #1, #3, #2, #5, #6, #7; %s is at %d after %d", issue, index, previous)
+ 			}
+ 			previous = index
+ 		}
+@@ -240,12 +243,12 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t
+ 		}
+ 
+ 		nextTail := ci[nextFeatureIdx : nextFeatureIdx+min(120, len(ci)-nextFeatureIdx)]
+-		if !strings.Contains(nextTail, "scoped standalone push (#6)") ||
++		if !strings.Contains(nextTail, "reparent completion context (#7)") ||
+ 			!strings.Contains(nextTail, "path b implementation candidate") || !strings.Contains(nextTail, "unreleased") {
+-			t.Fatalf(`docs/engineering-workflow.md's "Next roadmap work:" sentence must name scoped standalone push (#6) as an unreleased Path B implementation candidate, got: %q`, nextTail)
++			t.Fatalf(`docs/engineering-workflow.md's "Next roadmap work:" sentence must name reparent completion context (#7) as an unreleased Path B implementation candidate, got: %q`, nextTail)
+ 		}
+-		if !strings.Contains(content, "scoped-push-selection") {
+-			t.Fatal("docs/engineering-workflow.md must name the separate issue-six feature boundary")
++		if !strings.Contains(content, "fix-reparent-completion-context") {
++			t.Fatal("docs/engineering-workflow.md must name the separate issue-seven feature boundary")
+ 		}
+ 		if !strings.Contains(normalizeProse(content), "ordinary sync safety (#4) is fully released and verified in v1.2.18-rc.2") {
+ 			t.Fatal("docs/engineering-workflow.md must retain the verified ordinary-sync release milestone before advancing the target")
+@@ -265,6 +268,9 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t
+ 		if !strings.Contains(normalizeProse(content), "external feature rename (#5) is fully released and verified in v1.2.18-rc.7") {
+ 			t.Fatal("docs/engineering-workflow.md must retain the verified rename release milestone before advancing the target")
+ 		}
++		if !strings.Contains(normalizeProse(content), "scoped standalone push (#6) is fully released and verified in v1.2.18-rc.8") {
++			t.Fatal("docs/engineering-workflow.md must retain the verified scoped-push release milestone before advancing the target")
++		}
+ 
+ 		assertNoFlagLiteral(t, "docs/engineering-workflow.md", content)
+ 	})

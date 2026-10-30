@@ -1,0 +1,103 @@
+{
+  "schema_version": "1.1",
+  "slug": "fix-reparent-completion-context",
+  "verified_at": "2026-10-30T16:08:03Z",
+  "verdict": "failed",
+  "exit_code": 2,
+  "repository": {
+    "object_format": "sha1",
+    "commit_id_hex_len": 40,
+    "shallow": false,
+    "partial_clone": false,
+    "git_version": "git version 2.55.0",
+    "git_floor_satisfied": true
+  },
+  "baseline": {
+    "mode": "head-anchored",
+    "current_commit": "54f214f080f82ac66b44e3d16de4cf7f8f285419"
+  },
+  "landing_evidence": {
+    "state": "none",
+    "candidates": 0
+  },
+  "target_mode": "forward",
+  "checks": [
+    {
+      "id": "status_loaded",
+      "severity": "block-abort",
+      "passed": true
+    },
+    {
+      "id": "intent_files_present",
+      "severity": "block",
+      "passed": true
+    },
+    {
+      "id": "recipe_parses",
+      "severity": "block",
+      "passed": true
+    },
+    {
+      "id": "recipe_op_targets_resolve",
+      "severity": "block",
+      "passed": true
+    },
+    {
+      "id": "dep_metadata_valid",
+      "severity": "block",
+      "passed": true
+    },
+    {
+      "id": "satisfied_by_reachable",
+      "severity": "block",
+      "passed": true,
+      "skipped": true,
+      "reason": "no satisfied_by deps to check"
+    },
+    {
+      "id": "dependency_gate_satisfied",
+      "severity": "warn",
+      "passed": true
+    },
+    {
+      "id": "recipe_replay_clean",
+      "severity": "block",
+      "passed": false,
+      "remediation": "hard parent open-feature-dir landed at 128da627dd26697695b09738ac522e56ab387dfa but its canonical patch is not present at the verification baseline; verify open-feature-dir first — do not re-apply it into the shadow",
+      "mode": "forward"
+    },
+    {
+      "id": "post_apply_patch_replay_clean",
+      "severity": "block",
+      "passed": true,
+      "skipped": true,
+      "reason": "skipped: parent-replay aborted before V8",
+      "mode": "forward"
+    },
+    {
+      "id": "reconcile_outcome_consistent",
+      "severity": "warn",
+      "passed": true,
+      "skipped": true,
+      "reason": "no Reconcile.Outcome set"
+    },
+    {
+      "id": "write_file_preimage_fresh",
+      "severity": "block",
+      "passed": true,
+      "skipped": true,
+      "reason": "skipped: parent-replay aborted before V10",
+      "mode": "provenance-anchor"
+    }
+  ],
+  "lifecycle_state": "applied",
+  "recipe_hash_at_verify": "65705a713a963ad32f88366199212f48fa237f50d65947e02293bda1879e3bd4",
+  "patch_hash_at_verify": "cf533d0cac41025fe5667ec0ffdc272a8b529f4604616e6e9941ebbccdf0b1fb",
+  "parent_snapshot": {
+    "fix-external-feature-rename-backpointers": "applied",
+    "safe-reparent-restack": "applied",
+    "scoped-push-selection": "applied"
+  },
+  "failed_at": "parent-landing-drift",
+  "parent_slug": "open-feature-dir"
+}

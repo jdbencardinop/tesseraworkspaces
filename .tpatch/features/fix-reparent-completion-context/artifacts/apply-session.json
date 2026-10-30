@@ -1,0 +1,8 @@
+{
+  "slug": "fix-reparent-completion-context",
+  "completed_at": "2026-10-30T16:07:55Z",
+  "base_commit": "54f214f080f82ac66b44e3d16de4cf7f8f285419",
+  "has_patch": true,
+  "validation_status": "passed",
+  "validation_notes": "Parent exact candidate: three independent approvals, full ordinary tests/vet/lint/build/diff/DAG, Linux build and seven actual CLI completion checks passed."
+}
