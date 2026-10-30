@@ -240,10 +240,37 @@ batch decisions precede effects and separate ordinary-removal consent, without
 writer locks during interaction. Later failures retain per-feature progress
 and recovery; do not claim cross-feature atomicity.
 
-Known inherited limitation: materialized external feature rename can leave
-stale Git backpointers ([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)).
-This release preserves acknowledgements during metadata moves but does not
-repair that Git behavior.
+### External feature rename (unreleased implementation candidate)
+
+Published v1.2.18-rc.6 retains the external rename/backpointer defect
+([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)); #5 remains
+open. This candidate fixes future renames, not arbitrary older broken layouts:
+
+```sh
+tws rename feature OLD NEW
+tws rename feature OLD NEW --continue
+tws rename feature OLD NEW --abort
+```
+
+The mutually exclusive recovery flags are external-only and require the same
+names, root, controlling repository, and bound journal. After durable
+completion, continuation is cleanup-only and abort refuses. Checkout and
+branch rename retain their separate behavior.
+
+The whole-directory move preserves dirty/index/untracked/ignored content,
+user symlinks, executable bits, refs, and v1/v2 template bytes/link identities
+and decisions. Success requires no dangling Git administrative links or
+old-path registrations. Never run `git worktree repair` as a workaround: even
+explicit paths can modify unrelated siblings. Unsupported nested/primary
+repositories, populated submodules, path-bearing Git configuration/alternates,
+ambiguous/stale layouts, active operations/locks/sessions, and recovery refuse.
+Directory, pointer, and spaces publications are separate effects, not all-file
+or cross-repository atomicity. Temporary partial state retains exact evidence
+under `.tws-workspace/feature-renames/` and per-filesystem staging; rollback
+requires verified ownership. Do not delete unknown residue or use an older
+tws while rename is active or recoverable. Rename never re-renders or adopts
+templates; later explicit template sync may need new consent for native
+guidance embedding the new feature name.
 
 ### Cross-Worktree Decisions
 

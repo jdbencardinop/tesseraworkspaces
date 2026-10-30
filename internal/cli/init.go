@@ -87,7 +87,7 @@ Use --agent to override detection. Use --mode to set workspace_mode.`,
 	cmd.Flags().BoolVar(&register, "register", false, "Register workspace in global registry after init")
 	cmd.Flags().StringVar(&registerAlias, "register-alias", "", "Alias for registry registration (requires --register)")
 
-	return cmd
+	return featureRenameContextCommand(cmd)
 }
 
 // enableWorkspaceMode delegates to the unified internal helpers.

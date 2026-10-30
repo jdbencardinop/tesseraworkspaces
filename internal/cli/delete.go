@@ -44,7 +44,7 @@ func deleteCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&deleteBranches, "delete-branches", false, "Also delete git branches (uses safe -d; unmerged branches are skipped)")
 	cmd.Flags().BoolVar(&forceDeleteBranches, "force-delete-branches", false, "Force-delete git branches even if unmerged (uses -D)")
 
-	return cmd
+	return featureRenameAdmittedCommand(cmd)
 }
 
 // deleteCheckout deletes a feature in checkout mode.
@@ -152,9 +152,18 @@ func restoreDeletedBranches(repoRoot string, backups []branchBackup) error {
 
 // deleteExternal deletes a feature in external mode.
 func deleteExternal(feature string, deleteBranches, forceDelete bool) (retErr error) {
+	root := internal.TwsRoot()
+	if err := internal.GuardFeatureName(root, feature); err != nil {
+		return err
+	}
+	admission, err := internal.AcquireExternalFeatureAdmission(root, feature)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, admission.Release()) }()
 	featurePath := internal.FeaturePath(feature)
 
-	tx, err := internal.BeginSpacesFeatureDelete(internal.TwsRoot(), feature, featurePath)
+	tx, err := internal.BeginSpacesFeatureDelete(root, feature, featurePath)
 	if err != nil {
 		return err
 	}

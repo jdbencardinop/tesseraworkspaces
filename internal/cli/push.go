@@ -79,6 +79,16 @@ func pushFeature(feature string, layout externalSyncLayout, dryRun bool) error {
 }
 
 func pushFeatureSerialized(feature string, layout externalSyncLayout, dryRun bool) (err error) {
+	selectionAdmission, err := featureRenameSelectionAdmission(layout.selectionRoot, feature, dryRun)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, selectionAdmission.Release()) }()
+	admission, err := featureRenameRouteAdmission(internal.ModeExternal, feature, layout.FeaturePath, dryRun)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, admission.Release()) }()
 	if dryRun {
 		return pushFeature(feature, layout, true)
 	}

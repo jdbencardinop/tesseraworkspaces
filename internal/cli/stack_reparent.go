@@ -500,7 +500,7 @@ func requireReparentWorkspace(cfg internal.Config) (internal.Workspace, error) {
 	return internal.ResolveReparentWorkspace(cwd, cfg)
 }
 
-func runStackReparent(cmd *cobra.Command, args []string) error {
+func runStackReparent(cmd *cobra.Command, args []string) (retErr error) {
 	_, gitLookupErr := exec.LookPath("git")
 	cfg := internal.LoadConfig()
 	ws, err := requireReparentWorkspace(cfg)
@@ -529,7 +529,7 @@ func runStackReparent(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	var featurePath string
+	var featurePath, selectionRoot string
 	if ws.Mode == internal.ModeCheckout {
 		featurePath, err = ws.ResolveFeaturePath(feature)
 		if err != nil {
@@ -545,6 +545,7 @@ func runStackReparent(cmd *cobra.Command, args []string) error {
 			return lerr
 		}
 		featurePath = layout.FeaturePath
+		selectionRoot = layout.selectionRoot
 	}
 
 	r := &reparentRoute{
@@ -578,6 +579,16 @@ func runStackReparent(cmd *cobra.Command, args []string) error {
 			return reparentRefusalLine(cmd, r.GitLookupErr)
 		}
 	}
+	selectionAdmission, err := featureRenameSelectionAdmission(selectionRoot, r.Feature, r.Plan)
+	if err != nil {
+		return reparentRefusalLine(cmd, err)
+	}
+	defer func() { retErr = errors.Join(retErr, selectionAdmission.Release()) }()
+	admission, err := featureRenameRouteAdmission(r.Ws.Mode, r.Feature, r.Loc.FeaturePath, r.Plan)
+	if err != nil {
+		return reparentRefusalLine(cmd, err)
+	}
+	defer func() { retErr = errors.Join(retErr, admission.Release()) }()
 
 	// Route order is abort -> plan -> continue -> execute, and the plan rung
 	// MUST sit above the continue rung. §3.2 forbids --plan --abort but

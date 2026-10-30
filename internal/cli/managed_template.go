@@ -193,11 +193,14 @@ func externalWorkspaceUsesRepoAsSecondary(workspaceRoot, repoRoot string) (bool,
 	return false, nil
 }
 
-func managedTemplateWorkspaceForFeature(ws internal.Workspace, feature string) (internal.Workspace, error) {
+func managedTemplateWorkspaceForFeature(ws internal.Workspace, feature string, otherPendingNames ...string) (internal.Workspace, error) {
 	if ws.Mode != internal.ModeExternal {
 		return ws, nil
 	}
 	selectedRoot := filepath.Clean(internal.TwsRoot())
+	if err := internal.CheckExternalFeatureRenamePending(selectedRoot, append([]string{feature}, otherPendingNames...)...); err != nil {
+		return internal.Workspace{}, err
+	}
 	if err := internal.GuardFeatureName(selectedRoot, feature); err != nil {
 		return internal.Workspace{}, err
 	}
@@ -247,8 +250,8 @@ func managedTemplateWorkspaceForFeature(ws internal.Workspace, feature string) (
 	return selected, nil
 }
 
-func resolveFeatureContext(ws internal.Workspace, feature string) (resolvedFeatureContext, error) {
-	resolvedWS, err := managedTemplateWorkspaceForFeature(ws, feature)
+func resolveFeatureContext(ws internal.Workspace, feature string, otherPendingNames ...string) (resolvedFeatureContext, error) {
+	resolvedWS, err := managedTemplateWorkspaceForFeature(ws, feature, otherPendingNames...)
 	if err != nil {
 		return resolvedFeatureContext{}, err
 	}

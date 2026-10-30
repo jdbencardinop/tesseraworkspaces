@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -178,7 +179,14 @@ func resolveDirectGitBranch(featurePath, name string) string {
 // For a tracked open it also maintains one per-invocation direct session
 // record: created before anything is spawned, updated at each stage
 // transition, and removed by token on normal exit.
-func openDirect(opts directOpenOpts) error {
+func openDirect(opts directOpenOpts) (retErr error) {
+	if opts.FeaturePath != "" && opts.Feature != "" {
+		admission, err := internal.AcquireExternalFeatureAdmission(filepath.Dir(opts.FeaturePath), opts.Feature)
+		if err != nil {
+			return err
+		}
+		defer func() { retErr = errors.Join(retErr, admission.Release()) }()
+	}
 	out := opts.Out
 	if out == nil {
 		out = os.Stdout

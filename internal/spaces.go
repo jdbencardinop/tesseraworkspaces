@@ -1137,6 +1137,11 @@ func SpaceAdd(anchor SpacesAnchor, req SpaceAddRequest) (entry SpaceEntry, creat
 		if err := EnsureExternalWorkspaceMarker(anchor.Root); err != nil {
 			return SpaceEntry{}, false, err
 		}
+		admission, admissionErr := acquireFeatureRenameSpacesAdmission(anchor.Root)
+		if admissionErr != nil {
+			return SpaceEntry{}, false, admissionErr
+		}
+		defer func() { err = errors.Join(err, admission.Release()) }()
 	}
 
 	lock, err := acquireSpacesLock(anchor.Root)
@@ -1427,6 +1432,14 @@ func SpaceRemove(anchor SpacesAnchor, sel SpaceSelector) (err error) {
 		return fmt.Errorf("reading spaces file %s: %w", spacesPath(anchor.Root), statErr)
 	}
 
+	if anchor.Mode != ModeCheckout {
+		admission, admissionErr := acquireFeatureRenameSpacesAdmission(anchor.Root)
+		if admissionErr != nil {
+			return admissionErr
+		}
+		defer func() { err = errors.Join(err, admission.Release()) }()
+	}
+
 	lock, err := acquireSpacesLock(anchor.Root)
 	if err != nil {
 		return err
@@ -1529,7 +1542,17 @@ func (t *SpacesRenameTx) Commit() error {
 	if t == nil || t.lock == nil || !t.changed {
 		return nil
 	}
+
 	return saveSpaces(t.root, t.file)
+}
+
+// featureRenamePostimage exposes the existing semantic rewrite to the
+// external rename coordinator, which owns exact-image publication/recovery.
+func (t *SpacesRenameTx) featureRenamePostimage() ([]byte, error) {
+	if t == nil || t.lock == nil || !t.changed {
+		return nil, errors.New("spaces rename has no staged rewrite")
+	}
+	return yaml.Marshal(t.file)
 }
 
 // Release releases the rename lock.

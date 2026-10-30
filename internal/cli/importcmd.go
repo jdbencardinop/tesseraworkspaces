@@ -3,6 +3,7 @@ package cli
 import (
 	"archive/tar"
 	"compress/gzip"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -269,7 +270,7 @@ func recreateCheckout(export internal.WorkspaceExport, injectSrc string, ws inte
 }
 
 // recreateExternal imports into external mode (original behavior).
-func recreateExternal(export internal.WorkspaceExport, injectSrc string) error {
+func recreateExternal(export internal.WorkspaceExport, injectSrc string) (retErr error) {
 	feature := export.Feature
 	wsRoot := internal.TwsRoot()
 	if err := internal.GuardFeatureName(wsRoot, feature); err != nil {
@@ -281,6 +282,11 @@ func recreateExternal(export internal.WorkspaceExport, injectSrc string) error {
 	if err := internal.EnsureExternalWorkspaceMarker(wsRoot); err != nil {
 		return err
 	}
+	admission, err := internal.AcquireExternalFeatureAdmission(wsRoot, feature)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, admission.Release()) }()
 	os.MkdirAll(filepath.Join(featurePath, "worktrees"), 0755) //nolint:errcheck
 
 	if _, err := os.Stat(filepath.Join(featurePath, "FEATURE.md")); os.IsNotExist(err) {

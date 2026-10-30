@@ -45,7 +45,7 @@ Tip: To keep git status clean, either:
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			}
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			feature := args[0]
 			ws, err := internal.RequireWorkspace()
 			if err != nil {
@@ -62,6 +62,11 @@ Tip: To keep git status clean, either:
 			if ws.Mode == internal.ModeCheckout {
 				return internal.ErrWorktreeUnsupported
 			}
+			admission, err := featureRenameAdmissionAt(ws, feature)
+			if err != nil {
+				return err
+			}
+			defer func() { retErr = errors.Join(retErr, admission.Release()) }()
 
 			injectDir := internal.InjectPath(featurePath)
 			if _, err := os.Stat(injectDir); os.IsNotExist(err) {
@@ -130,5 +135,5 @@ Tip: To keep git status clean, either:
 
 	cmd.Flags().StringVar(&into, "into", "", "Target subdirectory; managed guidance accepts only root, and --into . overrides configured inject_into")
 
-	return cmd
+	return featureRenameAdmittedCommand(cmd)
 }

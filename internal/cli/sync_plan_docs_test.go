@@ -156,8 +156,12 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 		}
 
 		targetTail := ci[targetIdx : targetIdx+min(120, len(ci)-targetIdx)]
-		if !strings.Contains(targetTail, "external feature rename (#5)") || !strings.Contains(targetTail, "not started") {
-			t.Fatalf(`docs/roadmap.md's "Current target:" sentence must name external feature rename (#5) as not started, got: %q`, targetTail)
+		if !strings.Contains(targetTail, "external feature rename (#5)") ||
+			!strings.Contains(targetTail, "implementation candidate") || !strings.Contains(targetTail, "unreleased") {
+			t.Fatalf(`docs/roadmap.md's "Current target:" sentence must name external feature rename (#5) as an unreleased implementation candidate, got: %q`, targetTail)
+		}
+		if !strings.Contains(content, "fix-external-feature-rename-backpointers") {
+			t.Fatal("docs/roadmap.md must link the separate prepared issue-five feature boundary")
 		}
 		if !strings.Contains(normalizeProse(content), "ordinary sync safety (#4) is fully released and verified in v1.2.18-rc.2") {
 			t.Fatal("docs/roadmap.md must retain the verified ordinary-sync release milestone before advancing the target")
@@ -233,8 +237,12 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 		}
 
 		nextTail := ci[nextFeatureIdx : nextFeatureIdx+min(120, len(ci)-nextFeatureIdx)]
-		if !strings.Contains(nextTail, "external feature rename (#5)") || !strings.Contains(nextTail, "not started") {
-			t.Fatalf(`docs/engineering-workflow.md's "Next roadmap work:" sentence must name external feature rename (#5) as not started, got: %q`, nextTail)
+		if !strings.Contains(nextTail, "external feature rename (#5)") ||
+			!strings.Contains(nextTail, "implementation candidate") || !strings.Contains(nextTail, "unreleased") {
+			t.Fatalf(`docs/engineering-workflow.md's "Next roadmap work:" sentence must name external feature rename (#5) as an unreleased implementation candidate, got: %q`, nextTail)
+		}
+		if !strings.Contains(content, "fix-external-feature-rename-backpointers") {
+			t.Fatal("docs/engineering-workflow.md must link the separate prepared issue-five feature boundary")
 		}
 		if !strings.Contains(normalizeProse(content), "ordinary sync safety (#4) is fully released and verified in v1.2.18-rc.2") {
 			t.Fatal("docs/engineering-workflow.md must retain the verified ordinary-sync release milestone before advancing the target")

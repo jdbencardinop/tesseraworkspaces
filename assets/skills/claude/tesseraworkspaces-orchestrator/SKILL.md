@@ -118,10 +118,38 @@ lock during human/editor interaction. Cancellation leaves every feature,
 legacy member, and add branch/session untouched; later failures retain
 per-feature progress/recovery rather than cross-feature atomicity.
 
-Known inherited limitation: materialized external feature rename can leave
-stale Git backpointers ([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)).
-This release preserves acknowledgements during metadata moves but does not
-repair that Git behavior.
+### External feature rename (unreleased implementation candidate)
+
+Published v1.2.18-rc.6 retains the external rename/backpointer defect
+([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)); #5 remains
+open. The candidate fixes future external renames, not arbitrary older broken
+layouts:
+
+```sh
+tws rename feature OLD NEW
+tws rename feature OLD NEW --continue
+tws rename feature OLD NEW --abort
+```
+
+Require the same names, execution-selected root, controlling repository, and
+operation journal. Recovery flags are mutually exclusive and external-only;
+neither applies to branch rename. After durable completion, continuation can
+only finish verified cleanup; abort refuses. Valid checkout behavior is unchanged.
+
+Rename preserves dirty work, index bytes, refs, user symlinks/executable bits,
+and v1/v2 managed bytes/link identities/decisions. Success requires no dangling
+Git administrative links or old-path registrations. It does not invoke
+`git worktree repair`, which can change unrelated siblings. Refuse ambiguous,
+unlisted, archived-materialized or stale layouts, nested/primary repositories,
+populated submodules, unsupported path-bearing Git configuration/alternates,
+active Git operations/locks/sessions, and other recovery. Directory, pointers,
+and spaces are separate effects, not all-file/cross-repository atomicity.
+Temporary partial state has exact evidence under
+`.tws-workspace/feature-renames/` and per-filesystem staging; rollback requires
+verified ownership. Preserve unknown residue. Do not use an older tws while
+rename is active or recoverable. Never silently sync/re-render templates as
+part of rename: later explicit template sync may require new consent when
+native guidance embeds the new feature name.
 
 ### Communicate with worktree agents
 ```sh

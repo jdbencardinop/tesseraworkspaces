@@ -57,7 +57,7 @@ Use --all to create a tmux session with windows for every worktree in the featur
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			}
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			ws, err := internal.RequireWorkspace()
 			if err != nil {
 				return err
@@ -139,6 +139,11 @@ Use --all to create a tmux session with windows for every worktree in the featur
 					return resolveErr
 				}
 				featurePath := resolved
+				admission, err := featureRenameAdmissionAt(ws, feature)
+				if err != nil {
+					return err
+				}
+				defer func() { retErr = errors.Join(retErr, admission.Release()) }()
 				if managed, managedErr := internal.ManagedTemplateStatePresent(resolved); managedErr != nil {
 					return managedErr
 				} else if managed {
@@ -181,6 +186,11 @@ Use --all to create a tmux session with windows for every worktree in the featur
 					return resolveErr
 				}
 				path := resolved
+				admission, err := featureRenameAdmissionAt(ws, feature)
+				if err != nil {
+					return err
+				}
+				defer func() { retErr = errors.Join(retErr, admission.Release()) }()
 				managed, managedErr := internal.ManagedTemplateStatePresent(resolved)
 				if managedErr != nil {
 					return managedErr
@@ -230,6 +240,11 @@ Use --all to create a tmux session with windows for every worktree in the featur
 			}
 			ws = context.Workspace
 			feature := context.Feature
+			admission, err := featureRenameAdmissionAt(ws, feature)
+			if err != nil {
+				return err
+			}
+			defer func() { retErr = errors.Join(retErr, admission.Release()) }()
 			// §14.2a, after the picker has settled the identity: the exclusion
 			// covers the 0-arg and 1-arg picker routes too.
 			if rerr := refuseOpenDuringReparent(ws, feature); rerr != nil {
@@ -339,7 +354,7 @@ Use --all to create a tmux session with windows for every worktree in the featur
 	cmd.Flags().BoolVar(&featureDir, "feature-dir", false, "Open the feature directory (orchestrator mode)")
 	cmd.Flags().BoolVar(&all, "all", false, "Create tmux session with windows for all worktrees")
 
-	return cmd
+	return featureRenameAdmittedCommand(cmd)
 }
 
 func resolveOpenArgs(ws internal.Workspace, args []string) (resolvedFeatureContext, string, error) {
@@ -405,6 +420,11 @@ func resolveOpenArgs(ws internal.Workspace, args []string) (resolvedFeatureConte
 var ExternalSessionLaunchIntentHook func() error
 
 func withExternalSessionLaunchIntent(featurePath, feature string, names []string, featureWide bool, finalGuard, action func() error) (err error) {
+	admission, err := internal.AcquireExternalFeatureAdmission(filepath.Dir(featurePath), feature)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, admission.Release()) }()
 	token, err := internal.CreateExternalSessionIntent(featurePath, feature, names, featureWide)
 	if err != nil {
 		return err

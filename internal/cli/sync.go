@@ -93,7 +93,7 @@ func syncCmd() *cobra.Command {
 			}
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			internal.RequireTool("git")
 
 			// §3.3 step 3 / §3.6 row 4: the control-flag validation is a PURE
@@ -191,6 +191,16 @@ func syncCmd() *cobra.Command {
 			if layoutErr != nil {
 				return layoutErr
 			}
+			selectionAdmission, err := featureRenameSelectionAdmission(layout.selectionRoot, feature, guardOpts.Plan)
+			if err != nil {
+				return err
+			}
+			defer func() { retErr = errors.Join(retErr, selectionAdmission.Release()) }()
+			admission, err := featureRenameRouteAdmission(ws.Mode, feature, layout.FeaturePath, guardOpts.Plan)
+			if err != nil {
+				return err
+			}
+			defer func() { retErr = errors.Join(retErr, admission.Release()) }()
 
 			state, stateErr := classifySyncState(layout.FeaturePath, newMode)
 

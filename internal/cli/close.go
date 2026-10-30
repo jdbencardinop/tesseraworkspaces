@@ -11,7 +11,7 @@ import (
 )
 
 func closeCmd() *cobra.Command {
-	return &cobra.Command{
+	return featureRenameAdmittedCommand(&cobra.Command{
 		Use:   "close [feature] [branch]",
 		Short: "Close a worktree session (tmux or checkout)",
 		Args:  cobra.RangeArgs(0, 2),
@@ -77,7 +77,7 @@ func closeCmd() *cobra.Command {
 
 			return runExternalClose(cmd.OutOrStdout(), feature, branch, nil, realExternalTmuxOps{})
 		},
-	}
+	})
 }
 
 // externalTmuxOps is the tmux seam of the external close path.

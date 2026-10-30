@@ -84,10 +84,13 @@ Shipped foundations:
   reconstructs only the matching recovery reservation. v1.2.16 only fails closed for same-feature sync after envelope
   birth; do not use an older tws while any reparent is active or recoverable.
 
-Current target: **external feature rename (#5)** (not started) — repair stale
-Git worktree backpointers after moving a feature with materialized worktrees.
-This is a separate backlog boundary; analysis and implementation require
-their own approval.
+Current target: **external feature rename (#5)** (implementation candidate; unreleased) — preserve
+Git worktree bindings when moving a feature with materialized worktrees.
+The separate
+[`fix-external-feature-rename-backpointers`](../.tpatch/features/fix-external-feature-rename-backpointers/request.md)
+boundary implements the approved Path B analysis, specification, and exploration.
+Issue #5 remains open; independent review, frozen-candidate gates, and landing
+are still required. Publication is not authorized by implementation approval.
 Template conflict resolution is fully released and verified in
 `v1.2.18-rc.6` at `5b531a8`: explicit interactive choices for managed-owned
 regular text files, remembered keep/edit decisions, and two-way staged editing.
@@ -154,7 +157,7 @@ For decoupled names, `StackEntry.Name` identifies the tws worktree while `StackE
 | 3 | Shipped: v1.2.18-rc.4 | [#3: avoid building unrelated feature status](https://github.com/jdbencardinop/tesseraworkspaces/issues/3) | [`scoped-status-projection`](../.tpatch/features/scoped-status-projection/request.md) |
 | 4 | Shipped: v1.2.18-rc.5 | [#2: role-aware templates](https://github.com/jdbencardinop/tesseraworkspaces/issues/2) | [`named-feature-templates`](../.tpatch/features/named-feature-templates/request.md) |
 | 5 | Shipped: v1.2.18-rc.6 | Standalone follow-up; #2 is complete | [`template-conflict-resolution`](../.tpatch/features/template-conflict-resolution/request.md) |
-| 6 | Next: planning not started | [#5: external feature rename backpointers](https://github.com/jdbencardinop/tesseraworkspaces/issues/5) | New, separate repair boundary; not registered yet |
+| 6 | Current: implementation candidate, unreleased | [#5: external feature rename backpointers](https://github.com/jdbencardinop/tesseraworkspaces/issues/5) | [`fix-external-feature-rename-backpointers`](../.tpatch/features/fix-external-feature-rename-backpointers/request.md) |
 
 Issues #4, #1, #3, and #2 are closed after their verified releases.
 [`named-feature-templates`](../.tpatch/features/named-feature-templates/request.md)
@@ -204,11 +207,34 @@ or edited file disappears from its template. Keep ordinary unchanged-file
 removal consent separate. Do not combine this feature with provider integration
 or changes to Git mutation safety.
 
-Known inherited limitation, separately tracked by user request:
+Published v1.2.18-rc.6 retains this separately tracked limitation:
 [#5 — materialized external feature rename leaves stale Git backpointers](https://github.com/jdbencardinop/tesseraworkspaces/issues/5).
 The released conflict resolver preserves acknowledgements during feature
-metadata moves but does not repair that Git behavior. Keep this open follow-up
-separate from the completed #4, #1, #3, #2 delivery queue.
+metadata moves but does not include the new rename candidate. Keep this open,
+unreleased follow-up separate from the completed #4, #1, #3, #2 delivery queue.
+
+The approved #5
+[analysis](../.tpatch/features/fix-external-feature-rename-backpointers/analysis.md),
+[specification](../.tpatch/features/fix-external-feature-rename-backpointers/spec.md), and
+[exploration](../.tpatch/features/fix-external-feature-rename-backpointers/exploration.md)
+define the candidate for future external renames, including ordinary dirty work. Only exact
+verified Git pointers may be updated; successful completion must leave no
+dangling administrative links or old-path registrations. A Git repair
+command with explicit paths can still modify unrelated siblings, so the implementation
+excludes repository-wide repair. Safe verified rollback and journal-bound
+continuation/abort cover this implementation's own interrupted operations,
+not arbitrary older corruption. Directory movement, pointer publication, and
+spaces publication are separate effects, not all-file/cross-repository
+atomicity. Temporary partial states retain exact evidence; after durable
+completion recovery is forward-only cleanup. Unknown residue and foreign
+edits refuse rather than being overwritten. Name admission protects both
+vacant and occupied names without blocking unrelated features; unresolved
+registry ownership may serialize registry writers. Do not use older binaries
+while rename is active or recoverable. Managed v1/v2 bytes and link identities
+remain unchanged; a later explicit template sync may require new consent when
+native guidance embeds the new name. Primary/nested repositories, populated
+submodules, and unsupported path-bearing configuration/alternates remain out
+of scope. This is an implementation candidate, not a released milestone.
 
 Nonblocking reparent follow-up:
 [`fix-reparent-completion-context`](../.tpatch/features/fix-reparent-completion-context/request.md)

@@ -5,6 +5,34 @@
 Latest prerelease: [v1.2.18-rc.6](https://github.com/jdbencardinop/tesseraworkspaces/releases/tag/v1.2.18-rc.6).
 The release-candidate notes below remain part of the next stable release.
 
+- **External feature rename (#5), implementation candidate — unreleased**
+  — future `tws rename feature OLD NEW` operations preserve ordinary dirty
+  work, index bytes, refs, and managed v1/v2 bytes/link identities/overrides.
+  Complete physical Git inventory, exclusive directory movement, and exact
+  preserved pointer updates replace directory-only external rename. Success
+  requires no dangling Git administrative links or old-path registrations;
+  unrelated broken siblings are untouched and `git worktree repair` is never
+  called. Nested/primary repositories, populated submodules, unsupported
+  path-bearing configuration/alternates, ambiguous or stale layouts, active
+  operations/locks/sessions, and other recovery refuse. Versioned journals
+  outside the moving tree bind both names, controlling repository, entry
+  repositories, roots, exact images, and immutable effect progress. External-only
+  `--continue` / `--abort` require that matching journal; no historical repair or
+  branch-rename recovery is added. Verified automatic rollback restores only
+  owned effects; after durable completion continuation is cleanup-only.
+  Directory, pointer, and spaces publications are separate effects, with
+  temporary partial states and no all-file/cross-repository atomicity or portable
+  inode-CAS claim. Pending old/new names exclude competing mutations/launches;
+  unrelated features remain usable, while unresolved registry ownership can
+  serialize registry writers. Unknown residue is retained and diagnosed.
+  Ambient/root aliases, including macOS `/var`, share the same physical
+  admission domain and retain frozen identity/target evidence; symlinked
+  selected descendants and late alias retargets still refuse. Special lock
+  files are inspected no-follow/nonblocking rather than hanging on a FIFO.
+  Do not use an older tws while rename is active or recoverable. Rename never
+  re-renders templates; a later explicit sync may need new consent for guidance
+  embedding the new feature name. Checkout behavior is unchanged. Issue #5
+  remains open; this candidate is not part of published v1.2.18-rc.6.
 - **Managed template conflict resolution (released in v1.2.18-rc.6)**
   — managed `tws add` and `tws template sync` accept explicit
   `--resolve-conflicts` for ledger-owned regular UTF-8/no-NUL text with
@@ -40,8 +68,9 @@ The release-candidate notes below remain part of the next stable release.
   or cross-feature atomicity. Lifecycle/context paths retain strict effective
   ownership and never launch a resolver. The inherited materialized external
   feature-rename defect can leave stale Git backpointers
-  ([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)); this
-  release preserves acknowledgements but does not repair that Git behavior.
+  ([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)); published
+  rc.6 preserves acknowledgements but does not include the separate unreleased
+  rename candidate above.
 - **Named, role-aware managed templates** — `tws template add/list/show/remove`
   now manages independent global and per-repository package copies outside the
   legacy templates directory. `tws add` and `tws template sync` accept named

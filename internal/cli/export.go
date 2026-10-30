@@ -3,6 +3,7 @@ package cli
 import (
 	"archive/tar"
 	"compress/gzip"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -45,7 +46,7 @@ func exportCmd() *cobra.Command {
 			}
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			feature := args[0]
 
 			ws, err := internal.RequireWorkspace()
@@ -59,6 +60,11 @@ func exportCmd() *cobra.Command {
 			}
 			ws = context.Workspace
 			featurePath := context.FeaturePath
+			admission, err := featureRenameRouteAdmission(ws.Mode, feature, featurePath, false)
+			if err != nil {
+				return err
+			}
+			defer func() { retErr = errors.Join(retErr, admission.Release()) }()
 
 			if _, err := os.Stat(featurePath); os.IsNotExist(err) {
 				return fmt.Errorf("feature not found: %s", feature)

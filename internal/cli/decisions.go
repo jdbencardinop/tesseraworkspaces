@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
 	"github.com/spf13/cobra"
@@ -116,7 +118,7 @@ func decisionsAckCmd() *cobra.Command {
 			}
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			var featurePath string
 			if len(args) > 0 {
 				fp, err := internal.RequireFeaturePath(args[0])
@@ -129,6 +131,13 @@ func decisionsAckCmd() *cobra.Command {
 				if featurePath == "" {
 					return fmt.Errorf("could not detect feature; usage: tws decisions ack <feature>")
 				}
+			}
+			if ws, err := internal.RequireWorkspace(); err != nil || ws.Mode == internal.ModeExternal {
+				admission, err := internal.AcquireExternalFeatureAdmission(filepath.Dir(featurePath), filepath.Base(featurePath))
+				if err != nil {
+					return err
+				}
+				defer func() { retErr = errors.Join(retErr, admission.Release()) }()
 			}
 
 			branch, err := currentBranch()

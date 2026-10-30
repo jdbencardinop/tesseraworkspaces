@@ -431,11 +431,92 @@ revalidated under exclusion, including unwritten kept files before ledger
 publication and cleanup. Failures after effects report per-feature progress
 and retained recovery; neither all-file nor cross-feature atomicity is claimed.
 
-Known inherited limitation: renaming an external feature with materialized
-worktrees can leave stale Git backpointers
+Published **v1.2.18-rc.6** preserves acknowledgements during metadata moves but
+still has the external rename/backpointer defect
 ([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)).
-Acknowledgements survive feature metadata moves; this release does not
-repair that Git behavior.
+The separate implementation candidate below is **unreleased**; #5 remains open.
+
+### External Feature Rename (implementation candidate)
+
+```sh
+tws rename feature old-name new-name
+tws rename feature old-name new-name --continue
+tws rename feature old-name new-name --abort
+```
+
+This fixes **future external renames**, for legacy and managed features. It
+moves the original directory without reconstructing worktrees: staged,
+unstaged, untracked, ignored, executable, and user-symlink content survives,
+as do index bytes, HEAD/ref identities, and v1/v2 ownership/override evidence.
+It updates only verified Git pointer files, preserving each record's
+absolute/relative style and leaving an already-correct forward file untouched.
+It never invokes `git worktree repair`, including with an explicit path,
+because Git can also change unrelated siblings. A broken unrelated sibling is
+not repaired. Checkout behavior and branch rename are separate and unchanged.
+
+Success requires **no dangling Git administrative links or old-path
+registrations** for the selected worktrees: Git must report each new top-level
+and registration, with verified forward/back/common-dir bindings. Slash logical
+names, decoupled Git branches, and multiple repositories retain their identities.
+Authoritative-stack omissions, archived-but-materialized or stale missing
+registrations, copied/broken markers, aliased feature/worktree descendants,
+occupied destinations, primary or nested repositories, populated submodules,
+nested mounts, and unsupported
+path-bearing Git configuration/alternates refuse. Active Git operations, locks,
+sessions, and existing sync/reparent/template recovery also refuse. Rename
+does not repair arbitrary layouts already broken by older releases.
+
+Directory movement, pointer publication, and `spaces.yaml` publication are
+**separate effects**, not all-file or cross-repository atomicity or reader
+snapshot isolation. The existing relative spaces rewrite is published only
+after validated Git relocation; pinned targets still refuse and an absent
+registry stays absent. An interruption can temporarily leave incomplete Git
+links. The versioned journal under the execution-selected
+`<workspace-root>/.tws-workspace/feature-renames/` binds both names, controlling
+repository, roots, exact pre/postimages, and ordered intents. Originals are
+preserved before replacement, with staging on each affected filesystem.
+Automatic rollback occurs only when all relevant evidence proves it safe;
+otherwise errors report completed/pending steps and exact retained paths.
+Recovery repeats the affected parent-directory durability barriers even when
+an interrupted move or publication is already visible. Registry collisions and
+other statically invalid plans refuse before a discoverable operation journal
+is published; private preparation evidence is never adopted or swept away.
+
+Ambient/root spellings, including macOS `/var` → `/private/var`, bind to one
+physical workspace and lock domain. Rename records the root-alias identities
+and targets and refuses late retargeting or replacement; it does not normalize
+symlinked feature, worktree, or pointer descendants into adoption. Lock files
+are prechecked without following links and opened nonblocking, with their
+descriptor type rechecked, so a FIFO or other invalid object refuses instead
+of hanging.
+The complete root-resolution path must not depend on either moving feature
+name, even via an `old/..` traversal. Stationary Git records such as `commondir`
+likewise cannot traverse a moving feature. Their raw components, and forward
+admin bindings, are inspected before `..` can erase a traversed symlink; only
+already-verified root aliases are supported.
+A pending rename in the execution-selected root prevents fresh rename, sync,
+and push from falling back to a same-named feature in another workspace.
+Previews check both bindings without creating admission files; mutations retain
+both reservations when using a healthy fallback. Context writes such as
+`init --force` also guard the external workspace physically containing the cwd,
+even when `TWS_ROOT` names an unrelated or absent directory.
+
+Recover using the **same old/new names, workspace root, controlling repository,
+and current binary**. `--continue` retries the frozen operation, not a new plan;
+`--abort` restores proven originals before durable completion. Once complete,
+only verified cleanup can continue; abort cannot undo publication. If rollback
+has started, continuation finishes that rollback. Completed receipts and name
+lock files remain; repeated recovery reports not pending after cleanup.
+Unknown versions, replacements, reoccupied paths, edits, and unexpected residue
+fail closed. Do not remove evidence to unstick a retry. **Do not use an older
+tws while a rename is active or recoverable**: old releases do not recognize
+this journal. Pinned parents and exclusive publication do not provide portable
+inode-CAS or protect later writes through already-open descriptors.
+
+Rename is not template sync: effective bytes, link identities, and remembered
+decisions remain unchanged, including unacknowledged edits. A later explicit
+`tws template sync` can legitimately require new consent if native guidance
+embeds the renamed feature and therefore produces a different proposal.
 
 ### Multi-Repo Workspaces
 
@@ -512,7 +593,7 @@ read. No timeout flags are added.
 | `tws inject <feature> [branch] [--into path]` | Sync inject files into external linked worktrees |
 | `tws doctor [feature]` | Health checks |
 | `tws status [feature] [--json]` | Agent work status per branch |
-| `tws rename feature/branch` | Rename feature or branch |
+| `tws rename feature/branch` | Rename feature or branch; external feature recovery uses matching `--continue` / `--abort` |
 | `tws config show/set/get` | Manage configuration |
 | `tws hooks install/remove [--all]` | Manage agent hooks |
 | `tws export <feature> [--full] [--to-repo]` | Export workspace |

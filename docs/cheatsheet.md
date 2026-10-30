@@ -495,10 +495,10 @@ VISUAL='code --wait' tws template sync auth --resolve-conflicts
   nothing. Later failures retain per-feature progress/recovery; there is no
   cross-feature atomicity.
 
-Known inherited limitation: materialized external feature rename can leave
-stale Git backpointers ([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)).
-This release preserves acknowledgements during metadata moves, not a repair
-of that Git behavior.
+Published v1.2.18-rc.6 still has the external rename/backpointer defect
+([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)).
+The unreleased implementation candidate below preserves acknowledgements and
+repairs Git bindings for future renames; #5 remains open.
 
 ## Configuration
 
@@ -519,9 +519,42 @@ tws config set orchestrator_template repo:orchestrator-base --repo
 ## Rename
 
 ```sh
-tws rename feature old-name new-name               # rename feature
+tws rename feature old-name new-name               # preserve dirty external work and repair exact Git links
+tws rename feature old-name new-name --continue    # same names/root/repository; frozen journal only
+tws rename feature old-name new-name --abort       # verified rollback, only before durable completion
 tws rename branch auth old-branch new-branch        # rename branch + update refs
 ```
+
+The feature recovery flags are mutually exclusive and external-only; branch
+rename gets neither flag. No journal means refusal, not general repair of old
+broken layouts. Checkout behavior is unchanged.
+
+Success means no dangling Git administrative links or old-path registrations.
+Dirty/index/untracked/ignored files, executable bits, user symlinks, branch
+refs, and v1/v2 managed decisions survive the whole-directory move. No stash,
+reset, remove/re-add, implicit template sync, or `git worktree repair` is used.
+Unlisted/archived materialized worktrees, stale missing registrations, ambiguous
+markers, occupied destinations or symlinked feature/worktree descendants,
+nested/primary repositories, populated
+submodules, unsupported path-bearing Git configuration/alternates, active Git
+operations, locks, sessions, and pending recovery refuse.
+
+Ambient/root aliases such as macOS `/var` → `/private/var` share one physical
+lock domain; their bindings are captured and late retargets/replacements refuse.
+This does not permit symlinked selected descendants. FIFO/symlink lock objects
+refuse without blocking or being deleted.
+
+Directory, pointer, and spaces publications are separate effects: temporary
+partial state is possible, with no all-file/cross-repository atomicity.
+Errors name exact evidence under
+`<workspace-root>/.tws-workspace/feature-renames/` and per-filesystem staging.
+Automatic rollback requires verified ownership of every relevant effect.
+After durable completion, continuation finishes cleanup only; abort refuses.
+Unexpected residue and foreign edits are preserved, not overwritten.
+Keep completed receipts/name locks; never delete recovery evidence to retry.
+**Do not use an older tws while rename is active or recoverable.**
+Later explicit template sync may need new consent when the renamed feature
+changes rendered native guidance; rename never silently accepts that proposal.
 
 ## Agent skills
 

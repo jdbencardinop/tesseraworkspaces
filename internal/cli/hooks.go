@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -50,7 +51,7 @@ automatically checks for new decisions on session start and resume.
 Use --all to install hooks across all features.
 Set auto_hooks: true in config to auto-install on every tws new.`,
 		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			ws, wsErr := internal.RequireWorkspace()
 			if wsErr != nil {
 				return wsErr
@@ -68,9 +69,18 @@ Set auto_hooks: true in config to auto-install on every tws new.`,
 					fmt.Println("No features found.")
 					return nil
 				}
+				admission, err := internal.AcquireExternalFeatureAdmission(ws.MetadataRoot, features...)
+				if err != nil {
+					return err
+				}
+				defer func() { retErr = errors.Join(retErr, admission.Release()) }()
 				for _, f := range features {
+					featurePath, err := internal.ResolveFeaturePathFor(ws, f)
+					if err != nil {
+						return err
+					}
 					fmt.Printf("%s:\n", f)
-					installHooksForFeature(f)
+					installHooksForFeatureAt(f, featurePath)
 				}
 				return nil
 			}
@@ -85,13 +95,22 @@ Set auto_hooks: true in config to auto-install on every tws new.`,
 				}
 			}
 
-			// installHooksForFeature has no error channel and prints to
+			// installHooksForFeatureAt has no error channel and prints to
 			// stdout, so the guard must be evaluated here to exit nonzero.
 			if err := internal.GuardFeatureName(ws.MetadataRoot, feature); err != nil {
 				return err
 			}
+			featurePath, err := internal.ResolveFeaturePathFor(ws, feature)
+			if err != nil {
+				return err
+			}
+			admission, err := featureRenameRouteAdmission(ws.Mode, feature, featurePath, false)
+			if err != nil {
+				return err
+			}
+			defer func() { retErr = errors.Join(retErr, admission.Release()) }()
 
-			installHooksForFeature(feature)
+			installHooksForFeatureAt(feature, featurePath)
 			return nil
 		},
 	}
@@ -101,21 +120,12 @@ Set auto_hooks: true in config to auto-install on every tws new.`,
 	return cmd
 }
 
-func installHooksForFeature(feature string) {
-	featurePath, err := internal.RequireFeaturePath(feature)
-	if err != nil {
-		fmt.Printf("  [x] %s: %v\n", feature, err)
-		return
-	}
+func installHooksForFeatureAt(feature, featurePath string) {
 	stack, _ := internal.LoadStack(featurePath)
 
 	installed := 0
 	for _, entry := range stack.Branches {
-		wtPath, err := internal.RequireWorktreePath(feature, entry.Name)
-		if err != nil {
-			fmt.Printf("  [x] %s: %v\n", entry.Name, err)
-			return
-		}
+		wtPath := filepath.Join(featurePath, "worktrees", entry.Name)
 		if _, err := os.Stat(wtPath); os.IsNotExist(err) {
 			continue
 		}
@@ -138,7 +148,7 @@ func hooksRemoveCmd() *cobra.Command {
 		Use:   "remove [feature]",
 		Short: "Remove auto-read decision hooks",
 		Args:  cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			ws, err := internal.RequireWorkspace()
 			if err != nil {
 				return err
@@ -157,17 +167,19 @@ func hooksRemoveCmd() *cobra.Command {
 				}
 			}
 
-			featurePath, fpErr := internal.RequireFeaturePath(feature)
+			featurePath, fpErr := internal.ResolveFeaturePathFor(ws, feature)
 			if fpErr != nil {
 				return fpErr
 			}
+			admission, err := featureRenameRouteAdmission(ws.Mode, feature, featurePath, false)
+			if err != nil {
+				return err
+			}
+			defer func() { retErr = errors.Join(retErr, admission.Release()) }()
 			stack, _ := internal.LoadStack(featurePath)
 
 			for _, entry := range stack.Branches {
-				wtPath, wtErr := internal.RequireWorktreePath(feature, entry.Name)
-				if wtErr != nil {
-					return wtErr
-				}
+				wtPath := filepath.Join(featurePath, "worktrees", entry.Name)
 				settingsPath := filepath.Join(wtPath, ".claude", "settings.local.json")
 				if err := os.Remove(settingsPath); err == nil {
 					fmt.Printf("  [-] %s: hooks removed\n", entry.Name)

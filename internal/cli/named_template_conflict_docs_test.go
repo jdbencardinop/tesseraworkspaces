@@ -43,7 +43,8 @@ func TestNamedTemplateConflictInheritedBoundaryDocumentation(t *testing.T) {
 			for _, claim := range []string{
 				"managed-state readers/writers", "not a universal disable switch",
 				"tws new", "branch/stack metadata", "without reading the ledger",
-				"template bytes and acknowledgements unchanged", "backpointers",
+				"template bytes and acknowledgements unchanged", "backpointer",
+				"unreleased", "candidate", "v1.2.18-rc.6",
 				"https://github.com/jdbencardinop/tesseraworkspaces/issues/5",
 			} {
 				if !strings.Contains(content, claim) {

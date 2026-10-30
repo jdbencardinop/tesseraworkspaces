@@ -157,10 +157,60 @@ policy. All managed preflight and decisions precede any mixed-batch effects,
 without holding writer reservations during prompts. Failures after execution
 retain per-feature progress and recovery, not all-file/cross-feature atomicity.
 
-Known inherited limitation: materialized external feature rename can leave
-stale Git backpointers ([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)).
-Acknowledgements survive metadata moves, but this release does not repair
-that Git behavior or make them portable in exports.
+Published v1.2.18-rc.6 retains the external rename/backpointer defect
+([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)).
+The unreleased external rename implementation candidate fixes future renames;
+#5 remains open. It preserves dirty work, index/ref identities, and v1/v2
+template bytes, link identities, selections, and acknowledgements without
+re-rendering or making them portable in exports. A later explicit template
+sync can require new consent when the feature name changes rendered guidance.
+
+External rename journals live outside the moved feature, under the
+execution-selected `<workspace-root>/.tws-workspace/feature-renames/`.
+Use `tws rename feature OLD NEW --continue` or
+`tws rename feature OLD NEW --abort` with the same names, root, and controlling
+repository; each stack entry's repository is recorded separately. Recovery
+never replans from changed defaults. These mutually exclusive flags do not
+apply to checkout or branch rename and cannot repair older broken layouts.
+After durable completion, only continuation for verified cleanup is allowed.
+
+Equivalent ambient/root spellings (including macOS `/var` and `/private/var`)
+share the physical workspace's admission locks. Root-alias identities and
+targets are captured and rechecked, including during recovery; a late retarget
+or replacement refuses. Selected feature/worktree and administrative
+descendants still use no-follow inspection. Invalid special lock objects,
+including FIFOs and symlinks, refuse promptly and are left intact.
+Root resolution must not traverse the old/new feature, including a directory
+later canceled by `..`; `commondir` and forward admin bindings are inspected
+component-by-component before lexical cancellation, refusing unknown traversed
+symlinks even when the cleaned path looks stationary. Recorded ambient/root
+aliases remain supported.
+Pending execution-selected rename names are checked before existence-based
+fallback, including sync and push. A healthy fallback keeps both selected-name
+and actual-root reservations through mutation; previews create no admission
+state. Metadata/context writers hold admission for their actual resolved
+feature. Context init discovers the external workspace containing its physical
+cwd independently of an unrelated `TWS_ROOT`; equivalent aliases retain the
+same exclusion and retarget checks. Genuine outside-workspace init creates no
+feature admission state.
+
+Success requires no dangling Git administrative links or old-path
+registrations. Nested/primary repositories, populated submodules, nested
+mounts, ambiguous markers, and unsupported path-bearing Git settings (including
+`core.worktree`, hook paths, includes, filters, and nonempty object alternates)
+refuse rather than being rewritten. Active sessions/Git operations/locks and
+other recovery also refuse. Per-record pointer style, not the current
+`worktree.useRelativePaths` setting, determines a pointer's new spelling.
+An absent `spaces.yaml` stays absent; only the existing guarded relative rewrite
+is published after Git validation. Concurrent registry edits are not clobbered.
+Directory movement, Git pointers, and registry publication are separate effects,
+not all-file/cross-repository atomicity or snapshot isolation. Failures retain
+exact evidence and may leave temporary partial links; automatic rollback needs
+verified ownership. Do not delete unknown residue or use an older tws while
+rename is active or recoverable. Completed receipts and name-lock files remain.
+Continuation re-syncs the recorded parents of visible effects before marking
+them complete. Invalid registry postimages (including scope/name collisions)
+refuse before operation-journal publication, without changing either entry.
 
 Each key is the absolute path to a git repository. The value is the workspace root where features and worktrees are stored for that repo.
 

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -25,14 +26,23 @@ func decideCmd() *cobra.Command {
 			}
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			feature := args[0]
 			summary := args[1]
 
-			featurePath, err := internal.RequireFeaturePath(feature)
+			ws, err := internal.RequireWorkspace()
 			if err != nil {
 				return err
 			}
+			featurePath, err := internal.ResolveFeaturePathFor(ws, feature)
+			if err != nil {
+				return err
+			}
+			admission, err := featureRenameRouteAdmission(ws.Mode, feature, featurePath, false)
+			if err != nil {
+				return err
+			}
+			defer func() { retErr = errors.Join(retErr, admission.Release()) }()
 
 			// Auto-detect branch from current worktree if not specified
 			if branch == "" {

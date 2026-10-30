@@ -1,0 +1,159 @@
+{
+  "feature": "fix-external-feature-rename-backpointers",
+  "issue": 5,
+  "stage": "pre-land",
+  "planning_base_commit": "e57845104086e1e6416111424d15a359023cd289",
+  "base_commit": "6819a4e7a641396bce206022110b3b63351ac73d",
+  "published_product_baseline": "v1.2.18-rc.6",
+  "separate_user_approved_test_prerequisites": [
+    {
+      "commit": "d8e821b55b781d28417521fd49c08d1f1ac6763e",
+      "scope": "internal/agent_status_test.go only",
+      "reason": "A started shell can exhaust the unchanged 250ms test budget before its first log write. Retain the exact one-dispatch and partial-report assertions, but permit an absent/empty child log; unexpected or multiple writes still fail."
+    },
+    {
+      "commit": "6819a4e7a641396bce206022110b3b63351ac73d",
+      "scope": "internal/status_probe_test.go only",
+      "reason": "Initialize newly created executable fixtures through a setup-only path before timed checks. All production code, timeout values, dispatch logs and success/error assertions remain unchanged."
+    }
+  ],
+  "prerequisites_excluded_from_feature_patch": true,
+  "candidate": "v6",
+  "product_file_count": 48,
+  "intent_file_count": 4,
+  "candidate_manifest_sha256": "7056e69dfc36b18b0f3f56ddbc0d86a31e48f841de36cc6865be5bb85e840fef",
+  "canonical_patch_sha256": "40627cca9af314cc17890327c75a12ee8916117229b1a97da286a7ec8f8f9fc1",
+  "recipe_sha256": "400e48dc7201da86ebac4c3ca1efcb8163327f3b7200e0216979b9386f48b41f",
+  "recipe_normalization": {
+    "generated_recipe_sha256": "ce9d13e01c0d98b41442e817818c68eea0855a816bff85a3dc1a47940816e423",
+    "top_level_fields": ["feature", "operations"],
+    "operations": 48,
+    "exact_existing_preimage_hashes": 33,
+    "new_paths_proven_absent_at_base": 15,
+    "note": "The normalized recipe preserves every reviewed complete postimage and adds exact baseline sha256 preimage_hash values. Two fresh fixtures independently prove absence of all new paths. Product bytes and canonical patch are unchanged.",
+    "generation_receipt_note": "The tool-generated patch-generation record is a historical observation of the original generated recipe. It is not manually rewritten after normalization. The normalized current recipe hash above is the one required in the landing trailer.",
+    "whole_file_warning_handling": "Historical whole-file ownership warnings are not hidden or solved by changing dependencies. Exact preimages, full reviewed postimages and independent fresh-base replays provide the scoped new-feature evidence."
+  },
+  "reviews": {
+    "model": "gpt-6-astra",
+    "filesystem_preservation_recovery": "approved",
+    "architecture_correctness_concurrency_tests": "approved",
+    "cli_ux_behavior_contract": "approved",
+    "all_reviewers_approved_exact_final_manifest": true,
+    "before_and_after_manifest_verification": "passed for every final attestation",
+    "candidate_changed_during_reviews": false
+  },
+  "checks": [
+    {
+      "command": "gofmt -l on every changed Go file",
+      "outcome": "passed; no unformatted files"
+    },
+    {
+      "command": "go test ./internal ./internal/cli -run 'Test(.*FeatureRename|SpaceLifecycle|BeginSpacesFeatureRename|ManagedTemplate|NamedTemplate|SyncPlanDocs_)' -count=1 -timeout 20m",
+      "outcome": "passed in implementer-owned physical scratch; ordinary-environment full suite also passed"
+    },
+    {
+      "command": "go test ./internal ./internal/cli -run '^TestFeatureRenameReview' -count=1 -timeout 10m",
+      "outcome": "passed in parent ordinary system-temp environment"
+    },
+    {
+      "command": "go test ./... -count=1 -timeout 40m",
+      "outcome": "passed in ordinary environment, with no excluded tests",
+      "seconds": 1113.611
+    },
+    {
+      "command": "go vet ./...",
+      "outcome": "passed"
+    },
+    {
+      "command": "golangci-lint run ./...",
+      "outcome": "passed; 0 issues; fresh isolated cache"
+    },
+    {
+      "command": "make build",
+      "outcome": "passed"
+    },
+    {
+      "command": "GOOS=linux GOARCH=amd64 go build -o <session-output>/rename-v6-linux-tws ./cmd/tws",
+      "outcome": "cross-compilation passed; not a claim of Linux runtime or CI execution"
+    },
+    {
+      "command": "git diff --check",
+      "outcome": "passed"
+    },
+    {
+      "command": "tpatch feature deps --validate-all",
+      "outcome": "passed; 0 violations"
+    }
+  ],
+  "independent_behavioral_evidence": {
+    "actual_cli_cases": 25,
+    "outcome": "all passed on exact final binary",
+    "fixtures": "Real temporary Git repositories, local bare remotes, linked worktrees, isolated HOME/configuration and deterministic fake tools; no user's workspaces or sessions",
+    "coverage": [
+      "Dirty worktree bytes, modes, inode identities, staged index bytes and branch refs survive whole-feature rename.",
+      "Relative and absolute Git pointers, slash logical names, decoupled branches, multiple repositories, legacy no-stack and checkout compatibility.",
+      "Authentic managed v2 overrides survive rename, injection, archive/reactivation and later unchanged proposal synchronization.",
+      "An unrelated broken sibling worktree remains untouched; no repository-wide Git repair.",
+      "Registry rewrite and ordinary occupied/locked/active/broken/nested/unlisted/alias refusals.",
+      "Actual SIGKILL after directory movement, followed by journal-bound continue and abort; pending old/new names refuse ordinary mutation and context launch.",
+      "Malformed publication-lock FIFO refuses promptly; standard macOS ambient root aliases remain usable.",
+      "Dual-root plain rename retry, sync, push preview and local-remote push cannot fall back into an unrelated configured feature while the selected root is pending.",
+      "Decisions reserve their actual resolved workspace; init protects its physically containing workspace with equivalent, unrelated or absent root overrides.",
+      "Moving-root aliases, literal moving commondir traversal and unrecorded symlinks canceled by parent components refuse before movement.",
+      "Duplicate staged registry scopes refuse before discoverable operation evidence, without poisoning unrelated commands."
+    ],
+    "review_reproduction": "Nine behavioral reviewer scenarios were reproduced against preserved earlier candidate binaries, then passed against final v6.",
+    "durability_fault_evidence": "Permanent tests interrupt 13 effects after the syscall but before the directory sync, require the exact verified barrier to repeat, inject repeated-sync errors and forbid premature effect/completion acknowledgement. Additional visible-journal and special-file-switch cases passed. This is deterministic fault simulation, not physical power-loss testing.",
+    "unchanged_contracts": "Existing zero-Git early refusals, path-free reparent argv, exact subprocess budgets and no-flag goldens passed without relaxing their expectations."
+  },
+  "resolved_audit_and_review_groups": [
+    "R-P1: nonblocking, no-follow special lock handling.",
+    "R-P2: coherent physical-root and frozen ambient-alias binding without adopting selected descendant symlinks.",
+    "R-P3: exclusive lock creation and validated EEXIST winner handling; no ENOENT suppression.",
+    "R-P4: admission after original validated route resolution, without premature/duplicate Git lookups.",
+    "R-UX1/R-UX2: pending selected-root checks before fallback and reservations across actual effects.",
+    "R-FS1: durability barriers repeated for already-visible replayed effects and journal evidence.",
+    "R-FS2: complete root-resolution dependencies inside moving namespaces rejected.",
+    "R-I1: raw common/administrative traversal checked before parent cancellation, with unknown symlinks refused.",
+    "R-I2: complete staged plan/registry validation before active journal publication.",
+    "R-I3/R-I4/R-UX3: actual resolved/containing workspace admission for decision, hook, export and context-writing commands."
+  ],
+  "replays": {
+    "recipe": {
+      "independent_fresh_exact_base_runs": 2,
+      "base_commit": "6819a4e7a641396bce206022110b3b63351ac73d",
+      "outcome": "both passed; all 48 product postimages/modes and four intent files match the final reviewed manifest",
+      "preimages_and_new_path_absence_verified_before_execution": true
+    },
+    "canonical_patch": {
+      "method": "git apply --cached in a private index initialized at the exact base",
+      "outcome": "passed; every reviewed product postimage and mode matched",
+      "real_index_or_working_tree_modified": false
+    },
+    "record_stat_note": "The generated tracked-only diff stat lists existing files; canonical patch and recipe verification cover all 48 paths, including 15 additions."
+  },
+  "dependencies": {
+    "hard": ["rename-feature-worktree", "workspace-sibling-links", "template-conflict-resolution"],
+    "published_parent_metadata_or_artifacts_modified": false
+  },
+  "tpatch_verification": {
+    "command": "tpatch verify fix-external-feature-rename-backpointers --no-write --json",
+    "exit_code": 2,
+    "failed_check": "recipe_replay_clean",
+    "reason": "Historical dependency closure cannot materialize the canonical patch of persist-agent-workflow-guidance, landed at ad153b9b26f548e0698943b79a231dc4cd5ab782.",
+    "baseline_reproduction": "Verifying workspace-sibling-links on main at 6819a4e, before importing this implementation, failed on the identical persist-agent-workflow-guidance closure. Its original landing evidence was exact; historical current postimage checks also report later superseding changes.",
+    "additional_preimplementation_evidence": "The existing template-conflict-resolution parent already failed historical fix-inject-slash-worktree-discovery closure and current postimage checks before this feature. Its published artifacts remain untouched.",
+    "not_a_green_verifier_claim": true,
+    "new_feature_independent_recipe_and_patch_replays": "passed",
+    "maintenance_feature": "repair-historical-tpatch-artifacts"
+  },
+  "limits": [
+    "Future external renames only; no general repair of old broken layouts.",
+    "Directory movement, pointer publication and registry publication are separate effects; interruption may require explicit recovery.",
+    "No all-file/cross-repository atomicity, snapshot isolation or portable inode-conditioned CAS claim.",
+    "Unsupported nested/main/common repository relocation, populated submodules and relocation-dependent configuration refuse.",
+    "Older binaries must not be used while this independently typed operation is active or recoverable."
+  ],
+  "publication_authorized": false
+}

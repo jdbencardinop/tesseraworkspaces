@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -66,7 +67,7 @@ func newCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Force checkout of already checked-out branch")
 	cmd.Flags().StringVar(&repo, "repo", "", "Source repository path (for cross-repo worktrees)")
 
-	return cmd
+	return featureRenameAdmittedCommand(cmd)
 }
 
 // createCheckoutBranch creates a git branch for checkout mode (no worktree).
@@ -241,7 +242,7 @@ func createWorktreeAt(
 	feature, featurePath, path, name, requestedBase, repoPath string,
 	force bool,
 	selections ...*worktreeCreationSelection,
-) error {
+) (retErr error) {
 	wsRoot := ws.MetadataRoot
 	if err := internal.GuardFeatureName(wsRoot, feature); err != nil {
 		return err
@@ -250,6 +251,11 @@ func createWorktreeAt(
 	if err := internal.EnsureExternalWorkspaceMarker(wsRoot); err != nil {
 		return err
 	}
+	admission, err := internal.AcquireExternalFeatureAdmission(wsRoot, feature)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, admission.Release()) }()
 	if err := os.MkdirAll(featurePath, 0755); err != nil {
 		return err
 	}
@@ -258,7 +264,6 @@ func createWorktreeAt(
 	existingEntry := internal.GetBranch(stack, name)
 	reactivating := existingEntry.Name != "" && existingEntry.Archived
 	var repoRoot, storedRepo string
-	var err error
 	cfg := internal.LoadConfig()
 	injectTarget := managedInjectTarget{Value: internal.ResolveInjectInto("")}
 	if len(selections) > 0 && selections[0] != nil {

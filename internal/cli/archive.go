@@ -11,7 +11,7 @@ import (
 )
 
 func archiveCmd() *cobra.Command {
-	return &cobra.Command{
+	return featureRenameAdmittedCommand(&cobra.Command{
 		Use:   "archive <feature> <branch>",
 		Short: "Remove worktree from disk, keep branch and metadata",
 		Args:  cobra.ExactArgs(2),
@@ -39,7 +39,7 @@ func archiveCmd() *cobra.Command {
 			}
 			return archiveExternal(feature, branch)
 		},
-	}
+	})
 }
 
 // archiveCheckout marks a branch as archived in metadata only.
@@ -151,6 +151,11 @@ func archiveExternalAt(
 	ws internal.Workspace,
 	feature, featurePath, branch string,
 ) (retErr error) {
+	admission, err := featureRenameAdmissionAt(ws, feature)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, admission.Release()) }()
 	if err := internal.GuardFeatureName(ws.MetadataRoot, feature); err != nil {
 		return err
 	}

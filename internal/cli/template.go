@@ -345,6 +345,11 @@ Customized files cannot be removed with --allow-managed-removal.`,
 						return err
 					}
 				}
+				admission, err := featureRenameAdmissionAt(featureWS, feature)
+				if err != nil {
+					return err
+				}
+				defer func() { retErr = errors.Join(retErr, admission.Release()) }()
 				if err := internal.GuardFeatureName(featureWS.MetadataRoot, feature); err != nil {
 					return err
 				}
@@ -445,7 +450,7 @@ Customized files cannot be removed with --allow-managed-removal.`,
 	}
 	_ = cmd.RegisterFlagCompletionFunc("template", namedTemplateAliasCompletion)
 
-	return cmd
+	return featureRenameAdmittedCommand(cmd)
 }
 
 func namedTemplateAliasCompletion(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -469,7 +474,7 @@ func syncTemplatesWithoutWorkspace(
 	all bool,
 	legacyDirs []string,
 	workspaceErr error,
-) error {
+) (retErr error) {
 	root := internal.TwsRoot()
 	features := args
 	if all {
@@ -490,6 +495,15 @@ func syncTemplatesWithoutWorkspace(
 	}
 	candidates := make([]legacyCandidate, 0, len(features))
 	for _, feature := range features {
+		if _, err := os.Lstat(root); err == nil {
+			admission, err := internal.AcquireExternalFeatureAdmission(root, feature)
+			if err != nil {
+				return err
+			}
+			defer func() { retErr = errors.Join(retErr, admission.Release()) }()
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
 		if err := internal.GuardFeatureName(root, feature); err != nil {
 			return err
 		}

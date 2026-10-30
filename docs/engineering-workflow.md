@@ -64,10 +64,13 @@ Current shipped checkout slices:
 The opt-in global workspace registry is also shipped for stable cross-repository
 discovery, health checks, and moved-target repair.
 
-Next roadmap work: **external feature rename (#5)** (not started) — repair
-stale Git worktree backpointers after moving an external feature with
-materialized worktrees. Keep this a separate implementation boundary;
-analysis and implementation require their own approval.
+Next roadmap work: **external feature rename (#5)** (implementation candidate; unreleased) — preserve
+Git worktree bindings when moving an external feature with
+materialized worktrees. Path B analysis, specification, and exploration are
+implemented in the approved boundary under
+[`fix-external-feature-rename-backpointers`](../.tpatch/features/fix-external-feature-rename-backpointers/request.md).
+Issue #5 remains open. Independent review, frozen-candidate full gates,
+record/replay, and landing remain required; publication needs separate approval.
 Template conflict resolution is fully released and verified in
 `v1.2.18-rc.6` at `5b531a8`: explicit interactive resolution of managed-owned
 regular text files, remembered keep/edit decisions, and two-way staged editing.
@@ -122,10 +125,31 @@ and Ubuntu/macOS main and tag CI. Keep the versioned tpatch artifacts as the
 historical implementation record rather than rewriting them after publication.
 See [`roadmap.md`](roadmap.md).
 
-Known inherited limitation: materialized external feature rename can leave
+The #5 candidate preserves ordinary dirty work and updates only verified pointer
+files for future external renames. Repository-wide Git repair is excluded
+because even an explicit path can repair unrelated siblings. Success requires
+complete Git links/registrations at the final location; interruptions use
+journal-bound continuation/abort, with automatic rollback only when exact
+checks prove it safe. General repair of older broken layouts and repository
+or populated-submodule relocation remain outside this boundary. Directory
+movement, pointer publication, and spaces publication are separate effects,
+with no all-file/cross-repository atomicity or snapshot-isolation claim.
+Completion is durable only after Git and registry postconditions; afterward
+continuation is verified cleanup only, never rollback. Unknown residue,
+reoccupied names, and foreign edits retain evidence and refuse. Old/new name
+admission is held through effects and launches; unrelated features remain
+usable, while unresolved registry ownership can serialize registry writers.
+Do not use an older binary while rename is active or recoverable. This journal
+is independently typed, not a sync/reparent/template recovery compatibility
+envelope. Pinned identities and exclusive publication do not promise portable
+inode-CAS or preservation of later writes through already-open descriptors.
+
+Published v1.2.18-rc.6 limitation: materialized external feature rename can leave
 stale Git backpointers ([#5](https://github.com/jdbencardinop/tesseraworkspaces/issues/5)).
-Preserve acknowledgements during metadata moves without claiming to repair
-that separately tracked Git behavior. Export retains its established omission
+The unreleased #5 candidate fixes future renames without re-rendering templates
+or changing v1/v2 ownership/link identities and acknowledgements. A later
+explicit template sync may need new consent for guidance embedding the new
+feature name. It does not repair older broken layouts. Export retains its established omission
 of ledger data from archives while preserving effective bytes and the live ledger.
 
 ## Tpatch workflow

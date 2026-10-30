@@ -27,10 +27,28 @@ func renameCmd() *cobra.Command {
 }
 
 func renameFeatureCmd() *cobra.Command {
-	return &cobra.Command{
+	var continueRename, abortRename bool
+	cmd := &cobra.Command{
 		Use:   "feature <old-name> <new-name>",
 		Short: "Rename a feature",
-		Args:  cobra.ExactArgs(2),
+		Long: `Rename a feature without changing branches, index, dirty work, or templates.
+
+External renames move the whole directory and update only verified Git links.
+Unsupported nested repositories, populated submodules, ambiguous pointers,
+active Git operations, locks, and sessions refuse before movement.
+
+An interrupted external rename may temporarily have incomplete Git links.
+Use the SAME old/new names with --continue or --abort to recover only its
+bound journal. After durable completion, --continue can finish cleanup only.
+These flags do not repair layouts broken by older releases. Do not use an
+older tws while a rename is active or recoverable.`,
+		Args: cobra.ExactArgs(2),
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			if len(args) == 0 {
+				return managedCompletionFeatures(), cobra.ShellCompDirectiveNoFileComp
+			}
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		},
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			oldName := args[0]
 			newName := args[1]
@@ -39,11 +57,36 @@ func renameFeatureCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			context, err := resolveFeatureContext(ws, oldName)
+			for _, name := range []string{oldName, newName} {
+				if _, err := ws.ResolveFeaturePath(name); err != nil {
+					return err
+				}
+			}
+			if continueRename && abortRename {
+				return errors.New("--continue and --abort are mutually exclusive")
+			}
+			if continueRename || abortRename {
+				if ws.Mode != internal.ModeExternal {
+					return errors.New("feature rename --continue/--abort are external-only")
+				}
+				ws, err = managedTemplateExecutionWorkspace(ws)
+				if err != nil {
+					return err
+				}
+				recovery := "continue"
+				if abortRename {
+					recovery = "abort"
+				}
+				return runExternalFeatureRename(cmd, ws, oldName, newName, recovery)
+			}
+			context, err := resolveFeatureContext(ws, oldName, newName)
 			if err != nil {
 				return err
 			}
 			ws = context.Workspace
+			if ws.Mode == internal.ModeExternal {
+				return runExternalFeatureRename(cmd, ws, oldName, newName, "")
+			}
 			root := ws.MetadataRoot
 
 			oldPath := context.FeaturePath
@@ -115,10 +158,14 @@ func renameFeatureCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&continueRename, "continue", false, "Continue this external feature rename's bound journal (same old/new names)")
+	cmd.Flags().BoolVar(&abortRename, "abort", false, "Restore this external rename's originals before durable completion")
+	cmd.MarkFlagsMutuallyExclusive("continue", "abort")
+	return cmd
 }
 
 func renameBranchCmd() *cobra.Command {
-	return &cobra.Command{
+	return featureRenameAdmittedCommand(&cobra.Command{
 		Use:   "branch <feature> <old-name> <new-name>",
 		Short: "Rename a branch within a feature",
 		Args:  cobra.ExactArgs(3),
@@ -154,7 +201,7 @@ func renameBranchCmd() *cobra.Command {
 			}
 			return renameBranchExternalAt(ws, feature, context.FeaturePath, oldName, newName)
 		},
-	}
+	})
 }
 
 func renameBranchCheckout(ws internal.Workspace, feature, oldName, newName string) error {
@@ -279,6 +326,11 @@ func renameBranchExternal(feature, oldName, newName string) error {
 // renameBranchExternal renames a branch in external mode.
 // Uses entry.GitBranch() for git operations.
 func renameBranchExternalAt(ws internal.Workspace, feature, featurePath, oldName, newName string) (retErr error) {
+	admission, err := featureRenameAdmissionAt(ws, feature)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, admission.Release()) }()
 	if err := internal.GuardFeatureName(ws.MetadataRoot, feature); err != nil {
 		return err
 	}

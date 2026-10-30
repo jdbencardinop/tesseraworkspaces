@@ -1,0 +1,31 @@
+{
+  "id": "fix-external-feature-rename-backpointers",
+  "slug": "fix-external-feature-rename-backpointers",
+  "title": "Fix GitHub issue #5: keep every affected linked Git worktree correctly registered when an external feature is renamed. Preserve dirty worktree and index content, branch refs, managed ownership, unrelated worktrees, and checkout behavior; coordinate exact pointer updates and spaces metadata with safe verified rollback and explicit partial-failure evidence.",
+  "state": "applied",
+  "compatibility": "unknown",
+  "requested_at": "2026-10-12T00:08:52Z",
+  "updated_at": "2026-10-30T03:41:17Z",
+  "last_command": "record",
+  "notes": "landed at 2026-10-30T03:43:38Z",
+  "apply": {
+    "completed_at": "2026-10-30T03:41:17Z",
+    "base_commit": "6819a4e7a641396bce206022110b3b63351ac73d",
+    "has_patch": true
+  },
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "rename-feature-worktree",
+      "kind": "hard"
+    },
+    {
+      "slug": "workspace-sibling-links",
+      "kind": "hard"
+    },
+    {
+      "slug": "template-conflict-resolution",
+      "kind": "hard"
+    }
+  ]
+}

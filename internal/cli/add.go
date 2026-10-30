@@ -120,7 +120,7 @@ It does not select managed templates, adopt files, or override --force safety.`,
 	}
 	_ = cmd.RegisterFlagCompletionFunc("template", namedTemplateAliasCompletion)
 
-	return cmd
+	return featureRenameAdmittedCommand(cmd)
 }
 
 func addManaged(
@@ -157,6 +157,11 @@ func addManaged(
 			return err
 		}
 	}
+	admission, err := featureRenameAdmissionAt(ws, feature)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, admission.Release()) }()
 	if err := executeManagedTemplatePlans(cmd, []*internal.ManagedTemplatePlan{plan}); err != nil {
 		return err
 	}
@@ -222,7 +227,7 @@ func addManaged(
 }
 
 // addExternal preserves existing external-mode add semantics.
-func addExternal(feature string, templates []string, newBranch, base string, force, open, useTmux bool) error {
+func addExternal(feature string, templates []string, newBranch, base string, force, open, useTmux bool) (retErr error) {
 	wsRoot := internal.TwsRoot()
 	if err := internal.GuardFeatureName(wsRoot, feature); err != nil {
 		return err
@@ -233,6 +238,11 @@ func addExternal(feature string, templates []string, newBranch, base string, for
 	if err := internal.EnsureExternalWorkspaceMarker(wsRoot); err != nil {
 		return err
 	}
+	admission, err := internal.AcquireExternalFeatureAdmission(wsRoot, feature)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, admission.Release()) }()
 	if err := os.MkdirAll(filepath.Join(root, "worktrees"), 0755); err != nil {
 		return fmt.Errorf("creating worktrees directory: %w", err)
 	}

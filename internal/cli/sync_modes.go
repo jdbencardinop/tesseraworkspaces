@@ -206,10 +206,12 @@ func syncStringFlag(cmd *cobra.Command, name string) string {
 // ---------------------------------------------------------------------------
 
 // externalSyncLayout is the one physical layout of one external sync run.
-// Every path the run touches is derived from these two fields and nothing else.
+// Every effect path is derived from FeaturePath/WorktreesRoot. A fallback also
+// retains the execution-selected namespace for rename admission, not effects.
 type externalSyncLayout struct {
 	FeaturePath   string // <root>/<feature>
 	WorktreesRoot string // <root>/<feature>/worktrees
+	selectionRoot string // distinct execution root when the configured root won
 }
 
 // WorktreePath is the only worktree derivation on the external path.
@@ -221,8 +223,9 @@ func (l externalSyncLayout) WorktreePath(name string) string {
 //
 // It issues no Git command and calls no workspace or root resolver of its own:
 // twsRoot is always the value of the caller's own single internal.TwsRoot()
-// call. Its only probes are at most two ordinary `<path>/stack.yaml` reads, and
-// there are zero of them whenever the two candidates agree.
+// call. Before the at-most-two stack reads for distinct candidates, it checks
+// the selected namespace for pending rename evidence. Agreeing candidates need
+// no resolution probe; their actual-root route admission checks the same name.
 func resolveExternalSyncLayout(ws internal.Workspace, twsRoot, feature string) (externalSyncLayout, error) {
 	b := filepath.Join(twsRoot, feature)
 	a, err := ws.ResolveFeaturePath(feature)
@@ -232,11 +235,16 @@ func resolveExternalSyncLayout(ws internal.Workspace, twsRoot, feature string) (
 	if filepath.Clean(a) == filepath.Clean(b) {
 		return newExternalSyncLayout(a), nil
 	}
+	if err := internal.CheckExternalFeatureRenamePending(twsRoot, feature); err != nil {
+		return externalSyncLayout{}, err
+	}
 	if _, loadErr := internal.LoadStack(b); loadErr == nil {
 		return newExternalSyncLayout(b), nil
 	}
 	if _, loadErr := internal.LoadStack(a); loadErr == nil {
-		return newExternalSyncLayout(a), nil
+		layout := newExternalSyncLayout(a)
+		layout.selectionRoot = twsRoot
+		return layout, nil
 	}
 	return newExternalSyncLayout(b), nil
 }
