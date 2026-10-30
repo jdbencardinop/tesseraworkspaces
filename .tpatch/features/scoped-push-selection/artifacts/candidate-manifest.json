@@ -1,0 +1,238 @@
+{
+  "base_commit": "38a7baf6981c305f2f3c1cbe23b1db3406ee90e0",
+  "feature": "scoped-push-selection",
+  "planning_files": {
+    ".tpatch/features/scoped-push-selection/analysis.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "177e4caeea6acd8c49b196307174a3cd177804aebe418d637da64af48bdd2548"
+    },
+    ".tpatch/features/scoped-push-selection/exploration.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "8077bcd0a194f749accbe0e2e18d4ce42e17d4fb2d03d8501fcadade22b04bb8"
+    },
+    ".tpatch/features/scoped-push-selection/request.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "deb04e154f83e85bc6e82d0432274c1795fb06ac27d37d8ecf2ad52d512ad9dc"
+    },
+    ".tpatch/features/scoped-push-selection/spec.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "512956fd96bb21d2a75bc7417708b74fcfc0036e72e3b7936c74914fea0159fc"
+    }
+  },
+  "product_files": {
+    "CHANGELOG.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "6cdf23cc4a04a767458abd0f2a2683163618c19571676a207953f9ea4d937fcb"
+    },
+    "README.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "096aff840a47d139447e8ef6116e459a70faa6d55643096a7942f7d376b22ce9"
+    },
+    "assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "6780c8bca157003f4078b1828bf4489b157b0cf3294402020a5c21d355068f8f"
+    },
+    "assets/skills/claude/tesseraworkspaces/SKILL.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "b8b159f72a3e3e0ec4aee64f5bffb6059bb107f7f11e576ed08a6029bb99f648"
+    },
+    "assets/skills/copilot/tws.prompt.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "c9ea49f7d506ef402ff396ef0d900fd08c0a583f61c58591111d539801087fc2"
+    },
+    "docs/cheatsheet.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "3161f2d4fa04b7d9b8844aeda2c0f0a098ba933513e608632cdb2b2d41e09a41"
+    },
+    "docs/configuration.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "fe6b59131d4dee538514441b607ccd346dda3348197ee2ffeecbb48daa4d043c"
+    },
+    "docs/engineering-workflow.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "b612c8179bd6881aefbf6030015128f7d579c5a3f5daf6751043cad88c951076"
+    },
+    "docs/roadmap.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "5770036dc7d0f9e8d3591f677112eff28e89ffbff0151cf3d71de2e823d3d071"
+    },
+    "internal/checkout_metadata_move.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "e70c202208a376fc032a4412e9a74a58b31308a9bf77105bd5a79f8f25307182"
+    },
+    "internal/checkout_sync.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "cad27224e6826a781d93618af2c561f5a0382f096589f1d2012050f3980cce10"
+    },
+    "internal/cli/delete.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "c788e403d2c0680d49106a1e56360cb49d3cef85eaf3e6710e5263831c565651"
+    },
+    "internal/cli/feature_rename.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "a1f578fbb401a6562ad596e1df2bd5d4138535aa61311ed6510ca8bf7e9019ab"
+    },
+    "internal/cli/feature_rename_review_test.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "e457b8a11474b05dfe6dec526e268a8ee46ecf6bfceb0c263d8670fc04752878"
+    },
+    "internal/cli/managed_template.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "5e17d94ee29c19ad0e2bc28b0ed12664328a249917fa1f8770cfa85bc3a88dec"
+    },
+    "internal/cli/new.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "6b8bf759d5425358109fcb70ac0fc41537fd6624bc9da7b0696013aef18c9a76"
+    },
+    "internal/cli/push.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "fa79f6301f0bf78041dc3f1bca6c5e5db26fd90d6fc819ae3ebc694180356b78"
+    },
+    "internal/cli/push_selection.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "80dbcde97b567b67e48338c774b0b4185e1243d9fc48fd326bab934f060e0c01"
+    },
+    "internal/cli/push_selection_docs_test.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "9a0a2e7150396dfd29b3128949ac543d09e12932b80bb6370d2a36925c1c4cfd"
+    },
+    "internal/cli/push_selection_lifecycle_test.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "9194fb4a02a2a7ed0a7253f8f1d79272b3ac92cf7370106ad370356c40b604e5"
+    },
+    "internal/cli/push_selection_roots_test.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "a90a303dbb44dc619359a79c282921f5ab123cab4b4e9255ca5db82142736d22"
+    },
+    "internal/cli/push_selection_safety_test.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "700ccdd93ec4d136558522aea0dc5ce697757fb36ebc1a502ec4e51fd7539443"
+    },
+    "internal/cli/push_selection_test.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "c47736b3e04405c33be3d9e9e823537f77e89c31a7388a311d04f1ea7a06f80d"
+    },
+    "internal/cli/rename.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "215803e6bf0b07c9ebdcf1c7451f9ee1ef0b27cd706932a66e38d0940d1d58f8"
+    },
+    "internal/cli/reparent_observability.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "98d2976f84e79cf1c10c94e8e6219e8729af7caaebad3f8e9dae467f4c0df3ce"
+    },
+    "internal/cli/sync.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "bc74e1740da7167691b747cfa0cc6644fa1814a4177bb746538581f20168f059"
+    },
+    "internal/cli/sync_modes.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "c41b2bc83c6ff057dcf75b9fecc8d4fde7d3c764f92c4cbf2b0fd798c6e085fc"
+    },
+    "internal/cli/sync_plan_docs_test.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "d286bc194da2ea8189d1ad84207f7cb2e88319ca832603bd7c489e22e652cad0"
+    },
+    "internal/cli/testdata/rebase_plan/sync_help.txt": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "047b33c291621c4742b4c96e9ef8cf4bd5d0c7947caf32eb86005d731df68cb2"
+    },
+    "internal/feature_rename.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "2931d795fbf1745c2be7d8c157ab9445650803d41c9788ada0d2eddad5467821"
+    },
+    "internal/migrate.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "e4e0be6b96ca276926ffe7e2ac42a3ff24b980b9072f833f5ab6a6d7a8f39c6b"
+    },
+    "internal/reparent_remote.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "029c31b297327c56a5a20a3fc3ebb9d947765588b85c5db797d30d1288235760"
+    },
+    "internal/reparent_state.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "5974beb0790d075c0ed9967cb1ed09463e6e3d78318db83b93e8f0dbe6aff6ee"
+    },
+    "internal/scoped_push.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "d7f58ced3c9f869606bb131b6df763083cd23239cfe17dc778daa2168641e98c"
+    },
+    "internal/scoped_push_git.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "eb91672c4e1226329707e57e1d989472531c24987955cbbe9449defecaa931af"
+    },
+    "internal/scoped_push_guard.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "df1ff8a2db263dc30f0a9206a26ae920bdf991ce16f1ab7845ab5ef4ded70788"
+    },
+    "internal/scoped_push_lifecycle.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "d4cc1c991b468127d027fdd8de8c35aeee6840a588ba54ba93bd8e3b70b1b558"
+    },
+    "internal/scoped_push_state.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "b2732eb0338d0c03e92ebf3380eb0abe92c3658aa892d5021821d7891bd35f31"
+    },
+    "internal/session.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "97037256eec0fca26773287bb687e219af6fff178e6efcf37445e51a5863b4b0"
+    },
+    "internal/session_test.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "9f769b5765766bf703e2c16c44bb6845a7c5c54de5cf5368d314432ede9268dd"
+    },
+    "internal/sync_run_state.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "2d0ee39205bd5fcf2cb4ef81ac24236a37ea3ec2c5f81c005047fa7dfca505eb"
+    },
+    "internal/template_fs_unix.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "51287f0381bcfdbf36614f9dda8cf70f26000c737c565150870970004302f70c"
+    }
+  }
+}

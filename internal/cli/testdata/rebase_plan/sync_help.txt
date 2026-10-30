@@ -64,6 +64,6 @@ Flags:
       --no-fetch                   Plan and rebase from local refs only; no automatic network input (checkout default)
       --only string                Sync exactly one stack entry by its logical name
       --plan                       Describe the rebase this invocation would perform, then exit; moves no branch, working tree or tws state, but still fetches wherever the route it describes fetches (see --no-fetch)
-      --push                       Push all branches after syncing
+      --push                       Push the selected scope after syncing (all feature branches when unscoped)
       --test string                Validation command to run after each rebase (checkout mode)
   -v, --verbose                    Show full git fetch output

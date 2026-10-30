@@ -80,6 +80,9 @@ func featureRenameAdmittedCommand(cmd *cobra.Command) *cobra.Command {
 		}
 		ws, err := internal.RequireWorkspace()
 		if err == nil && ws.Mode != internal.ModeExternal {
+			if err := internal.RefuseCheckoutPublication(ws); err != nil {
+				return err
+			}
 			return run(cmd, args)
 		}
 		root := filepath.Clean(internal.TwsRoot())
@@ -99,6 +102,11 @@ func featureRenameAdmittedCommand(cmd *cobra.Command) *cobra.Command {
 			return err
 		}
 		defer func() { retErr = errors.Join(retErr, admission.Release()) }()
+		if err := internal.RefusePendingScopedPush(internal.ScopedPushLocation{
+			Mode: internal.ModeExternal, Feature: args[0], FeaturePath: filepath.Join(root, args[0]), MetadataRoot: root,
+		}); err != nil {
+			return err
+		}
 		return run(cmd, args)
 	}
 	return cmd
@@ -127,13 +135,16 @@ func featureRenameRouteAdmission(mode internal.WorkspaceMode, feature, featurePa
 }
 
 // A healthy legacy fallback may use the configured root, but an interrupted
-// rename in the execution-selected namespace must not turn into that fallback.
-// The resolver's read-only check is repeated under a shared name reservation.
+// rename or publication in the selected namespace must not become that fallback.
+// Both checks are repeated under the retained shared name reservation.
 func featureRenameSelectionAdmission(root, feature string, preview bool) (*internal.ExternalFeatureAdmission, error) {
 	if root == "" {
 		return nil, nil
 	}
 	if err := internal.CheckExternalFeatureRenamePending(root, feature); err != nil {
+		return nil, err
+	}
+	if err := refuseSelectedPublication(root, feature); err != nil {
 		return nil, err
 	}
 	if preview {
@@ -144,7 +155,14 @@ func featureRenameSelectionAdmission(root, feature string, preview bool) (*inter
 	} else if err != nil {
 		return nil, err
 	}
-	return internal.AcquireExternalFeatureAdmission(root, feature)
+	admission, err := internal.AcquireExternalFeatureAdmission(root, feature)
+	if err != nil {
+		return nil, err
+	}
+	if err := refuseSelectedPublication(root, feature); err != nil {
+		return nil, errors.Join(err, admission.Release())
+	}
+	return admission, nil
 }
 
 func featureRenameContextCommand(cmd *cobra.Command) *cobra.Command {

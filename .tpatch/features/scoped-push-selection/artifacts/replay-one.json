@@ -1,0 +1,10 @@
+{
+  "feature": "scoped-push-selection",
+  "base_commit": "38a7baf6981c305f2f3c1cbe23b1db3406ee90e0",
+  "manifest_sha256": "a684d373fd7264469ccca621ecc274b48dc98924342e13ba13fa8c3a02424bee",
+  "recipe_sha256": "1059948dbddddcc9c8d53f2c5bf152c6cd10f282217d1e4c706b1f0fb310fd44",
+  "existing_preimages_verified": 30,
+  "new_paths_proven_absent": 12,
+  "postimages_verified": 42,
+  "passed": true
+}

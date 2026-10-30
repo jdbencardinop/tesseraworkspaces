@@ -1,0 +1,30 @@
+{
+  "feature": "scoped-push-selection",
+  "candidate": "v5",
+  "base_commit": "38a7baf6981c305f2f3c1cbe23b1db3406ee90e0",
+  "manifest_sha256": "a684d373fd7264469ccca621ecc274b48dc98924342e13ba13fa8c3a02424bee",
+  "product_files": 42,
+  "intent_files": 4,
+  "parent_audit": "blocking findings resolved through five immutable candidates",
+  "reviews": [
+    {
+      "scope": "state, filesystem durability and lease safety",
+      "model": "gpt-6-astra",
+      "verdict": "approved-for-scope",
+      "manifest_verified_before_and_after": true
+    },
+    {
+      "scope": "selection, architecture and mutation integration",
+      "model": "gpt-6-astra",
+      "verdict": "approved-for-scope",
+      "manifest_verified_before_and_after": true
+    },
+    {
+      "scope": "CLI UX, discoverability and documentation",
+      "model": "gpt-6-astra",
+      "verdict": "approved-for-scope",
+      "manifest_verified_before_and_after": true
+    }
+  ],
+  "remaining_review_blockers": []
+}

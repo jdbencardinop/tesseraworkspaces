@@ -173,6 +173,11 @@ tws sync <feature> --push         # sync + push
 tws sync <feature> --continue     # resume after conflict
 tws push <feature>                # push all branches
 tws push <feature> --dry-run      # preview pushes
+tws push <feature> --from <entry> --dry-run  # selected local intent; remote unverified
+tws push <feature> --only <entry>           # one logical entry, either workspace mode
+tws push <feature> --continue --dry-run     # frozen publication preview, no network/writes
+tws push <feature> --continue               # finish only unconfirmed entries
+tws push <feature> --cancel                 # abandon remainder, never remote rollback
 
 # Sync modes — three independent axes, no flags keeps today's behaviour
 tws sync <feature> --only <entry>     # scope: one logical stack entry
@@ -192,7 +197,7 @@ the selection and Git 2.26-2.37 remains supported. Intentional full external
 combinations are refused before any fetch, lock, or rebase. Every new ordinary
 sync `--push` is strict: it stops at the first rejected push and `--continue`
 retries only entries that were never pushed. A `scope=all` run still pushes the
-whole feature; standalone `tws push` retains lenient failure behavior.
+whole feature; unscoped standalone external `tws push` retains lenient failure behavior.
 The shared feature mutation guard rejects concurrent syncs of one feature.
 Before mutation, sync freezes a validated effective cutoff for every selected
 row. Read `entries[].cutoff.recorded_sha`, `effective_sha`, `source`,
@@ -265,6 +270,56 @@ refusal — while a refusal tws already performs (dirty tree, held lock,
 unresolvable base, incomplete previous run) keeps its own wording and carries
 no marker.
 
+### Publish only the intended entries (unreleased candidate)
+
+Use standalone `push --only` for one logical entry or `push --from` for its
+transitive descendants, parent first. Do not include ancestors/neighbors.
+This new route requires Git 2.45+ for enforced no-lazy-fetch support.
+Both external and checkout modes publish verified refs without requiring
+worktrees, switching checkout, rebasing or changing upstreams. Archived
+selectors refuse; archived descendants are shown skipped. Unrelated dirty/
+unavailable worktrees and existing agents do not block publication.
+
+Read dry-run's exact source OIDs, destination refs, expected-value leases and
+inclusion witnesses. It is local-only: no fetch/lazy fetch, locks, state/private
+refs, tracking updates or follow-up clearing; remote state stays **unverified**.
+Missing tracking means expected absence. Preflight every eligible entry; a real
+scoped failure is nonzero and preserves the independently typed frozen plan.
+Intent is durable before network and success before the next entry.
+
+Recover with selector-free `push --continue`; never republish confirmed
+successes, add descendants, refresh the lease or fall back to all branches.
+Reconcile only an uncertain recorded destination: source confirms success,
+original expectation permits the same guarded retry, anything else refuses.
+`push --cancel` abandons the remainder, not remote results or local branches.
+There is no remote-rollback abort. Preview recovery with `--continue --dry-run`.
+
+v1 state is `<external-feature>/.push-state.v1.json` or
+`.tws/state/<feature>-push.v1.json`; feature/checkout shared mutation locks plus
+typed pending state protect recovery after process death. Exact-owned
+`refs/tws/push/<token>/...` cleanup leaves a terminal receipt. Use the new binary
+while pending. Explicit-OID leases disable Git's inclusion flag, so pending
+reparent rows use an independent frozen qualifying-reflog witness. Scoped
+standalone and scoped sync preserve unselected follow-up rows/timestamps.
+Git defaults cannot broaden publication. User hooks stay enabled; arbitrary
+hook effects are not controlled. No cross-ref/cross-repository atomicity is
+promised. Without selectors, external leniency and checkout refusal remain.
+
+Do not let a terminal receipt stand in for an unfinished fallback run: recovery
+chooses matching pending publication from the bounded root candidates.
+Externally renamed terminal history requires the same physical workspace and
+feature inode; its historical name grants no publication authority.
+Follow-up tips stay protected until durable keep/clear decisions make cleanup
+replay independent of GC. Checkout lifecycle/layout migration hold metadata
+exclusion and retire verified receipts to
+`.tws/state/publication-history/<token>.json`; names are reusable without
+deleting or trusting foreign history. Rename/migration compensate post-move
+durability failures; unresolved effects retain the workspace guard and
+`.tws/state/.checkout-metadata-<token>` movement/registry evidence. Preserve and
+reconcile it instead of deleting it; publication recovery does not recover
+metadata moves. Endpoint-as-remote/group collisions use Git's config-key case
+rules and refuse alongside symlink-dependent local parent traversals.
+
 ### Reparent before a wide sync
 
 ```sh
@@ -334,7 +389,9 @@ mutations serialize workspace-wide, checkout refuses non-empty entry `repo`
 values, and top-level external push holds the feature mutation lock across all
 entries, clearing obsolete follow-up rows before lease preflight. The next push
 waits for a proven commit point, then warns and uses
-`--force-with-lease --force-if-includes`.
+`--force-with-lease --force-if-includes` on the legacy/sync bare-lease paths.
+Selected standalone publication uses the independent inclusion proof above,
+not an ineffective inclusion flag beside an explicit expected-OID lease.
 Every mutating external sync route holds that same lock through rebase,
 metadata, optional push and remote follow-up clearing, rechecks reparent state
 after claiming, and releases last. If the checkout-global lock is absent,

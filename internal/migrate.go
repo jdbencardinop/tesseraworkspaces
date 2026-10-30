@@ -60,20 +60,48 @@ func MigrateFeatureLayout(ws Workspace, feature string) (err error) {
 	// Check destination collision.
 	if _, dstErr := os.Lstat(dst); dstErr == nil {
 		return fmt.Errorf("destination %s already exists (collision)", dst)
+	} else if !errors.Is(dstErr, os.ErrNotExist) {
+		return dstErr
 	}
 
-	// Ensure features/ parent exists.
-	if mkErr := os.MkdirAll(filepath.Dir(dst), 0755); mkErr != nil {
-		return fmt.Errorf("creating features dir: %w", mkErr)
+	lifecycle, err := AcquireManagedFeatureLifecycleLock(src)
+	if err != nil {
+		return err
 	}
-
-	return os.Rename(src, dst)
+	defer func() { err = errors.Join(err, lifecycle.Release()) }()
+	reservation, err := AcquireCheckoutMetadataReservation(ws, feature)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, reservation.Release()) }()
+	if err := scopedPushCheckpoint("after-checkout-metadata-guard", 0); err != nil {
+		return err
+	}
+	if err := reservation.ValidatePublicationReceipt(feature, src); err != nil {
+		return err
+	}
+	if err := reservation.EnsureFeatureParent(); err != nil {
+		return err
+	}
+	if err := reservation.RetirePublicationReceipt(feature, src); err != nil {
+		return err
+	}
+	moved, moveErr := reservation.MoveFeature(src, dst, lifecycle.Identity())
+	if moveErr != nil {
+		var compensateErr error
+		if moved {
+			_, compensateErr = reservation.MoveFeature(dst, src, lifecycle.Identity())
+		}
+		return errors.Join(moveErr, compensateErr)
+	}
+	return reservation.CommitMoves()
 }
 
 // MigrateAllFeatures migrates all legacy features to the new layout.
 // Preflight: one spaces transaction for the whole batch, then all sources and
 // destinations, before moving any.
-// On failure mid-run: best-effort rollback of previously moved features.
+// On failure mid-run: rollback every item known to have moved, including the
+// failing item when its directory syscall preceded a durability error.
 func MigrateAllFeatures(ws Workspace) (result MigrateResult) {
 	if ws.Mode != ModeCheckout {
 		result.Errors = append(result.Errors, "migrate-layout requires checkout mode")
@@ -128,9 +156,10 @@ func MigrateAllFeatures(ws Workspace) (result MigrateResult) {
 
 	// --- Preflight: check all sources and destinations ---
 	type migration struct {
-		name string
-		src  string
-		dst  string
+		name      string
+		src       string
+		dst       string
+		lifecycle *ManagedFeatureLifecycleLock
 	}
 	var migrations []migration
 
@@ -153,6 +182,9 @@ func MigrateAllFeatures(ws Workspace) (result MigrateResult) {
 		if _, err := os.Lstat(dst); err == nil {
 			result.Skipped = append(result.Skipped, name)
 			continue
+		} else if !errors.Is(err, os.ErrNotExist) {
+			result.Errors = append(result.Errors, err.Error())
+			continue
 		}
 
 		migrations = append(migrations, migration{name: name, src: src, dst: dst})
@@ -163,21 +195,63 @@ func MigrateAllFeatures(ws Workspace) (result MigrateResult) {
 		return result
 	}
 
-	// Ensure features/ exists.
-	featuresDir := filepath.Join(ws.MetadataRoot, "features")
-	if err := os.MkdirAll(featuresDir, 0755); err != nil {
-		result.Errors = append(result.Errors, fmt.Sprintf("creating features dir: %v", err))
+	for i := range migrations {
+		lock, err := AcquireManagedFeatureLifecycleLock(migrations[i].src)
+		if err != nil {
+			result.Errors = append(result.Errors, err.Error())
+			return result
+		}
+		migrations[i].lifecycle = lock
+		defer func() {
+			if err := lock.Release(); err != nil {
+				result.Errors = append(result.Errors, err.Error())
+			}
+		}()
+	}
+	reservation, err := AcquireCheckoutMetadataReservation(ws, "layout-migration")
+	if err != nil {
+		result.Errors = append(result.Errors, err.Error())
 		return result
+	}
+	defer func() {
+		if err := reservation.Release(); err != nil {
+			result.Errors = append(result.Errors, err.Error())
+		}
+	}()
+	if err := scopedPushCheckpoint("after-checkout-metadata-guard", 0); err != nil {
+		result.Errors = append(result.Errors, err.Error())
+		return result
+	}
+	for _, m := range migrations {
+		if err := reservation.ValidatePublicationReceipt(m.name, m.src); err != nil {
+			result.Errors = append(result.Errors, err.Error())
+			return result
+		}
+	}
+	if err := reservation.EnsureFeatureParent(); err != nil {
+		result.Errors = append(result.Errors, err.Error())
+		return result
+	}
+	for _, m := range migrations {
+		if err := reservation.RetirePublicationReceipt(m.name, m.src); err != nil {
+			result.Errors = append(result.Errors, err.Error())
+			return result
+		}
 	}
 
 	// --- Execute moves with rollback on failure ---
 	var moved []migration
 	for _, m := range migrations {
-		if err := os.Rename(m.src, m.dst); err != nil {
+		currentMoved, err := reservation.MoveFeature(m.src, m.dst, m.lifecycle.Identity())
+		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("moving %s: %v", m.name, err))
+			if currentMoved {
+				moved = append(moved, m)
+			}
 			// Best-effort rollback.
-			for _, done := range moved {
-				if rbErr := os.Rename(done.dst, done.src); rbErr != nil {
+			for i := len(moved) - 1; i >= 0; i-- {
+				done := moved[i]
+				if _, rbErr := reservation.MoveFeature(done.dst, done.src, done.lifecycle.Identity()); rbErr != nil {
 					result.Errors = append(result.Errors, fmt.Sprintf("rollback %s failed: %v", done.name, rbErr))
 				}
 			}
@@ -185,6 +259,9 @@ func MigrateAllFeatures(ws Workspace) (result MigrateResult) {
 		}
 		moved = append(moved, m)
 		result.Migrated = append(result.Migrated, m.name)
+	}
+	if err := reservation.CommitMoves(); err != nil {
+		result.Errors = append(result.Errors, err.Error())
 	}
 
 	return result

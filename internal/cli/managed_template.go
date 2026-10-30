@@ -43,12 +43,11 @@ type heldManagedTemplateLocks struct {
 }
 
 type managedFeatureRenameReservation struct {
-	workspace        internal.Workspace
-	feature          string
-	featurePath      string
-	externalToken    string
-	checkoutStateDir string
-	checkoutToken    string
+	workspace     internal.Workspace
+	feature       string
+	featurePath   string
+	externalToken string
+	checkout      *internal.CheckoutMetadataReservation
 }
 
 var managedTemplateInputIsTTY = managedTemplateTerminalInput
@@ -669,18 +668,11 @@ func acquireManagedFeatureRenameReservation(
 		},
 	}
 	if ws.Mode == internal.ModeCheckout {
-		token, err := newSyncOwnerToken()
+		checkout, err := internal.AcquireCheckoutMetadataReservation(ws, feature)
 		if err != nil {
-			return fail(err)
-		}
-		statePath := filepath.Join(featurePath, ".tws-template-rename")
-		if _, err := internal.AcquireCheckoutMutationLock(
-			ws.CheckoutStateDir(), token, feature, "sync", statePath,
-		); err != nil {
 			return fail(fmt.Errorf("claim checkout mutation reservation for managed feature rename: %w", err))
 		}
-		reservation.checkoutStateDir = ws.CheckoutStateDir()
-		reservation.checkoutToken = token
+		reservation.checkout = checkout
 		loc := internal.ReparentLocationFor(ws, feature, featurePath)
 		if internal.HasReparentState(loc) {
 			return fail(fmt.Errorf("%s: stack reparent recovery is active; recover it before changing feature lifecycle", feature))
@@ -736,11 +728,9 @@ func (reservation *managedFeatureRenameReservation) Release() error {
 		))
 		reservation.externalToken = ""
 	}
-	if reservation.checkoutStateDir != "" {
-		errs = append(errs, internal.ReleaseCheckoutMutationLock(
-			reservation.checkoutStateDir, reservation.checkoutToken,
-		))
-		reservation.checkoutStateDir = ""
+	if reservation.checkout != nil {
+		errs = append(errs, reservation.checkout.Release())
+		reservation.checkout = nil
 	}
 	return errors.Join(errs...)
 }

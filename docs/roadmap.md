@@ -84,7 +84,7 @@ Shipped foundations:
   reconstructs only the matching recovery reservation. v1.2.16 only fails closed for same-feature sync after envelope
   birth; do not use an older tws while any reparent is active or recoverable.
 
-Current target: **scoped standalone push (#6)** — Path B preparation.
+Current target: **scoped standalone push (#6)** — Path B implementation candidate (unreleased).
 The separate `scoped-push-selection` boundary supplies the publication
 counterpart to the existing shared logical entry/subtree selector. New scoped
 flags support external and checkout modes; unscoped behavior remains unchanged.
@@ -160,7 +160,7 @@ For decoupled names, `StackEntry.Name` identifies the tws worktree while `StackE
 | 4 | Shipped: v1.2.18-rc.5 | [#2: role-aware templates](https://github.com/jdbencardinop/tesseraworkspaces/issues/2) | [`named-feature-templates`](../.tpatch/features/named-feature-templates/request.md) |
 | 5 | Shipped: v1.2.18-rc.6 | Standalone follow-up; #2 is complete | [`template-conflict-resolution`](../.tpatch/features/template-conflict-resolution/request.md) |
 | 6 | Shipped: v1.2.18-rc.7 | [#5: external feature rename backpointers](https://github.com/jdbencardinop/tesseraworkspaces/issues/5) | [`fix-external-feature-rename-backpointers`](../.tpatch/features/fix-external-feature-rename-backpointers/request.md) |
-| 7 | Current: Path B preparation | [#6: scoped standalone push](https://github.com/jdbencardinop/tesseraworkspaces/issues/6) | `scoped-push-selection` |
+| 7 | Current: unreleased implementation candidate | [#6: scoped standalone push](https://github.com/jdbencardinop/tesseraworkspaces/issues/6) | `scoped-push-selection` |
 
 Issues #4, #1, #3, #2, and #5 are closed after their verified releases.
 [`named-feature-templates`](../.tpatch/features/named-feature-templates/request.md)

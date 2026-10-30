@@ -121,8 +121,22 @@ older tws while a rename is active or recoverable.`,
 			}
 			defer func() { retErr = errors.Join(retErr, tx.Release()) }()
 
-			if _, err := os.Stat(newPath); err == nil {
+			if _, err := os.Lstat(newPath); err == nil {
 				return fmt.Errorf("feature already exists: %s", newName)
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			if err := managedReservation.checkout.RefusePublicationDestination(newName); err != nil {
+				return err
+			}
+			if err := managedReservation.checkout.ValidatePublicationReceipt(oldName, oldPath); err != nil {
+				return err
+			}
+			if err := managedReservation.checkout.EnsureFeatureParent(); err != nil {
+				return err
+			}
+			if err := managedReservation.checkout.RetirePublicationReceipt(oldName, oldPath); err != nil {
+				return err
 			}
 
 			// External direct session records must not silently relocate: a
@@ -139,19 +153,30 @@ older tws while a rename is active or recoverable.`,
 				}
 			}
 
-			if err := os.Rename(oldPath, newPath); err != nil {
-				return fmt.Errorf("error renaming: %w", err)
+			moved, moveErr := managedReservation.checkout.MoveFeature(oldPath, newPath, lifecycle.Identity())
+			if moveErr != nil {
+				var compensateErr error
+				if moved {
+					_, compensateErr = managedReservation.checkout.MoveFeature(newPath, oldPath, lifecycle.Identity())
+				}
+				return errors.Join(fmt.Errorf("error renaming: %w", moveErr), compensateErr)
 			}
 			managedReservation.Moved(newName, newPath)
 
 			if commitErr := tx.Commit(); commitErr != nil {
-				if rollbackErr := os.Rename(newPath, oldPath); rollbackErr != nil {
-					return errors.Join(commitErr, fmt.Errorf(
-						"rollback failed: feature directory is now %s on disk while %s still refers to %q; repair with 'tws space remove' and 'tws space add': %w",
-						newPath, internal.SpacesFilePath(root), oldName, rollbackErr))
+				restored, rollbackErr := managedReservation.checkout.MoveFeature(newPath, oldPath, lifecycle.Identity())
+				if restored {
+					managedReservation.Moved(oldName, oldPath)
 				}
-				managedReservation.Moved(oldName, oldPath)
+				if rollbackErr != nil {
+					return errors.Join(commitErr, fmt.Errorf(
+						"directory compensation from %s to %s did not complete durably; preserve movement evidence until directory and registry coherence is verified: %w",
+						newPath, oldPath, rollbackErr))
+				}
 				return commitErr
+			}
+			if err := managedReservation.checkout.CommitMoves(); err != nil {
+				return err
 			}
 
 			fmt.Printf("Renamed feature: %s → %s\n", oldName, newName)

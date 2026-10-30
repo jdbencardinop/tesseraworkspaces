@@ -666,6 +666,9 @@ func WithCheckoutSessionLaunchIntent(ws Workspace, finalCheck, launch func() err
 }
 
 func anyCheckoutSyncActive(root string) (bool, error) {
+	if err := RefuseCheckoutPublication(Workspace{Mode: ModeCheckout, MetadataRoot: root}); err != nil {
+		return false, err
+	}
 	entries, err := os.ReadDir(filepath.Join(root, "state"))
 	if os.IsNotExist(err) {
 		return false, nil
@@ -675,6 +678,18 @@ func anyCheckoutSyncActive(root string) (bool, error) {
 	}
 	for _, e := range entries {
 		n := e.Name()
+		if checkoutMetadataMovePath(n) {
+			path := filepath.Join(root, "state", n)
+			moves, err := loadCheckoutMetadataMoves(path)
+			if err != nil {
+				return false, fmt.Errorf("checkout metadata movement evidence could not be verified; preserve %s: %w", path, err)
+			}
+			// A lost guard does not clear movement intent. Only a verified
+			// completed receipt is nonblocking, including at the final check.
+			if moves == nil || !moves.Completed {
+				return false, fmt.Errorf("checkout metadata movement is pending; preserve and reconcile %s before launching a session", path)
+			}
+		}
 		if strings.HasSuffix(n, "-checkout-sync.yaml") || strings.HasSuffix(n, "-checkout-sync.lock") ||
 			n == "checkout-mutation.lock" {
 			return true, nil

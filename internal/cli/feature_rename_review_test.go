@@ -115,6 +115,9 @@ func TestFeatureRenameReviewInterruptedRetryDoesNotFallback(t *testing.T) {
 			}{
 				{pushCmd(), []string{"old", "--dry-run"}},
 				{pushCmd(), []string{"old"}},
+				{pushCmd(), []string{"old", "--only", "entry", "--dry-run"}},
+				{pushCmd(), []string{"old", "--only", "entry"}},
+				{pushCmd(), []string{"old", "--continue"}},
 				{syncCmd(), []string{"old", "--no-fetch", "--local-only"}},
 				{syncCmd(), []string{"old", "--plan", "--no-fetch"}},
 			} {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
 	"github.com/spf13/cobra"
@@ -16,8 +17,23 @@ func pushCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "push <feature>",
-		Short: "Push all branches in a feature with --force-with-lease",
-		Args:  cobra.ExactArgs(1),
+		Short: "Publish selected entries, or push all feature worktrees with --force-with-lease",
+		Long: `Publish a logical stack entry with --only, or its descendant subtree with
+--from, in external or checkout mode. Active refs need no materialized worktree.
+Scoped publication requires Git 2.45+ (enforced no-lazy-fetch support).
+It is strict, freezes source OIDs and exact leases, and stops on
+the first failure. --dry-run is local-only; remote state is explicitly unverified.
+
+Use --continue to finish the recorded plan without selectors. Confirmed successes
+are never republished; uncertain attempts reconcile only the recorded destination.
+--cancel abandons remaining entries, not remote results: there is no remote rollback.
+Use --continue --dry-run to inspect pending publication without network or writes.
+Keep using the new tws binary while publication is pending.
+
+Without selectors or recovery flags, the legacy external push remains lenient,
+skips missing worktrees, and checkout mode retains its worktree-only refusal.
+User Git hooks remain enabled; tws cannot constrain arbitrary hook side effects.`,
+		Args: cobra.ExactArgs(1),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			if len(args) == 0 {
 				return internal.ListFeatures(), cobra.ShellCompDirectiveNoFileComp
@@ -25,6 +41,13 @@ func pushCmd() *cobra.Command {
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			flags, err := resolvePushSelectionFlags(cmd)
+			if err != nil {
+				return err
+			}
+			if flags.selected {
+				return runSelectedPush(cmd, args[0], flags)
+			}
 			internal.RequireTool("git")
 			feature := args[0]
 
@@ -50,6 +73,12 @@ func pushCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be pushed without pushing")
+	cmd.Flags().String("only", "", "Publish exactly this logical stack entry (external or checkout)")
+	cmd.Flags().String("from", "", "Publish this logical entry and its descendants, parent first")
+	cmd.Flags().Bool("continue", false, "Continue only the frozen standalone publication plan")
+	cmd.Flags().Bool("cancel", false, "Abandon remaining publication; never roll back remote refs")
+	_ = cmd.RegisterFlagCompletionFunc("only", pushEntryCompletion)
+	_ = cmd.RegisterFlagCompletionFunc("from", pushEntryCompletion)
 
 	return cmd
 }
@@ -79,6 +108,11 @@ func pushFeature(feature string, layout externalSyncLayout, dryRun bool) error {
 }
 
 func pushFeatureSerialized(feature string, layout externalSyncLayout, dryRun bool) (err error) {
+	if err := internal.RefusePendingScopedPush(internal.ScopedPushLocation{
+		Mode: internal.ModeExternal, Feature: feature, FeaturePath: layout.FeaturePath,
+	}); err != nil {
+		return err
+	}
 	selectionAdmission, err := featureRenameSelectionAdmission(layout.selectionRoot, feature, dryRun)
 	if err != nil {
 		return err
@@ -106,6 +140,9 @@ func pushFeatureSerialized(feature string, layout externalSyncLayout, dryRun boo
 	defer func() {
 		err = errors.Join(err, internal.ReleaseOwnedSyncRunGuard(layout.FeaturePath, token))
 	}()
+	if err := refuseSelectedPublication(layout.selectionRoot, feature); err != nil {
+		return err
+	}
 	return pushFeature(feature, layout, false)
 }
 
@@ -156,8 +193,16 @@ func pushScoped(feature string, layout externalSyncLayout, stack internal.Stack,
 	}
 	// Under the sync-owned mutation lock, clear local observations first,
 	// reload the envelope, then preflight the entries this invocation pushes.
-	defaultRepo := externalPushDefaultRepo(layout, stack)
-	env, err := internal.PrepareReparentPushEnvelope(loc, defaultRepo, &stack, true)
+	var defaultRepo string
+	var followupSelection map[string]bool
+	if sel.Policy.Scoped() {
+		followupSelection = sel.Names
+		// Owner discovery for the default context must also stay selected.
+		defaultRepo = externalPushSelectedDefaultRepo(layout, stack, sel.Names, payload.Transaction)
+	} else {
+		defaultRepo = externalPushDefaultRepo(layout, stack)
+	}
+	env, err := internal.PrepareSelectedReparentPushEnvelope(loc, defaultRepo, &stack, true, followupSelection)
 	if err != nil {
 		var anchored *internal.ReparentAnchoredError
 		if errors.As(err, &anchored) {
@@ -380,6 +425,37 @@ func externalPushDefaultRepo(layout externalSyncLayout, stack internal.Stack) st
 	for _, entry := range stack.Branches {
 		if entry.Repo != "" {
 			return entry.Repo
+		}
+	}
+	return ""
+}
+
+func externalPushSelectedDefaultRepo(layout externalSyncLayout, stack internal.Stack, selected map[string]bool, tx *internal.SyncTransaction) string {
+	for _, entry := range stack.Branches {
+		if selected[entry.Name] && entry.Repo == "" && !entry.Archived {
+			path := layout.WorktreePath(entry.Name)
+			if info, err := os.Stat(path); err != nil || !info.IsDir() {
+				continue
+			}
+			if root, err := internal.GitRepoRootIn(path); err == nil && sameResolvedRepoRoot(root, path) {
+				return path
+			}
+		}
+	}
+	if tx != nil {
+		for _, repo := range tx.Repositories {
+			for _, ref := range repo.Refs {
+				for _, name := range ref.SelectedNames {
+					entry := internal.GetBranch(stack, name)
+					if !selected[name] || entry.Name == "" || entry.Repo != "" || entry.Archived {
+						continue
+					}
+					marker, err := internal.GitMarkerDir(repo.Root)
+					if err == nil && sameResolvedRepoRoot(filepath.Dir(marker), repo.CommonDir) {
+						return repo.Root
+					}
+				}
+			}
 		}
 	}
 	return ""

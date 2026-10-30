@@ -5,6 +5,43 @@
 Latest prerelease: [v1.2.18-rc.7](https://github.com/jdbencardinop/tesseraworkspaces/releases/tag/v1.2.18-rc.7).
 The release-candidate notes below remain part of the next stable release.
 
+- **Scoped standalone push (#6), unreleased implementation candidate**
+  — `tws push <feature> --only <logical-entry>` / `--from <logical-entry>`
+  publishes exactly the selected entry/subtree in external and checkout modes,
+  including active refs without materialized worktrees. This new route requires
+  Git 2.45+ for enforced no-lazy-fetch support; old push/sync paths are unchanged.
+  Local-only dry-run
+  shows exact OIDs, destinations, frozen leases/inclusion evidence and explicit
+  archived skips, with remote state unverified and no lazy fetch or writes.
+  Independently typed v1 state, explicit `--continue` / `--cancel`, durable
+  per-entry intent/success, exact expected-value leases, protected source/
+  witness objects and narrow uncertain-result reconciliation survive failures
+  and process death without broadening selection or replaying confirmed pushes.
+  Cancellation abandons remaining publication, never rolls back remote refs.
+  Reparent inclusion is proved independently because explicit-OID leases make
+  Git's inclusion flag ineffective; scoped standalone and scoped sync follow-up
+  preserve unselected rows/timestamps and avoid unrelated repository probes.
+  Shared mutation locks and selected/actual-root rename admissions protect
+  effects; typed pending state remains authoritative without a live lock.
+  Exact-owned cleanup retains terminal receipts, never removes foreign state.
+  Pending fallback recovery is not hidden by selected terminal history,
+  including history carried by a verified external feature rename.
+  Cleanup-dependent reparent tips survive amend/GC until follow-up decisions
+  are durable. Endpoint-as-remote/group collisions (with Git config-key case
+  semantics) and symlink-dependent local parent traversal refuse rather than
+  redirecting publication. Checkout lifecycle and
+  one/all layout migration hold metadata exclusion, retiring verified terminal
+  receipts to token-named history so old names can be reused without accepting
+  copied/foreign receipts. Rename/migration reconcile and compensate directory
+  moves that preceded a durability error, including the current batch item;
+  unresolved effects retain exact movement/registry evidence and exclusion.
+  Scoped sync chooses an available selected context
+  or its bound transaction repository, never a missing anchor or unrelated tree.
+  Credentials are not stored in endpoint identity fields. Git publication
+  settings cannot add tags/mirror/matching/prune/submodule pushes; user hooks
+  remain enabled. Legacy no-selector external leniency and standalone checkout
+  refusal remain unchanged. No cross-ref/cross-repository atomicity or remote
+  rollback is claimed. Use the new binary while pending; #6 is not yet released.
 - **External feature rename (#5), released in v1.2.18-rc.7**
   — future `tws rename feature OLD NEW` operations preserve ordinary dirty
   work, index bytes, refs, and managed v1/v2 bytes/link identities/overrides.

@@ -370,7 +370,7 @@ type CheckoutMutationLock struct {
 	Created   string `yaml:"created"`
 	Token     string `yaml:"token"`
 	Feature   string `yaml:"feature"`
-	Operation string `yaml:"operation"` // sync | reparent
+	Operation string `yaml:"operation"` // sync | reparent | publication | metadata
 	StatePath string `yaml:"state_path"`
 }
 
@@ -416,17 +416,26 @@ func writeCheckoutMutationLockExclusive(path, token, feature, operation, statePa
 
 func ReadCheckoutMutationLock(stateDir string) (*CheckoutMutationLock, []byte, error) {
 	path := CheckoutMutationLockPath(stateDir)
-	data, err := os.ReadFile(path)
+	snapshot, err := scopedPushReadFile(path)
 	if err != nil {
 		return nil, nil, err
 	}
+	data := snapshot.data
 	var info CheckoutMutationLock
 	if err := yaml.Unmarshal(data, &info); err != nil {
 		return nil, data, err
 	}
 	if info.PID <= 0 || info.Token == "" || info.Feature == "" || info.StatePath == "" ||
-		(info.Operation != "sync" && info.Operation != "reparent") {
+		(info.Operation != "sync" && info.Operation != "reparent" && info.Operation != "publication" && info.Operation != "metadata") {
 		return nil, data, fmt.Errorf("invalid checkout mutation lock")
+	}
+	if info.Operation == "publication" && (!markerIDRegexp.MatchString(info.Token) ||
+		info.StatePath != filepath.Join(stateDir, info.Feature+"-push.v1.json") || validateFeatureName(info.Feature) != nil) {
+		return nil, data, fmt.Errorf("invalid standalone publication lock identity")
+	}
+	if info.Operation == "metadata" && (!markerIDRegexp.MatchString(info.Token) ||
+		info.StatePath != checkoutMetadataOwnerPath(stateDir, info.Token) || validateFeatureName(info.Feature) != nil) {
+		return nil, data, fmt.Errorf("invalid checkout metadata lock identity")
 	}
 	return &info, data, nil
 }
@@ -458,6 +467,20 @@ func checkoutMutationOwnerStateExists(stateDir string, info *CheckoutMutationLoc
 	if fileInfo.Mode()&os.ModeSymlink != 0 {
 		return false, fmt.Errorf("owner state path %s is a symbolic link", path)
 	}
+	if !fileInfo.Mode().IsRegular() {
+		return false, fmt.Errorf("owner state path %s is not a regular file", path)
+	}
+	if info.Operation == "publication" {
+		state, err := loadScopedPushStatePath(path)
+		if err != nil {
+			return false, err
+		}
+		return state != nil && !state.Terminal(), nil
+	}
+	if info.Operation == "metadata" {
+		moves, err := loadCheckoutMetadataMoves(path)
+		return moves != nil && !moves.Completed, err
+	}
 	return true, nil
 }
 
@@ -480,7 +503,9 @@ func checkoutWorkspaceRecoverableStates(stateDirs []string) ([]string, error) {
 		for _, entry := range entries {
 			name := entry.Name()
 			if !strings.HasSuffix(name, "-checkout-sync.yaml") &&
-				!strings.HasSuffix(name, "-reparent.v1.yaml") {
+				!strings.HasSuffix(name, "-reparent.v1.yaml") &&
+				!strings.HasSuffix(name, "-push.v1.json") &&
+				!checkoutMetadataMovePath(name) {
 				continue
 			}
 			path := filepath.Join(stateDir, name)
@@ -490,6 +515,24 @@ func checkoutWorkspaceRecoverableStates(stateDirs []string) ([]string, error) {
 			}
 			if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 				return nil, fmt.Errorf("recoverable checkout mutation state %s is not a regular file", path)
+			}
+			if strings.HasSuffix(name, "-push.v1.json") {
+				state, err := loadScopedPushStatePath(path)
+				if err != nil {
+					return nil, err
+				}
+				if state != nil && state.Terminal() {
+					continue
+				}
+			}
+			if checkoutMetadataMovePath(name) {
+				moves, err := loadCheckoutMetadataMoves(path)
+				if err != nil {
+					return nil, err
+				}
+				if moves != nil && moves.Completed {
+					continue
+				}
 			}
 			paths = append(paths, path)
 		}
@@ -579,7 +622,7 @@ func AcquireCheckoutMutationLock(stateDir, token, feature, operation, ownerState
 	if stateExists {
 		return nil, fmt.Errorf("stale checkout mutation lock belongs to recoverable %s for feature %q", info.Operation, info.Feature)
 	}
-	if err := removeLockIfUnchanged(path, data); err != nil {
+	if err := removeCheckoutMutationLockIfUnchanged(path, data); err != nil {
 		return nil, fmt.Errorf("reclaim stale checkout mutation lock: %w", err)
 	}
 	if err := writeCheckoutMutationLockExclusive(path, token, feature, operation, ownerStatePath); err != nil {
@@ -617,7 +660,7 @@ func ReclaimCheckoutMutationLock(stateDir, token, feature, operation, ownerState
 	if info.PID != os.Getpid() && isProcessAlive(info.PID) {
 		return nil, fmt.Errorf("checkout mutation lock held by live %s for feature %q (pid %d)", info.Operation, info.Feature, info.PID)
 	}
-	if err := removeLockIfUnchanged(path, data); err != nil {
+	if err := removeCheckoutMutationLockIfUnchanged(path, data); err != nil {
 		return nil, fmt.Errorf("reclaim checkout mutation lock: %w", err)
 	}
 	if err := writeCheckoutMutationLockExclusive(path, token, feature, operation, ownerStatePath); err != nil {
@@ -644,7 +687,7 @@ func ReleaseCheckoutMutationLock(stateDir, token string) error {
 	if info.Token != token {
 		return fmt.Errorf("checkout mutation lock ownership changed")
 	}
-	return removeLockIfUnchanged(path, data)
+	return removeCheckoutMutationLockIfUnchanged(path, data)
 }
 
 func AcquireCheckoutLock(featurePath string) error {
@@ -709,6 +752,20 @@ func removeLockIfUnchanged(lockPath string, expected []byte) error {
 	}
 	if string(current) != string(expected) {
 		return fmt.Errorf("lock changed while checking staleness")
+	}
+	return os.Remove(lockPath)
+}
+
+func removeCheckoutMutationLockIfUnchanged(lockPath string, expected []byte) error {
+	snapshot, err := scopedPushReadFile(lockPath)
+	if err != nil {
+		return err
+	}
+	if string(snapshot.data) != string(expected) {
+		return fmt.Errorf("lock changed while checking staleness")
+	}
+	if err := snapshot.verify(lockPath); err != nil {
+		return err
 	}
 	return os.Remove(lockPath)
 }
@@ -2449,7 +2506,11 @@ func finalizeTransaction(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 				return fmt.Errorf("push %s: %w; re-run --continue to retry push", pe.Branch, pushErr)
 			}
 		}
-		if err := env.PersistClears(nil); err != nil {
+		var followupStack *Stack
+		if env.Selected != nil {
+			followupStack = &stack
+		}
+		if err := env.PersistClears(followupStack); err != nil {
 			tx.FailureKind = FailPersistence
 			tx.FailureMsg = "persist reparent remote follow-up clear after push: " + err.Error()
 			tx.Stage = StageCompleted
@@ -2508,7 +2569,15 @@ func finalizeCleanup(opts CheckoutSyncOpts, tx *CheckoutTransaction) error {
 				return fmt.Errorf("push %s: %w", pe.Branch, pushErr)
 			}
 		}
-		if err := env.PersistClears(nil); err != nil {
+		var followupStack *Stack
+		if env.Selected != nil && env.Record != nil {
+			stack, loadErr := LoadStack(opts.FeaturePath)
+			if loadErr != nil {
+				return loadErr
+			}
+			followupStack = &stack
+		}
+		if err := env.PersistClears(followupStack); err != nil {
 			tx.FailureMsg = "persist reparent remote follow-up clear after push retry: " + err.Error()
 			if saveErr := SaveCheckoutTransaction(opts.FeaturePath, tx); saveErr != nil {
 				return errors.Join(err, fmt.Errorf("persist checkout recovery state: %w", saveErr))
@@ -2665,7 +2734,14 @@ func reparentCheckoutPushEnvelope(opts CheckoutSyncOpts, tx *CheckoutTransaction
 		if err != nil {
 			return env, err
 		}
-		env, err = PrepareReparentPushEnvelope(opts.Reparent, opts.RepoDir, &stack, true)
+		var selected map[string]bool
+		if tx.ScopeKind == string(SyncScopeOne) || tx.ScopeKind == string(SyncScopeSubtree) {
+			selected = make(map[string]bool, len(tx.Selected))
+			for _, name := range tx.Selected {
+				selected[name] = true
+			}
+		}
+		env, err = PrepareSelectedReparentPushEnvelope(opts.Reparent, opts.RepoDir, &stack, true, selected)
 		if err != nil {
 			return env, err
 		}

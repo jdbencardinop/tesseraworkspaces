@@ -1,0 +1,126 @@
+{
+  "schema_version": "1.1",
+  "slug": "safe-reparent-restack",
+  "verified_at": "2026-10-30T13:17:04Z",
+  "verdict": "failed",
+  "exit_code": 2,
+  "repository": {
+    "object_format": "sha1",
+    "commit_id_hex_len": 40,
+    "shallow": false,
+    "partial_clone": false,
+    "git_version": "git version 2.55.0",
+    "git_floor_satisfied": true
+  },
+  "baseline": {
+    "mode": "dual-anchor",
+    "current_commit": "38a7baf6981c305f2f3c1cbe23b1db3406ee90e0",
+    "current_probe": "isolated-index",
+    "historical_anchor": {
+      "state": "available",
+      "commit": "aef6239765a9314369b641b473d8b8a72b3f3749",
+      "replay_anchor_commit": "6e1a8507540d8cc42ed00a026d8e45492b285c04",
+      "candidates_collected": 1,
+      "candidates_qualified": 1
+    }
+  },
+  "landing_evidence": {
+    "state": "exact",
+    "attestation_commit": "6e1a8507540d8cc42ed00a026d8e45492b285c04",
+    "candidates": 1,
+    "parent_count": 1,
+    "patch_presence": "present-nonempty",
+    "recipe_presence": "present-nonempty-with-ops",
+    "patch_sha_match": true,
+    "recipe_sha_match": true,
+    "base_commit_match": true,
+    "base_commit_reachable": true
+  },
+  "target_mode": "landed",
+  "checks": [
+    {
+      "id": "status_loaded",
+      "severity": "block-abort",
+      "passed": true
+    },
+    {
+      "id": "intent_files_present",
+      "severity": "block",
+      "passed": true
+    },
+    {
+      "id": "recipe_parses",
+      "severity": "block",
+      "passed": true
+    },
+    {
+      "id": "recipe_op_targets_resolve",
+      "severity": "block",
+      "passed": true
+    },
+    {
+      "id": "dep_metadata_valid",
+      "severity": "block",
+      "passed": true
+    },
+    {
+      "id": "satisfied_by_reachable",
+      "severity": "block",
+      "passed": true,
+      "skipped": true,
+      "reason": "no satisfied_by deps to check"
+    },
+    {
+      "id": "dependency_gate_satisfied",
+      "severity": "warn",
+      "passed": true
+    },
+    {
+      "id": "recipe_replay_clean",
+      "severity": "block",
+      "passed": false,
+      "remediation": "hard parent open-feature-dir landed at 128da627dd26697695b09738ac522e56ab387dfa but its canonical patch is not present at the verification baseline; verify open-feature-dir first — do not re-apply it into the shadow",
+      "mode": "historical-anchor"
+    },
+    {
+      "id": "post_apply_patch_replay_clean",
+      "severity": "block",
+      "passed": false,
+      "reason": "skipped: parent-replay aborted before V8",
+      "remediation": "landed feature: post-apply.patch postimage is not present at HEAD; landing commit 6e1a8507540d8cc42ed00a026d8e45492b285c04 is reachable but the content is absent — inspect with git diff 6e1a8507540d8cc42ed00a026d8e45492b285c04 HEAD, then re-record and re-land. Do NOT run tpatch reconcile: this is local drift, not upstream drift",
+      "mode": "dual-anchor",
+      "anchor_results": {
+        "current": "absent",
+        "historical": "skipped"
+      }
+    },
+    {
+      "id": "reconcile_outcome_consistent",
+      "severity": "warn",
+      "passed": true,
+      "skipped": true,
+      "reason": "no Reconcile.Outcome set"
+    },
+    {
+      "id": "write_file_preimage_fresh",
+      "severity": "block",
+      "passed": true,
+      "skipped": true,
+      "reason": "skipped: parent-replay aborted before V10",
+      "mode": "historical-anchor"
+    }
+  ],
+  "lifecycle_state": "applied",
+  "recipe_hash_at_verify": "e064b4a211f42944ff79af7a40ef8fbb3b7d1f8e8c30a4d9f035afc91fd049af",
+  "patch_hash_at_verify": "40420a110417f5e1d82c1de75bc4f7f6a05f01258c674850780710caacfe8f33",
+  "parent_snapshot": {
+    "amend-aware-rebase": "applied",
+    "branch-name-decoupling": "applied",
+    "rebase-plan-guard": "applied",
+    "stack-ancestry-doctor": "applied",
+    "stack-status": "applied",
+    "sync-modes": "applied"
+  },
+  "failed_at": "parent-landing-drift",
+  "parent_slug": "open-feature-dir"
+}

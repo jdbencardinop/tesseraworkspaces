@@ -74,7 +74,7 @@ func newCmd() *cobra.Command {
 // Atomic: if metadata persistence fails after branch creation, the branch is
 // rolled back (only if this operation created it). Archived entries are
 // reactivated. Mismatched existing entries are rejected.
-func createCheckoutBranch(ws internal.Workspace, feature, name, requestedBase string, force bool) error {
+func createCheckoutBranch(ws internal.Workspace, feature, name, requestedBase string, force bool) (retErr error) {
 	if err := internal.GuardFeatureName(ws.MetadataRoot, feature); err != nil {
 		return err
 	}
@@ -88,6 +88,11 @@ func createCheckoutBranch(ws internal.Workspace, feature, name, requestedBase st
 	if _, err := os.Stat(featurePath); os.IsNotExist(err) {
 		return fmt.Errorf("feature %q not found; run 'tws add %s' first", feature, feature)
 	}
+	reservation, err := acquireManagedFeatureRenameReservation(ws, feature, featurePath, false)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, reservation.Release()) }()
 
 	stack, _ := internal.LoadStack(featurePath)
 
@@ -259,6 +264,11 @@ func createWorktreeAt(
 	if err := os.MkdirAll(featurePath, 0755); err != nil {
 		return err
 	}
+	reservation, err := acquireManagedFeatureRenameReservation(ws, feature, featurePath, false)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, reservation.Release()) }()
 
 	stack, _ := internal.LoadStack(featurePath)
 	existingEntry := internal.GetBranch(stack, name)
@@ -378,6 +388,11 @@ func createWorktreeAt(
 		}
 	}
 
+	// Managed injection acquires its own feature reservation. The branch and
+	// stack mutation is already complete; never recursively claim the guard.
+	if err := reservation.Release(); err != nil {
+		return err
+	}
 	managed, managedErr := internal.ManagedTemplateStatePresent(featurePath)
 	if managedErr != nil {
 		return managedErr

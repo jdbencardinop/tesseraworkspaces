@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -9,6 +10,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 type testAgent struct {
@@ -527,6 +531,227 @@ func TestCheckoutSessionIntentCleanupRejectsSymlinksAndChanges(t *testing.T) {
 			}
 		}
 	})
+}
+
+func retainedSessionMetadataEvidence(t *testing.T, ws Workspace, completed bool) string {
+	t.Helper()
+	source, target := ws.FeaturePath("moving"), ws.FeaturePath("moved")
+	if err := os.MkdirAll(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lifecycle, err := AcquireManagedFeatureLifecycleLock(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := lifecycle.Release(); err != nil {
+			t.Error(err)
+		}
+	}()
+	reservation, err := AcquireCheckoutMetadataReservation(ws, "moving")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moved, err := reservation.MoveFeature(source, target, lifecycle.Identity()); err != nil || !moved {
+		t.Fatalf("create genuine movement evidence: moved=%v err=%v", moved, err)
+	}
+	path := reservation.statePath
+	if completed {
+		preserved := filepath.Join(ws.MetadataRoot, "completed-movement-receipt")
+		previous := ScopedPushCheckpoint
+		ScopedPushCheckpoint = func(step string, _ int) error {
+			if step == "after-checkout-metadata-evidence-write" && reservation.moves.Completed {
+				return os.Link(path, preserved)
+			}
+			return nil
+		}
+		defer func() { ScopedPushCheckpoint = previous }()
+		if err := reservation.CommitMoves(); err != nil {
+			t.Fatal(err)
+		}
+		if err := reservation.Release(); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(preserved, path); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		if err := reservation.Release(); err == nil {
+			t.Fatal("uncommitted movement unexpectedly released its reservation")
+		}
+		if err := os.Remove(CheckoutMutationLockPath(ws.CheckoutStateDir())); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if state, err := loadCheckoutMetadataMoves(path); err != nil || state == nil || state.Completed != completed {
+		t.Fatalf("invalid genuine movement receipt: %+v %v", state, err)
+	}
+	if _, err := os.Lstat(CheckoutMutationLockPath(ws.CheckoutStateDir())); !os.IsNotExist(err) {
+		t.Fatalf("fixture retained a global guard: %v", err)
+	}
+	return path
+}
+
+func TestCheckoutSessionsHonorRetainedMetadataEvidence(t *testing.T) {
+	for _, route := range []string{"direct", "tmux", "feature-dir"} {
+		for _, scenario := range []string{"pending", "untrusted", "fifo", "completed", "late-pending", "late-untrusted"} {
+			t.Run(route+"/"+scenario, func(t *testing.T) {
+				global := filepath.Join(t.TempDir(), "gitconfig")
+				if err := os.WriteFile(global, nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("GIT_CONFIG_GLOBAL", global)
+				t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+				t.Setenv("GIT_CONFIG_COUNT", "0")
+				repo, ws, entry := setupSessionRepo(t)
+				t.Chdir(repo)
+				if err := os.WriteFile(filepath.Join(InjectPath(ws.FeaturePath("feature")), "CLAUDE.local.md"), []byte("session context"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				completed := scenario == "completed"
+				path := retainedSessionMetadataEvidence(t, ws, completed)
+				if strings.HasSuffix(scenario, "untrusted") {
+					body, err := os.ReadFile(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(path, append(body, []byte("untrusted trailing data\n")...), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if scenario == "fifo" {
+					if err := os.Rename(path, filepath.Join(ws.MetadataRoot, "preserved-movement-receipt")); err != nil {
+						t.Fatal(err)
+					}
+					if err := unix.Mkfifo(path, 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				evidenceInfo, err := os.Lstat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var evidenceBytes []byte
+				if evidenceInfo.Mode().IsRegular() {
+					evidenceBytes, err = os.ReadFile(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				late, observedIntent := strings.HasPrefix(scenario, "late-"), false
+				if late {
+					held := filepath.Join(ws.MetadataRoot, "held-movement-receipt")
+					if err := os.Rename(path, held); err != nil {
+						t.Fatal(err)
+					}
+					CheckoutSessionLaunchIntentHook = func() error {
+						present, _, err := CheckoutSessionIntent(ws)
+						if err != nil || !present {
+							t.Fatal("late evidence hook did not run under the session intent")
+						}
+						observedIntent = true
+						return os.Rename(held, path)
+					}
+					t.Cleanup(func() { CheckoutSessionLaunchIntentHook = nil })
+				}
+				preconditions := func() error {
+					if route == "feature-dir" {
+						return CheckoutFeatureDirSessionPreconditions(ws)
+					}
+					return CheckoutSessionPreconditions(ws, "feature", entry)
+				}
+				start := time.Now()
+				preErr := preconditions()
+				if completed || late {
+					if preErr != nil {
+						t.Fatalf("launchable initial state refused: %v", preErr)
+					}
+				} else if preErr == nil || !strings.Contains(preErr.Error(), "metadata") {
+					t.Errorf("shared pre-launch admission ignored movement evidence: %v", preErr)
+				}
+				before := map[string][]byte{}
+				for _, relative := range []string{"HEAD", "index", "logs/HEAD", "info/exclude"} {
+					before[relative], err = os.ReadFile(filepath.Join(repo, ".git", relative))
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				repoInfo, err := os.Stat(repo)
+				if err != nil {
+					t.Fatal(err)
+				}
+				agent, shell, tmux := &testAgent{}, &testShell{}, newTestTmux()
+				var launchErr error
+				switch route {
+				case "direct":
+					launchErr = OpenCheckoutDirect(ws, "feature", entry, []string{"agent"}, agent, shell, "")
+				case "tmux":
+					launchErr = OpenCheckoutTmux(ws, "feature", entry, []string{"agent"}, tmux, "")
+				case "feature-dir":
+					launchErr = WithCheckoutSessionLaunchIntent(ws, preconditions, func() error {
+						if err := agent.Run(ws.FeaturePath("feature"), []string{"agent"}); err != nil {
+							return err
+						}
+						return shell.Run(ws.FeaturePath("feature"))
+					})
+				}
+				if time.Since(start) > 5*time.Second {
+					t.Fatal("movement evidence admission did not return promptly")
+				}
+				if completed {
+					if launchErr != nil {
+						t.Fatalf("completed movement receipt blocked launch: %v", launchErr)
+					}
+					if route == "tmux" {
+						if len(tmux.created) != 1 {
+							t.Fatal("completed control did not launch tmux")
+						}
+						if err := CloseCheckoutSession(ws, "feature", entry.Name, tmux); err != nil {
+							t.Fatal(err)
+						}
+					} else if agent.calls != 1 || shell.calls != 1 {
+						t.Fatal("completed control did not launch agent and shell")
+					}
+				} else {
+					if launchErr == nil || !strings.Contains(launchErr.Error(), "metadata") {
+						t.Errorf("launch ignored retained movement evidence: %v", launchErr)
+					}
+					if agent.calls != 0 || shell.calls != 0 || len(tmux.created) != 0 {
+						t.Error("agent, shell or tmux started while movement was unresolved")
+					}
+					for relative, data := range before {
+						after, err := os.ReadFile(filepath.Join(repo, ".git", relative))
+						if err != nil || !bytes.Equal(data, after) {
+							t.Errorf("refused launch changed Git %s: %v", relative, err)
+						}
+					}
+					if after, err := os.Stat(repo); err != nil || !after.ModTime().Equal(repoInfo.ModTime()) {
+						t.Error("refused launch created or removed repository-root context")
+					}
+				}
+				if late && !observedIntent {
+					t.Error("final admission was not exercised under session intent")
+				}
+				if _, err := os.Lstat(filepath.Join(repo, "CLAUDE.local.md")); !os.IsNotExist(err) {
+					t.Fatal("session context link remains")
+				}
+				if HasCheckoutAgentSession(ws) {
+					t.Fatal("refused/completed launch left session state")
+				}
+				if _, err := os.Lstat(CheckoutSessionIntentDir(ws)); !os.IsNotExist(err) {
+					t.Fatal("refused/completed launch left session intent")
+				}
+				if after, err := os.Lstat(path); err != nil || !os.SameFile(evidenceInfo, after) {
+					t.Fatal("launch replaced or removed movement evidence")
+				}
+				if evidenceInfo.Mode().IsRegular() {
+					if after, err := os.ReadFile(path); err != nil || !bytes.Equal(evidenceBytes, after) {
+						t.Fatal("launch altered movement evidence")
+					}
+				}
+			})
+		}
+	}
 }
 
 func TestClaudeSessionDetection(t *testing.T) {

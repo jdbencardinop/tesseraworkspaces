@@ -224,29 +224,56 @@ func (l externalSyncLayout) WorktreePath(name string) string {
 // It issues no Git command and calls no workspace or root resolver of its own:
 // twsRoot is always the value of the caller's own single internal.TwsRoot()
 // call. Before the at-most-two stack reads for distinct candidates, it checks
-// the selected namespace for pending rename evidence. Agreeing candidates need
-// no resolution probe; their actual-root route admission checks the same name.
+// the selected namespace for pending rename/publication evidence. Agreeing
+// candidates need no stack or Git resolution probe.
 func resolveExternalSyncLayout(ws internal.Workspace, twsRoot, feature string) (externalSyncLayout, error) {
+	return resolveExternalSyncLayoutWith(ws, twsRoot, feature, internal.LoadStack, false)
+}
+
+func resolveExternalSyncLayoutWith(
+	ws internal.Workspace, twsRoot, feature string,
+	loadStack func(string) (internal.Stack, error), strict bool,
+) (externalSyncLayout, error) {
 	b := filepath.Join(twsRoot, feature)
 	a, err := ws.ResolveFeaturePath(feature)
 	if err != nil {
 		return externalSyncLayout{}, err
 	}
-	if filepath.Clean(a) == filepath.Clean(b) {
-		return newExternalSyncLayout(a), nil
+	agree := filepath.Clean(a) == filepath.Clean(b)
+	if !agree {
+		if err := internal.CheckExternalFeatureRenamePending(twsRoot, feature); err != nil {
+			return externalSyncLayout{}, err
+		}
 	}
-	if err := internal.CheckExternalFeatureRenamePending(twsRoot, feature); err != nil {
+	if err := refuseSelectedPublication(twsRoot, feature); err != nil {
 		return externalSyncLayout{}, err
 	}
-	if _, loadErr := internal.LoadStack(b); loadErr == nil {
-		return newExternalSyncLayout(b), nil
+	if agree {
+		return newExternalSyncLayout(a), nil
 	}
-	if _, loadErr := internal.LoadStack(a); loadErr == nil {
+	if _, loadErr := loadStack(b); loadErr == nil {
+		return newExternalSyncLayout(b), nil
+	} else if strict && !errors.Is(loadErr, os.ErrNotExist) {
+		return externalSyncLayout{}, loadErr
+	}
+	if _, loadErr := loadStack(a); loadErr == nil {
 		layout := newExternalSyncLayout(a)
 		layout.selectionRoot = twsRoot
 		return layout, nil
+	} else if strict && !errors.Is(loadErr, os.ErrNotExist) {
+		return externalSyncLayout{}, loadErr
 	}
 	return newExternalSyncLayout(b), nil
+}
+
+func refuseSelectedPublication(root, feature string) error {
+	if root == "" {
+		return nil
+	}
+	return internal.RefusePendingScopedPush(internal.ScopedPushLocation{
+		Mode: internal.ModeExternal, Feature: feature,
+		FeaturePath: filepath.Join(root, feature), MetadataRoot: root,
+	})
 }
 
 func newExternalSyncLayout(featurePath string) externalSyncLayout {
@@ -300,6 +327,9 @@ func externalSyncPostClaimRecheck(feature string, layout externalSyncLayout, tok
 		if err := ExternalSyncMutationGuardHook(layout.FeaturePath); err != nil {
 			return releaseOnError(err)
 		}
+	}
+	if err := refuseSelectedPublication(layout.selectionRoot, feature); err != nil {
+		return releaseOnError(err)
 	}
 	if err := internal.RefuseSyncIfReparentActive(externalReparentLocation(feature, layout)); err != nil {
 		return releaseOnError(err)

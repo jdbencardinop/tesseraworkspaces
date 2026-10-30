@@ -233,7 +233,7 @@ func syncCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show full git fetch output")
-	cmd.Flags().BoolVar(&push, "push", false, "Push all branches after syncing")
+	cmd.Flags().BoolVar(&push, "push", false, "Push the selected scope after syncing (all feature branches when unscoped)")
 	cmd.Flags().BoolVar(&cont, "continue", false, "Resume after conflict resolution")
 	cmd.Flags().BoolVar(&abort, "abort", false, "Restore run-owned local changes before publication; legacy state has limited rollback")
 	cmd.Flags().StringVar(&testCmd, "test", "", "Validation command to run after each rebase (checkout mode)")

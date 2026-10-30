@@ -51,10 +51,26 @@ func deleteCmd() *cobra.Command {
 // --delete-branches validates all targets before deleting any.
 // Refuses to delete the currently checked-out branch.
 func deleteCheckout(ws internal.Workspace, feature string, deleteBranches, forceDelete bool) (retErr error) {
+	if err := internal.GuardFeatureName(ws.MetadataRoot, feature); err != nil {
+		return err
+	}
 	featurePath, err := ws.ResolveFeaturePath(feature)
 	if err != nil {
 		return err
 	}
+	if _, err := os.Stat(featurePath); os.IsNotExist(err) {
+		return fmt.Errorf("feature not found: %s", feature)
+	}
+	lifecycle, err := internal.AcquireManagedFeatureLifecycleLock(featurePath)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, lifecycle.Release()) }()
+	reservation, err := acquireManagedFeatureRenameReservation(ws, feature, featurePath, false)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, reservation.Release()) }()
 
 	// Open the spaces delete transaction before any branch validation or
 	// filesystem removal. It refuses a registered space name and any nested
@@ -87,6 +103,9 @@ func deleteCheckout(ws internal.Workspace, feature string, deleteBranches, force
 		if err != nil {
 			return err
 		}
+		if err := reservation.checkout.RetirePublicationReceipt(feature, featurePath); err != nil {
+			return err
+		}
 		flag := "-d"
 		if forceDelete {
 			flag = "-D"
@@ -102,10 +121,12 @@ func deleteCheckout(ws internal.Workspace, feature string, deleteBranches, force
 			}
 			deleted = append(deleted, backup)
 		}
+	} else if err := reservation.checkout.RetirePublicationReceipt(feature, featurePath); err != nil {
+		return err
 	}
 
 	// Delete feature metadata.
-	if err := os.RemoveAll(featurePath); err != nil {
+	if err := reservation.checkout.RemoveFeature(featurePath, lifecycle.Identity()); err != nil {
 		return fmt.Errorf("error removing feature directory: %w", err)
 	}
 
@@ -162,6 +183,16 @@ func deleteExternal(feature string, deleteBranches, forceDelete bool) (retErr er
 	}
 	defer func() { retErr = errors.Join(retErr, admission.Release()) }()
 	featurePath := internal.FeaturePath(feature)
+	if _, err := os.Stat(featurePath); os.IsNotExist(err) {
+		return fmt.Errorf("feature not found: %s", feature)
+	}
+	reservation, err := acquireManagedFeatureRenameReservation(
+		internal.Workspace{Mode: internal.ModeExternal, MetadataRoot: root}, feature, featurePath, false,
+	)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, reservation.Release()) }()
 
 	tx, err := internal.BeginSpacesFeatureDelete(root, feature, featurePath)
 	if err != nil {

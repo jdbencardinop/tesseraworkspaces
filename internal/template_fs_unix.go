@@ -74,6 +74,10 @@ func managedVerifyPathIdentity(path string, want managedObjectIdentity) error {
 }
 
 func managedRenameNoReplace(root *os.Root, oldName, newName string) error {
+	return managedRenameNoReplaceWith(root, oldName, newName, nil)
+}
+
+func managedRenameNoReplaceWith(root *os.Root, oldName, newName string, afterRename func() error) error {
 	oldName = filepath.Clean(oldName)
 	newName = filepath.Clean(newName)
 	oldDirName, oldBase := filepath.Dir(oldName), filepath.Base(oldName)
@@ -96,6 +100,11 @@ func managedRenameNoReplace(root *os.Root, oldName, newName string) error {
 		int(oldDir.Fd()), oldBase, int(newDir.Fd()), newBase,
 	); err != nil {
 		return fmt.Errorf("exclusive rename %s to %s: %w", oldName, newName, err)
+	}
+	if afterRename != nil {
+		if err := afterRename(); err != nil {
+			return err
+		}
 	}
 	var errs []error
 	if err := oldDir.Sync(); err != nil {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -125,14 +126,14 @@ func reparentRemoteInitialState(remoteSHAAtWrite string) string {
 // it is the ordinary "nothing pending" answer every push path needs.
 func LoadReparentRemoteRecord(loc ReparentLocation) (*ReparentRemoteRecord, error) {
 	path := ReparentRemoteRecordPath(loc)
-	data, err := os.ReadFile(path)
+	snapshot, err := scopedPushReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	rec, err := decodeReparentRemoteRecordBytes(loc, data)
+	rec, err := decodeReparentRemoteRecordBytes(loc, snapshot.data)
 	if err != nil {
 		return nil, err
 	}
@@ -146,6 +147,9 @@ func decodeReparentRemoteRecordBytes(loc ReparentLocation, data []byte) (Reparen
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&rec); err != nil {
 		return ReparentRemoteRecord{}, fmt.Errorf("the reparent remote follow-up record at %s does not decode: %w", path, err)
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return ReparentRemoteRecord{}, fmt.Errorf("the reparent remote follow-up record at %s has trailing data", path)
 	}
 	if rec.RecordVersion > ReparentRemoteRecordVersion {
 		return ReparentRemoteRecord{}, reparentRefusal(ReparentRefusalStateUnsupported, fmt.Sprintf(
@@ -253,7 +257,7 @@ func WriteReparentRemoteRecordBytes(loc ReparentLocation, data []byte) error {
 // A missing record is (nil, false, nil).
 func ReadReparentRemoteRecordBytes(loc ReparentLocation) ([]byte, bool, error) {
 	path := ReparentRemoteRecordPath(loc)
-	data, err := os.ReadFile(path)
+	snapshot, err := scopedPushReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil
 	}
@@ -263,7 +267,7 @@ func ReadReparentRemoteRecordBytes(loc ReparentLocation) ([]byte, bool, error) {
 	if _, err := LoadReparentRemoteRecord(loc); err != nil {
 		return nil, true, err
 	}
-	return data, true, nil
+	return snapshot.data, true, nil
 }
 
 // RemoveReparentRemoteRecord deletes the record file. An absent file is
@@ -440,6 +444,10 @@ const (
 // published row whose tracking ref later disappears stays pending until the
 // operator resolves the remote state.
 func ObserveReparentRemoteClear(repoDir string, e ReparentRemoteEntry, stack *Stack) (ReparentRemoteObservation, error) {
+	return observeReparentRemoteClear(repoDir, e, stack, false)
+}
+
+func observeReparentRemoteClear(repoDir string, e ReparentRemoteEntry, stack *Stack, localOnly bool) (ReparentRemoteObservation, error) {
 	if stack != nil {
 		found := false
 		for _, entry := range stack.Branches {
@@ -459,7 +467,15 @@ func ObserveReparentRemoteClear(repoDir string, e ReparentRemoteEntry, stack *St
 	if ref == "" {
 		ref = "refs/remotes/" + ReparentRemoteName + "/" + e.GitBranch
 	}
-	live, ok, err := reparentResolveRef(repoDir, ref)
+	var live string
+	var ok bool
+	var err error
+	if localOnly {
+		live, err = scopedPushRef(repoDir, ref)
+		ok = live != ""
+	} else {
+		live, ok, err = reparentResolveRef(repoDir, ref)
+	}
 	if err != nil {
 		return ReparentRemoteObservationNone, err
 	}
@@ -472,7 +488,12 @@ func ObserveReparentRemoteClear(repoDir string, e ReparentRemoteEntry, stack *St
 	if e.NewTipSHA == "" {
 		return ReparentRemoteObservationNone, nil
 	}
-	contains, err := reparentIsAncestor(repoDir, e.NewTipSHA, live)
+	var contains bool
+	if localOnly {
+		contains, err = scopedPushAncestor(repoDir, e.NewTipSHA, live)
+	} else {
+		contains, err = reparentIsAncestor(repoDir, e.NewTipSHA, live)
+	}
 	if err != nil {
 		return ReparentRemoteObservationNone, err
 	}
@@ -503,8 +524,27 @@ type ReparentRemoteClearTransition struct {
 // may call it; §11.10 and §12.5 forbid those surfaces from persisting the
 // result.
 func EvaluateReparentRemoteClears(repoDir string, rec ReparentRemoteRecord, stack *Stack) ([]ReparentRemoteClear, error) {
+	return EvaluateSelectedReparentRemoteClears(repoDir, rec, stack, nil)
+}
+
+// EvaluateSelectedReparentRemoteClears keeps the complete record and stack for
+// validation/existence semantics, but never probes an unselected row. A nil
+// selection retains the all-row behavior of non-publication callers.
+func EvaluateSelectedReparentRemoteClears(repoDir string, rec ReparentRemoteRecord, stack *Stack, selected map[string]bool) ([]ReparentRemoteClear, error) {
+	return evaluateSelectedReparentRemoteClears(repoDir, rec, stack, selected, false)
+}
+
+func evaluateSelectedReparentRemoteClears(repoDir string, rec ReparentRemoteRecord, stack *Stack, selected map[string]bool, localOnly bool) ([]ReparentRemoteClear, error) {
+	if selected != nil {
+		if err := validateReparentRemoteRecord(ReparentLocation{Feature: rec.Feature}, rec); err != nil {
+			return nil, err
+		}
+	}
 	out := make([]ReparentRemoteClear, 0, len(rec.Entries))
 	for _, e := range rec.Entries {
+		if selected != nil && !selected[e.Name] {
+			continue
+		}
 		if !e.Pending() {
 			out = append(out, ReparentRemoteClear{Name: e.Name, Cleared: true})
 			continue
@@ -520,7 +560,15 @@ func EvaluateReparentRemoteClears(repoDir string, rec ReparentRemoteRecord, stac
 		if strings.TrimSpace(repoToken) != "" {
 			entryRepo = canonicalize(repoToken)
 		}
-		obs, err := ObserveReparentRemoteClear(entryRepo, e, stack)
+		if selected != nil && entryRepo == "" {
+			if stack == nil {
+				return nil, errors.New("selected reparent follow-up has no verified repository context")
+			}
+			if current := GetBranch(*stack, e.Name); current.Name != "" && !current.Archived {
+				return nil, errors.New("selected reparent follow-up has no verified repository context")
+			}
+		}
+		obs, err := observeReparentRemoteClear(entryRepo, e, stack, localOnly)
 		if err != nil {
 			return nil, err
 		}
@@ -534,6 +582,10 @@ func EvaluateReparentRemoteClears(repoDir string, rec ReparentRemoteRecord, stac
 }
 
 func BuildReparentRemoteClearTransition(loc ReparentLocation, repoDir string, stack *Stack) (ReparentRemoteClearTransition, error) {
+	return BuildSelectedReparentRemoteClearTransition(loc, repoDir, stack, nil)
+}
+
+func BuildSelectedReparentRemoteClearTransition(loc ReparentLocation, repoDir string, stack *Stack, selected map[string]bool) (ReparentRemoteClearTransition, error) {
 	source, present, err := ReadReparentRemoteRecordBytes(loc)
 	if err != nil || !present {
 		return ReparentRemoteClearTransition{SourcePresent: present, TargetPresent: present}, err
@@ -542,7 +594,7 @@ func BuildReparentRemoteClearTransition(loc ReparentLocation, repoDir string, st
 	if err != nil {
 		return ReparentRemoteClearTransition{}, err
 	}
-	clears, err := EvaluateReparentRemoteClears(repoDir, rec, stack)
+	clears, err := EvaluateSelectedReparentRemoteClears(repoDir, rec, stack, selected)
 	if err != nil {
 		return ReparentRemoteClearTransition{}, err
 	}
@@ -583,7 +635,11 @@ func BuildReparentRemoteClearTransition(loc ReparentLocation, repoDir string, st
 // recovery route may call it; every read-only surface must use
 // EvaluateReparentRemoteClears instead.
 func ApplyReparentRemoteClears(loc ReparentLocation, repoDir string, stack *Stack) ([]ReparentRemoteClear, error) {
-	transition, err := BuildReparentRemoteClearTransition(loc, repoDir, stack)
+	return ApplySelectedReparentRemoteClears(loc, repoDir, stack, nil)
+}
+
+func ApplySelectedReparentRemoteClears(loc ReparentLocation, repoDir string, stack *Stack, selected map[string]bool) ([]ReparentRemoteClear, error) {
+	transition, err := BuildSelectedReparentRemoteClearTransition(loc, repoDir, stack, selected)
 	if err != nil || !transition.Changed {
 		return transition.Clears, err
 	}
@@ -762,9 +818,10 @@ func EvaluateReparentPushPreflight(rec *ReparentRemoteRecord, caps ReparentGitCa
 
 // ReparentPushEnvelope is one push invocation's whole rule R-PUSH state.
 type ReparentPushEnvelope struct {
-	Loc     ReparentLocation
-	RepoDir string
-	Record  *ReparentRemoteRecord
+	Loc      ReparentLocation
+	RepoDir  string
+	Record   *ReparentRemoteRecord
+	Selected map[string]bool
 
 	// Err is the typed load verdict. It is nil for "no record at all" — the
 	// only inert absence — and non-nil for a record that EXISTS and could not
@@ -799,21 +856,40 @@ func LoadReparentPushEnvelope(loc ReparentLocation, repoDir string) ReparentPush
 // capability preflight. Real push routes persist and reload under their
 // invocation lock; dry-run callers request an in-memory projection only.
 func PrepareReparentPushEnvelope(loc ReparentLocation, repoDir string, stack *Stack, persist bool) (ReparentPushEnvelope, error) {
+	return PrepareSelectedReparentPushEnvelope(loc, repoDir, stack, persist, nil)
+}
+
+// PrepareSelectedReparentPushEnvelope is the scoped publication seam. Callers
+// must pass the full stack, including unavailable and unselected neighbors.
+func PrepareSelectedReparentPushEnvelope(loc ReparentLocation, repoDir string, stack *Stack, persist bool, selected map[string]bool) (ReparentPushEnvelope, error) {
+	return prepareSelectedReparentPushEnvelope(loc, repoDir, stack, persist, selected, false)
+}
+
+// PrepareLocalSelectedReparentPushEnvelope additionally forbids lazy object
+// fetching. Standalone publication uses this strictly local projection; the
+// existing sync/legacy paths keep their Git compatibility and bare-lease argv.
+func PrepareLocalSelectedReparentPushEnvelope(loc ReparentLocation, repoDir string, stack *Stack, selected map[string]bool) (ReparentPushEnvelope, error) {
+	return prepareSelectedReparentPushEnvelope(loc, repoDir, stack, false, selected, true)
+}
+
+func prepareSelectedReparentPushEnvelope(loc ReparentLocation, repoDir string, stack *Stack, persist bool, selected map[string]bool, localOnly bool) (ReparentPushEnvelope, error) {
 	env := LoadReparentPushEnvelope(loc, repoDir)
+	env.Selected = selected
 	if env.Err != nil || env.Record == nil {
 		return env, nil
 	}
 	if persist {
-		if _, err := ApplyReparentRemoteClears(loc, repoDir, stack); err != nil {
+		if _, err := ApplySelectedReparentRemoteClears(loc, repoDir, stack, selected); err != nil {
 			return env, err
 		}
 		reloaded := LoadReparentPushEnvelope(loc, repoDir)
+		reloaded.Selected = selected
 		if refusal := reloaded.LoadRefusal(); refusal != nil {
 			return reloaded, AnchorReparentRefusal(refusal)
 		}
 		return reloaded, nil
 	}
-	clears, err := EvaluateReparentRemoteClears(repoDir, *env.Record, stack)
+	clears, err := evaluateSelectedReparentRemoteClears(repoDir, *env.Record, stack, selected, localOnly)
 	if err != nil {
 		return env, err
 	}
@@ -928,6 +1004,6 @@ func (e ReparentPushEnvelope) PersistClears(stack *Stack) error {
 	if e.Record == nil || e.Err != nil {
 		return e.Err
 	}
-	_, err := ApplyReparentRemoteClears(e.Loc, e.RepoDir, stack)
+	_, err := ApplySelectedReparentRemoteClears(e.Loc, e.RepoDir, stack, e.Selected)
 	return err
 }

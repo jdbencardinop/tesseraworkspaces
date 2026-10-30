@@ -1833,6 +1833,12 @@ const (
 // aborting/aborted artifact refuses reparent-state-present with the §13.1
 // abort detail, because a rollback that has begun is never resumed forward.
 func RefuseIfReparentActive(loc ReparentLocation, route ReparentRoute) (*ReparentState, error) {
+	if err := RefusePendingScopedPush(ScopedPushLocation{
+		Mode: loc.Mode, Feature: loc.Feature, FeaturePath: loc.FeaturePath,
+		MetadataRoot: filepath.Dir(loc.CheckoutStateDir),
+	}); err != nil {
+		return nil, err
+	}
 	load := LoadReparentState(loc)
 	if refusal := load.Refusal(); refusal != nil {
 		return nil, refusal
@@ -1871,6 +1877,12 @@ func RefuseIfReparentActive(loc ReparentLocation, route ReparentRoute) (*Reparen
 // which is what keeps a no-flag `tws sync` on a feature with no reparent
 // artifact byte- and process-identical to today.
 func RefuseSyncIfReparentActive(loc ReparentLocation) error {
+	if err := RefusePendingScopedPush(ScopedPushLocation{
+		Mode: loc.Mode, Feature: loc.Feature, FeaturePath: loc.FeaturePath,
+		MetadataRoot: filepath.Dir(loc.CheckoutStateDir),
+	}); err != nil {
+		return err
+	}
 	if !HasReparentState(loc) {
 		return nil
 	}

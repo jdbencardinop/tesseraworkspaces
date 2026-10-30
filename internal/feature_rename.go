@@ -303,6 +303,9 @@ func RenameExternalFeature(
 }
 
 func featureRenameMutationPreflight(path string) error {
+	if err := RefusePendingScopedPush(externalScopedPushLocation(path)); err != nil {
+		return err
+	}
 	if info, err := os.Lstat(SyncRunGuardPath(path)); err == nil {
 		if !info.Mode().IsRegular() {
 			return errors.New("feature mutation reservation is not a regular file")

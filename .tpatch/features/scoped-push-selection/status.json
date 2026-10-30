@@ -1,0 +1,39 @@
+{
+  "id": "scoped-push-selection",
+  "slug": "scoped-push-selection",
+  "title": "Publish selected logical entries and subtrees with frozen leases, local preview, and durable continuation in both workspace modes",
+  "state": "applied",
+  "compatibility": "unknown",
+  "requested_at": "2026-10-30T05:56:31Z",
+  "updated_at": "2026-10-30T13:37:55Z",
+  "last_command": "record",
+  "notes": "landed at 2026-10-30T13:42:39Z",
+  "apply": {
+    "completed_at": "2026-10-30T13:37:55Z",
+    "base_commit": "38a7baf6981c305f2f3c1cbe23b1db3406ee90e0",
+    "has_patch": true
+  },
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "push-branches",
+      "kind": "hard"
+    },
+    {
+      "slug": "sync-modes",
+      "kind": "hard"
+    },
+    {
+      "slug": "sync-transactional-abort",
+      "kind": "hard"
+    },
+    {
+      "slug": "safe-reparent-restack",
+      "kind": "hard"
+    },
+    {
+      "slug": "fix-external-feature-rename-backpointers",
+      "kind": "hard"
+    }
+  ]
+}

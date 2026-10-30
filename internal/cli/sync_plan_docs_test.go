@@ -157,8 +157,8 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 
 		targetTail := ci[targetIdx : targetIdx+min(120, len(ci)-targetIdx)]
 		if !strings.Contains(targetTail, "scoped standalone push (#6)") ||
-			!strings.Contains(targetTail, "path b preparation") {
-			t.Fatalf(`docs/roadmap.md's "Current target:" sentence must name scoped standalone push (#6) as Path B preparation, got: %q`, targetTail)
+			!strings.Contains(targetTail, "path b implementation candidate") || !strings.Contains(targetTail, "unreleased") {
+			t.Fatalf(`docs/roadmap.md's "Current target:" sentence must name scoped standalone push (#6) as an unreleased Path B implementation candidate, got: %q`, targetTail)
 		}
 		if !strings.Contains(content, "scoped-push-selection") {
 			t.Fatal("docs/roadmap.md must name the separate issue-six feature boundary")
@@ -182,7 +182,7 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 			t.Fatal("docs/roadmap.md must retain the verified rename release milestone before advancing the target")
 		}
 		if !strings.Contains(normalizeProse(content), "issues #4, #1, #3, #2, and #5 are closed after their verified releases") {
-			t.Fatal("docs/roadmap.md must distinguish the completed issue queue from scoped-push preparation")
+			t.Fatal("docs/roadmap.md must distinguish the completed issue queue from the unreleased scoped-push candidate")
 		}
 		previous := backlogIdx
 		for _, issue := range []string{"[#4:", "[#1:", "[#3:", "[#2:", "[#5:", "[#6:"} {
@@ -241,8 +241,8 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 
 		nextTail := ci[nextFeatureIdx : nextFeatureIdx+min(120, len(ci)-nextFeatureIdx)]
 		if !strings.Contains(nextTail, "scoped standalone push (#6)") ||
-			!strings.Contains(nextTail, "path b preparation") {
-			t.Fatalf(`docs/engineering-workflow.md's "Next roadmap work:" sentence must name scoped standalone push (#6) as Path B preparation, got: %q`, nextTail)
+			!strings.Contains(nextTail, "path b implementation candidate") || !strings.Contains(nextTail, "unreleased") {
+			t.Fatalf(`docs/engineering-workflow.md's "Next roadmap work:" sentence must name scoped standalone push (#6) as an unreleased Path B implementation candidate, got: %q`, nextTail)
 		}
 		if !strings.Contains(content, "scoped-push-selection") {
 			t.Fatal("docs/engineering-workflow.md must name the separate issue-six feature boundary")

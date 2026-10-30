@@ -64,7 +64,7 @@ Current shipped checkout slices:
 The opt-in global workspace registry is also shipped for stable cross-repository
 discovery, health checks, and moved-target repair.
 
-Next roadmap work: **scoped standalone push (#6)** — Path B preparation.
+Next roadmap work: **scoped standalone push (#6)** — Path B implementation candidate (unreleased).
 The separate `scoped-push-selection` boundary adds logical entry/subtree
 publication in external and checkout modes, with selected-only dry-run and
 durable continuation, while preserving unscoped behavior. Existing scoped
@@ -167,6 +167,14 @@ abandons remaining publication, not already-published remote refs. Dry-run is
 local-only with honest unknown remote state. Preserve rename admission across
 selected-root fallback and all effects; do not probe unrelated worktrees or
 clear their reparent follow-up rows.
+
+The candidate uses its own strict version-one publication journal, shared
+feature/checkout mutation reservations, exact token-owned object protection,
+and explicit continuation/cancellation. It keeps terminal receipts so visible
+outcomes can repeat their durability barriers. Pending state excludes current
+mutators even after process death or lock removal; it is not a fabricated sync
+transaction and does not promise universal old-binary blocking. Independent
+review, replay, landing and CI publication still precede release of #6.
 
 ## Tpatch workflow
 

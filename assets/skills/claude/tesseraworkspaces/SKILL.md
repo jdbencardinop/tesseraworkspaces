@@ -25,7 +25,8 @@ tws <command> [args]
 | `tws new <feature> <branch> [--base <parent>] [--force]` | Create a worktree branch |
 | `tws open [feature] [branch] [--tmux] [--no-agent]` | Open worktree and run agent |
 | `tws sync <feature> [--push] [--verbose] [--continue] [--abort] [--fetch\|--no-fetch] [--full\|--local-only] [--only <entry>\|--from <entry>]` | Rebase worktrees in dependency order, optionally scoped |
-| `tws push <feature> [--dry-run]` | Push all branches with --force-with-lease |
+| `tws push <feature> [--only <entry>\|--from <entry>] [--dry-run]` | Publish selected refs; no selector preserves legacy external push |
+| `tws push <feature> --continue [--dry-run]` / `--cancel` | Recover frozen standalone publication; never remote rollback |
 | `tws export <feature> [--full] [--to-repo] [-o file]` | Export workspace metadata |
 | `tws import <file> [--from-repo <feature>]` | Import workspace from YAML or tarball |
 | `tws stack <feature>` | Show branch dependency tree |
@@ -309,7 +310,59 @@ tws sync <feature> --continue    # resume after conflict resolution
 tws sync <feature> --abort       # discard sync state, start fresh
 tws push <feature>               # push all branches with --force-with-lease
 tws push <feature> --dry-run     # preview what would be pushed
+tws push <feature> --from <entry> --dry-run  # exact selected local intent; remote unverified
+tws push <feature> --only <entry>           # one logical entry in either mode
+tws push <feature> --continue --dry-run     # inspect the frozen publication read-only
+tws push <feature> --continue               # finish only unconfirmed entries
+tws push <feature> --cancel                 # abandon remainder; no remote rollback
 ```
+
+**Selected standalone push (unreleased candidate, Git 2.45+):** `--only` selects one logical
+entry; `--from` selects its transitive descendants, parent first, never ancestors
+or neighboring stacks. Both external and checkout modes publish verified local
+refs without worktrees, checkout, rebase or upstream changes. Archived selectors
+refuse; archived descendants are explicitly skipped. Unrelated dirty/unavailable
+worktrees and existing agents are untouched. Dry-run is local-only, including
+no lazy fetch, locks, state/private refs, tracking changes or follow-up clearing.
+Inspect exact OIDs, destination refs, original expected-value leases and inclusion
+witnesses; remote state is **unverified**. Missing tracking grants expected absence.
+
+The independent v1 journal freezes scope/order/source/endpoint/lease authority,
+persists intent before network and success before the next entry, and stops on
+failure. `--continue` takes no selectors, never republishes confirmed successes,
+adds descendants, refreshes a lease or falls back to all branches. An uncertain
+destination equal to the intended source confirms success; the original lease
+permits the same retry; any other value refuses. `--cancel` abandons the remainder
+without changing remote refs or local branches; do not recommend remote rollback.
+`--continue --dry-run` inspects recovery without network or writes.
+
+State is `<external-feature>/.push-state.v1.json` or
+`.tws/state/<feature>-push.v1.json`. Shared feature/checkout mutation locks and
+typed pending state exclude conflicting operations even after process death.
+Owned `refs/tws/push/<token>/...` retain objects; exact-owned cleanup leaves a
+terminal receipt. Use the new binary while pending, not older tws. Reparent
+inclusion is independently proved over the qualifying branch reflog range:
+explicit-OID leases make Git's inclusion flag ineffective. Scoped standalone
+and scoped sync clear only selected proven follow-up rows. Git defaults cannot
+broaden publication; user hooks remain enabled and their arbitrary side effects
+are outside tws's control. There is no cross-ref/cross-repository atomicity.
+No-selector external leniency and standalone checkout refusal remain unchanged.
+
+Recovery prefers a matching pending run over terminal receipts in the bounded
+selected/configured-root candidates. Never delete receipts by hand to recover
+fallback publication. Cleanup protects reparent follow-up tips until keep/clear
+decisions are durable, so amend/GC cannot strand continuation or cancellation.
+Externally renamed terminal history requires the same physical workspace and
+feature inode; historical names never grant publication authority.
+Checkout rename/delete/layout migration retire verified terminal receipts to
+`.tws/state/publication-history/<token>.json` under metadata exclusion; names
+remain reusable and foreign/copied history is preserved by refusal.
+Rename/migration compensate post-move durability failures under exclusion.
+Unresolved effects retain the guard and `.tws/state/.checkout-metadata-<token>`
+movement/registry evidence. Preserve and reconcile it; publication recovery
+verbs do not recover metadata moves. Endpoint-named Git remotes/groups (using
+Git's config-key case rules) and symlink-dependent local parent traversal refuse;
+ordinary unambiguous relative origins remain supported.
 
 If `test_command` is configured, it runs after each successful rebase. Validation failure skips dependent branches.
 
@@ -362,7 +415,7 @@ raw/effective/source/validity/reason evidence for evaluated cutoffs; an
 advanced parent with no record requires known-history repair, not a plain
 rebase recommendation.
 
-Sync modes apply to both workspace modes and are three independent axes: `--fetch`/`--no-fetch` (input refs; external defaults to `fetch`, checkout to `no-fetch`), `--full`/`--local-only` (propagation), and `--only <entry>`/`--from <entry>` (scope, by logical `stack.yaml` name). Successful no-mode-flag behavior remains unchanged. `--no-fetch` forbids automatic network input only; an explicit `--push` is still allowed. A scoped run drops `git rebase --update-refs`, so unselected branches never move. Every new ordinary-sync `--push` is strict and resumable: the run stops at the first rejected push, keeps its recovery state, and `--continue` retries only entries that were never pushed. A `scope=all` run still pushes the whole feature; standalone `tws push` retains lenient failure behavior. Do not use an older `tws` to continue or abort a transactional sync run.
+Sync modes apply to both workspace modes and are three independent axes: `--fetch`/`--no-fetch` (input refs; external defaults to `fetch`, checkout to `no-fetch`), `--full`/`--local-only` (propagation), and `--only <entry>`/`--from <entry>` (scope, by logical `stack.yaml` name). Successful no-mode-flag behavior remains unchanged. `--no-fetch` forbids automatic network input only; an explicit `--push` is still allowed. A scoped run drops `git rebase --update-refs`, so unselected branches never move. Every new ordinary-sync `--push` is strict and resumable: the run stops at the first rejected push, keeps its recovery state, and `--continue` retries only entries that were never pushed. A `scope=all` run still pushes the whole feature; unscoped standalone external `tws push` retains lenient failure behavior. Do not use an older `tws` to continue or abort a transactional sync run.
 
 **Plan, read, approve, execute.** Before a wide or unfamiliar sync, run `tws sync <feature> --plan --json --max-replay-per-entry <n>` (or `--max-replay-total <n>`) and read the document before touching anything: `entries[]` for each branch's old base, new base, `cutoff` raw/effective/source/validity fields, and `candidates` count — an upper bound, never a promise of what gets applied — plus `blockers[]`/`warnings[]` for anything that needs attention and the human tail's `Approval fingerprint:` line. An invalid cutoff is a hard blocker and cannot be waived by approval. `--plan` fetches exactly where the run it describes fetches — an external plan fetches by default, a checkout plan only under `--fetch`, and `--plan --continue` never fetches — so it is not a network no-op. Decide whether to proceed from the single admission fact `runnable && !guard.would_refuse && guard.execute_blocked_by == [] && refusal.kind == null`, never from `--plan`'s own exit status, which is `0` even for a refusal. To execute, extract the fingerprint explicitly (`sed -n 's/^Approval fingerprint: //p'`, never `tail -1`) and re-run with the same limit and `--approve-plan <fingerprint>` — `--approve-plan` requires at least one of `--max-replay-per-entry`/`--max-replay-total` on every route, `--plan` included; a plan with no limit mints no fingerprint, so there is no limitless approval workflow. A guarded refusal exits `1` and writes exactly one `plan-guard: <kind>: <detail>` line on stderr — parse that anchored line, never a substring of ordinary output; a `state-preserved: ` prefix on the detail means something on disk outlives the refusal, while a refusal tws already performed (dirty tree, held lock, unresolvable base, incomplete previous run) keeps its own wording and is never marked. A guarded run's limits are recorded in recovery state, so an older tws release refuses to resume it instead of silently dropping the guard.
 

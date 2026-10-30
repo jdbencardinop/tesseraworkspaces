@@ -145,6 +145,11 @@ func refuseOpenDuringReparent(ws internal.Workspace, feature string) error {
 }
 
 func refuseExternalOpenDuringMutation(feature, featurePath string) error {
+	if err := internal.RefusePendingScopedPush(internal.ScopedPushLocation{
+		Mode: internal.ModeExternal, Feature: feature, FeaturePath: featurePath,
+	}); err != nil {
+		return err
+	}
 	loc := internal.ReparentLocation{Mode: internal.ModeExternal, Feature: feature, FeaturePath: featurePath}
 	if internal.HasReparentState(loc) {
 		return internal.ReparentLaunchRefusal(feature)

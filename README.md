@@ -20,7 +20,7 @@ tws add auth -n auth-models --open
 3. **Open a worktree** — launch your coding agent in the worktree directory
 4. **Decide** — broadcast design decisions to sibling worktrees
 5. **Sync** — rebase all branches in dependency order, amend-aware
-6. **Push** — push all branches with `--force-with-lease`
+6. **Push** — publish a selected entry/subtree, or use legacy all-worktree push
 
 ## Features
 
@@ -107,7 +107,8 @@ existing no-flag behavior; recovery now preserves rollback evidence. Notes:
   rejected push, keeps its recovery state, and `tws sync <feature> --continue`
   retries only the entries that were never pushed. A `scope=all` run and
   no-flag `tws sync --push` still push the whole feature, but preserve recovery
-  state on failure. Standalone `tws push` keeps its lenient per-entry behavior.
+  state on failure. Standalone `tws push` without selectors keeps its lenient
+  external per-entry behavior; selected standalone publication is strict.
 - Every mutating external sync route, including the no-flag route, holds the
   shared feature mutation guard through rebase, metadata, optional push, and
   remote-follow-up clearing. Concurrent mutation of one feature is refused.
@@ -568,6 +569,99 @@ Failed or timed-out facts are `null`/`unknown` with issues such as
 missing, or absent. The budget cannot interrupt an operating-system filesystem
 read. No timeout flags are added.
 
+## Selected standalone publication
+
+```sh
+tws push auth --only auth-models --dry-run   # exact local OIDs and leases; no network
+tws push auth --from auth-models             # entry + transitive descendants
+tws push auth --only auth-middleware         # exactly one logical stack entry
+tws push auth --continue --dry-run           # inspect the original frozen plan
+tws push auth --continue                     # finish only unconfirmed entries
+tws push auth --cancel                       # abandon the remainder; no remote rollback
+```
+
+The scoped route requires **Git 2.45+**, so local probes can enforce
+`--no-lazy-fetch` rather than trusting an environment variable older Git ignores.
+It works in **external and checkout** modes, without checkout,
+rebase, worktree creation, or upstream changes. Selectors use logical
+`stack.yaml` names; destinations use the actual Git branch. For A→B→D and A→C,
+selecting A's subtree publishes A/B/C/D, not ancestors or a neighboring X→Y
+stack. An explicitly archived selector refuses; archived descendants remain
+visible but skipped. Active missing worktrees are not archives: verified
+repository refs can publish directly. Unrelated dirty/unavailable worktrees
+and existing agent sessions do not block publication.
+
+Dry-run is **local-only**: it displays exact source OIDs, destination refs,
+expected-value leases and inclusion witnesses, and marks remote state
+**unverified**. It does not fetch (including lazy object fetches), take locks,
+write state/private refs, update tracking, or clear follow-up. Every eligible
+entry is preflighted before the first real push; failures return nonzero.
+Missing tracking evidence means expected remote **absence**, not permission
+to overwrite. Ambiguous endpoint/tracking mappings refuse.
+
+The independent v1 publication journal freezes membership/order, physical
+repositories, sources, endpoints (credential-free fingerprints), and leases.
+Intent is durable before network; success is durable before the next entry.
+Continuation never republishes confirmed successes, adds new descendants,
+refreshes a lease after a fetch, or falls back to all branches. An uncertain
+attempt reconciles only its recorded destination: the intended source confirms
+success, the original expected value permits the same guarded retry, and
+anything else refuses. Cancellation neither resets/deletes branches nor
+rolls back already-published remote refs.
+Recovery classifies at most the selected and configured-root journals. A
+matching pending fallback run takes precedence over a selected-root terminal
+receipt; completed history never hides unfinished publication.
+External rename may carry that history to a new name: the same physical
+workspace/feature identity is required, and historical names grant no authority.
+
+State lives at `<external-feature>/.push-state.v1.json` or
+`<repo>/.tws/state/<feature>-push.v1.json`. The external `.sync-run.lock`
+and checkout-global `checkout-mutation.lock` (`operation: publication`)
+serialize effects; typed pending state still excludes other mutations after
+process death or lock removal. Token-owned `refs/tws/push/<token>/...` retain
+source/lease/witness objects and any reparent follow-up tip needed by cleanup.
+Follow-up keep/clear decisions are durable before protection refs are released,
+so an amend followed by GC cannot strand cleanup or cancellation.
+Exact-value cleanup removes only owned private
+refs and reservations; completed/canceled terminal receipts remain and grant
+no publication authority. Continuation repeats durability barriers even for
+already-visible outcomes. **Use the new binary while publication is pending**;
+older binaries are not universally blocked.
+
+Checkout rename, delete and one/all layout migration hold workspace metadata
+exclusion (`operation: metadata`), with feature lifecycle locks through movement.
+They retire verified terminal receipts into
+`.tws/state/publication-history/<token>.json` before releasing a live feature
+name. Exact bytes and inode are retained durably; copied/foreign receipts and
+history collisions refuse. No sync/reparent recovery payload is fabricated.
+Rename/migration distinguish actual directory movement from its durability:
+post-move failures are compensated under exclusion, including the current item
+of a batch. Unresolved compensation retains the workspace reservation and
+versioned evidence at `.tws/state/.checkout-metadata-<token>`, including exact
+directory identities and the registry preimage. Preserve that evidence and
+reconcile the directory/registry before further mutation; do not delete it to
+unblock the workspace. Publication recovery verbs do not recover metadata moves.
+Pending/untrusted movement evidence also blocks checkout branch and
+feature-directory launches without a guard; validated completed receipts do not.
+
+Pending reparent rows require an independent frozen inclusion witness over
+Git's qualifying branch-reflog range, including its first older entry.
+An explicit expected-OID lease makes Git's `--force-if-includes` ineffective,
+so adding that flag is not protection. Scoped standalone and scoped sync
+follow-up handling preserve unselected rows and their timestamps. Legacy/sync
+bare-lease arguments remain unchanged. Git settings cannot broaden a selected
+push into tags, mirror/matching/prune, or recursive submodule publication.
+Resolved endpoint names that configure another Git remote or a `remotes.*`
+group refuse, using Git's own config-key case rules, as do local paths whose
+parent traversal depends on a symlink. Ordinary unambiguous relative origins
+remain supported.
+User hooks remain enabled; arbitrary hook side effects are outside tws's
+control. There is no cross-ref/cross-repository atomicity or remote rollback.
+
+Without selectors/recovery flags, legacy external push remains lenient and
+skips missing worktrees; standalone checkout push still refuses.
+Issue #6 is an **unreleased implementation candidate**, not an rc.7 feature.
+
 ## All Commands
 
 | Command | Description |
@@ -578,7 +672,8 @@ read. No timeout flags are added.
 | `tws sync <feature> [--push] [--continue] [--abort] [--verbose] [--fetch\|--no-fetch] [--full\|--local-only] [--only <entry>\|--from <entry>]` | Rebase in dependency order, optionally scoped |
 | `tws sync <feature> --plan [--json] [--max-replay-per-entry N] [--max-replay-total N]` | Preview the rebase; candidates are an upper bound, never applied |
 | `tws sync <feature> --approve-plan <fingerprint> [--max-replay-per-entry N \| --max-replay-total N]` | Execute a previewed, guarded plan |
-| `tws push <feature> [--dry-run]` | Push all branches |
+| `tws push <feature> [--only <entry>\|--from <entry>] [--dry-run]` | Publish selected refs; no selector retains legacy external push |
+| `tws push <feature> --continue [--dry-run]` / `--cancel` | Recover the frozen standalone publication; cancellation is not rollback |
 | `tws stack <feature>` | Show dependency tree |
 | `tws stack status <feature> [--json]` | Stack ancestry, materialization, and upstream status |
 | `tws stack reparent <feature> <entry> --onto <dest>` | Move one entry onto a new parent and replay its descendants |
@@ -684,7 +779,9 @@ idempotently after a crash.
 
 tws changes no remote ref and no pull request. A reparented branch whose pull
 request still points at the old base is recorded locally, so the next `tws push`
-warns and strengthens its lease with `--force-if-includes`. Real pushes are
+warns and strengthens its legacy/sync bare lease with `--force-if-includes`.
+Scoped standalone push instead freezes an independent inclusion witness with
+its explicit expected-OID lease. Real pushes are
 refused while the reparent commit point is still unproven, so a later abort
 cannot lose its remote-protection record. A newer run also preserves an older
 same-branch publication observation when the local tracking ref is temporarily

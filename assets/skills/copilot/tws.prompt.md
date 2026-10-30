@@ -18,7 +18,8 @@ You are working in a project that uses `tws` for feature-scoped workspaces with 
 - `tws sync <feature> [--push] [--verbose] [--continue] [--abort] [--fetch|--no-fetch] [--full|--local-only] [--only <entry>|--from <entry>]` — Rebase worktrees in dependency order, optionally scoped
 - `tws sync <feature> --plan [--json] [--max-replay-per-entry N] [--max-replay-total N]` — Preview the rebase and guard limits; candidates are an upper bound, never applied
 - `tws sync <feature> --approve-plan <fingerprint> [--max-replay-per-entry N | --max-replay-total N]` — Execute a previewed, guarded plan
-- `tws push <feature> [--dry-run]` — Push all branches with --force-with-lease
+- `tws push <feature> [--only <entry>|--from <entry>] [--dry-run]` — Publish selected refs; no selector preserves legacy external push
+- `tws push <feature> --continue [--dry-run]` / `--cancel` — Recover frozen standalone publication; no remote rollback
 - `tws export <feature> [--full] [--to-repo]` — Export workspace metadata
 - `tws import <file> [--from-repo <feature>]` — Import workspace
 - `tws stack <feature>` — Show branch dependency tree
@@ -43,6 +44,59 @@ You are working in a project that uses `tws` for feature-scoped workspaces with 
 - `tws close <feature> <branch>` — Close a session: refuses while a direct record is live, then kills tmux
 - `tws template add/list/show/remove` — Manage global/per-repository named template packages
 - `tws template sync <feature> [--template <dir-or-name>] [--scope worktree|orchestrator|both] [--resolve-conflicts] [--allow-managed-removal]` — Backfill legacy templates or refresh managed roles
+
+## Selected standalone publication (unreleased candidate)
+
+`tws push <feature> --only <entry>` publishes one logical entry; `--from <entry>`
+publishes its transitive descendants, parent first, never ancestors/neighbors.
+The new route requires Git 2.45+ for enforced no-lazy-fetch support.
+Both external and checkout modes publish verified repository refs without
+worktrees, checkout, rebase or upstream changes. Archived selectors refuse;
+archived descendants stay visible but skipped. Unrelated dirty/unavailable
+worktrees and existing agent sessions are untouched.
+
+Preview with `--dry-run`: exact local OIDs, destination refs, expected-value
+leases and inclusion witnesses, but remote state is **unverified**. No network,
+fetch/lazy fetch, locks, state/private refs, tracking updates or follow-up clearing.
+Missing tracking means expected absence, never overwrite permission. Real scoped
+runs preflight all eligible entries, persist intent before network and success
+before the next entry, and stop with nonzero status on failure.
+
+Use selector-free `tws push <feature> --continue` for the frozen v1 plan, or
+`--continue --dry-run` for read-only inspection. Never republish confirmed
+successes, add descendants, refresh a lease or fall back to all branches.
+Only uncertain recorded destinations are reconciled: source confirms success,
+original expectation permits the same guarded retry, anything else refuses.
+`tws push <feature> --cancel` abandons remaining publication; it never resets
+local branches or rolls back remote refs. There is no remote-rollback abort.
+
+State: `<external-feature>/.push-state.v1.json` or
+`.tws/state/<feature>-push.v1.json`. Shared mutation locks and typed pending
+state protect recovery even after process death or missing locks. Exact-owned
+private `refs/tws/push/<token>/...` retain sources/lease/witness objects;
+cleanup leaves terminal receipts. Use new binaries while pending, not older tws.
+Pending reparent rows require an independent qualifying-reflog inclusion witness:
+explicit expected-OID leases disable Git's inclusion flag. Scoped standalone and
+scoped sync clear only selected proven follow-up rows, preserving neighbors and
+timestamps. Git defaults cannot broaden the one-ref publication; user hooks stay
+enabled and arbitrary hook side effects are outside tws's control. No cross-ref/
+cross-repository atomicity is claimed. No-selector external leniency and
+standalone checkout refusal remain unchanged.
+
+Recovery classifies the bounded root candidates and never lets terminal
+history hide matching pending fallback publication. Do not delete receipts
+manually. Externally renamed history requires the same physical workspace and
+feature inode; historical names grant no publication authority.
+Reparent follow-up tips are protected until durable keep/clear
+decisions make cleanup replay safe after GC. Checkout rename/delete/layout
+migration use metadata exclusion and retire verified receipts to
+`.tws/state/publication-history/<token>.json`, preserving exact bytes and
+rejecting copied/foreign history. Rename/migration compensate post-move
+durability failures under exclusion. Unresolved effects retain the guard and
+`.tws/state/.checkout-metadata-<token>` movement/registry evidence; preserve and
+reconcile it, not through publication recovery verbs. Endpoint-named remotes/
+groups (with Git config-key case rules) and symlink-dependent local parent
+traversal refuse; ordinary safe relative origins still work.
 
 ## Stacked & Divergent Branches
 
@@ -75,6 +129,9 @@ tws stack reparent auth auth-middleware --onto main --approve-plan <fingerprint>
 A fresh reparent is always guarded: preview and execution use the same replay
 limit flag(s) and values, and execution adds `--approve-plan`. A limitless
 preview has a null fingerprint. Destination storage is canonical: a stack-entry destination stores the logical entry name, a named literal ref stores its full `refs/...` name, and a raw object-id destination stores the full lowercase OID. It commits every moved branch in one race-atomic compare-and-swap transaction (crash-atomic only on the reftable backend), has exactly one commit point requiring both durable post-image `stack.yaml` and planned-or-no-op refs, and recovers **forward** past that point. Git refs, `stack.yaml` metadata, and worktree/index state are three separate effects; runtime state is durable recovery evidence, not a transactional effect. `--continue` and `--abort` take the whole frozen decision from persisted state and never accept an approval token, destination, cutoff, limit or fetch flag. While a reparent is recorded, `tws sync <feature>` refuses on every verb. Checkout mode blocks opening every feature in that workspace, serializes checkout sync/reparent mutations across features, and rejects non-empty entry `repo` values; external direct/tmux/all launches publish scoped intent before their final mutation check. tws changes no remote ref and no pull request; real top-level external push holds the feature mutation lock across all entries, clears obsolete follow-up rows before lease preflight, waits for a proven commit point, then warns and uses `--force-with-lease --force-if-includes`. Every mutating external sync route holds that same lock through rebase, metadata, optional push and remote follow-up clearing, rechecks reparent state after claiming, and releases last. If the checkout-global lock is absent, current tws scans every feature's recoverable checkout sync/reparent state before fresh mutation and recovery reconstructs only its own reservation. Checkout feature-directory opens hold the workspace launch intent through the agent/shell after a final guard check. Different stored `repo` spellings on one logical edge are refused even when they resolve to one common directory.
+
+The inclusion-flag description above applies to legacy/sync bare leases;
+selected standalone publication uses its independent frozen witness instead.
 
 v1.2.16 only fails closed for same-feature sync after the compatibility envelope exists; it cannot see artifact-before-compat window 1, workspace-global locks, unrelated-feature checkout reparent, or top-level push. **Do not use an older tws while any reparent is active or recoverable.**
 
@@ -232,7 +289,7 @@ Checkout mode stores local metadata under `.tws/features/`, adds `.tws/` to the 
 
 `tws sync <feature>` is transactional in checkout mode: it requires a clean attached checkout, switches/rebases logical branches sequentially, persists recovery state under `.tws/state/`, and restores the original branch. Use `--continue` after resolving conflicts and `--abort` to recover. It must be run from the repository checkout: a cwd inside a linked worktree of the same repository is refused.
 
-Sync modes apply to both workspace modes and are three independent axes: `--fetch`/`--no-fetch` (input refs; external defaults to `fetch`, checkout to `no-fetch`), `--full`/`--local-only` (propagation), and `--only <entry>`/`--from <entry>` (scope, by logical `stack.yaml` name). Successful no-mode-flag behavior remains unchanged. `--no-fetch` forbids automatic network *input* only — an explicit `--push` is still allowed. Scoped/local-only, archived, and checkout rebases use `git -c rebase.updateRefs=false rebase`, so unselected branches never move even when `rebase.updateRefs=true` is configured, including on Git 2.26-2.37. Intentional full external `--update-refs` requires Git 2.38. Every new ordinary-sync `--push` is strict: it stops at the first rejected push, keeps recovery state, and `--continue` retries only entries that were never pushed. A `scope=all` run still pushes the whole feature; standalone `tws push` retains lenient failure behavior. Do not use an older tws to continue or abort a transactional sync run.
+Sync modes apply to both workspace modes and are three independent axes: `--fetch`/`--no-fetch` (input refs; external defaults to `fetch`, checkout to `no-fetch`), `--full`/`--local-only` (propagation), and `--only <entry>`/`--from <entry>` (scope, by logical `stack.yaml` name). Successful no-mode-flag behavior remains unchanged. `--no-fetch` forbids automatic network *input* only — an explicit `--push` is still allowed. Scoped/local-only, archived, and checkout rebases use `git -c rebase.updateRefs=false rebase`, so unselected branches never move even when `rebase.updateRefs=true` is configured, including on Git 2.26-2.37. Intentional full external `--update-refs` requires Git 2.38. Every new ordinary-sync `--push` is strict: it stops at the first rejected push, keeps recovery state, and `--continue` retries only entries that were never pushed. A `scope=all` run still pushes the whole feature; unscoped standalone external `tws push` retains lenient failure behavior. Do not use an older tws to continue or abort a transactional sync run.
 
 New ordinary sync runs snapshot exact selected branch tips, frozen replay
 cutoffs, original checkout positions, and exact pre-run `stack.yaml` bytes

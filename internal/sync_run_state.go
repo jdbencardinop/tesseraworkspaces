@@ -298,6 +298,9 @@ func NewSyncRunState(feature, marker, token string, policy SyncRunPolicy) *SyncR
 // writeLockExclusive. It never steals a live guard and refuses a stale guard
 // that still has a payload.
 func ClaimSyncRunGuard(featurePath, token string) error {
+	if err := RefusePendingScopedPush(externalScopedPushLocation(featurePath)); err != nil {
+		return err
+	}
 	path := SyncRunGuardPath(featurePath)
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return fmt.Errorf("create sync guard directory: %w", err)
@@ -308,10 +311,11 @@ func ClaimSyncRunGuard(featurePath, token string) error {
 		return err
 	}
 
-	data, err := os.ReadFile(path)
+	snapshot, err := scopedPushReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read existing sync guard: %w", err)
 	}
+	data := snapshot.data
 	var guard SyncRunGuard
 	if err := yaml.Unmarshal(data, &guard); err != nil {
 		return fmt.Errorf("invalid sync guard; inspect %s and use --abort to recover: %w", path, err)
@@ -346,13 +350,14 @@ type syncGuardReclaimCheck struct {
 // for call-shape parity and MUST NOT affect the verdict (§12.4).
 func checkSyncRunGuardReclaimable(featurePath, ownerToken string) (syncGuardReclaimCheck, error) {
 	path := SyncRunGuardPath(featurePath)
-	data, err := os.ReadFile(path)
+	snapshot, err := scopedPushReadFile(path)
 	if os.IsNotExist(err) {
 		return syncGuardReclaimCheck{absent: true}, nil
 	}
 	if err != nil {
 		return syncGuardReclaimCheck{}, fmt.Errorf("read sync guard: %w", err)
 	}
+	data := snapshot.data
 	var guard SyncRunGuard
 	if err := yaml.Unmarshal(data, &guard); err != nil {
 		return syncGuardReclaimCheck{}, fmt.Errorf("invalid sync guard %s: %w", path, err)
@@ -369,6 +374,9 @@ func checkSyncRunGuardReclaimable(featurePath, ownerToken string) (syncGuardRecl
 // ReclaimSyncRunGuard reclaims the guard for --continue/--abort. A live guard
 // owned by another process is never reclaimed.
 func ReclaimSyncRunGuard(featurePath, token string) error {
+	if err := RefusePendingScopedPush(externalScopedPushLocation(featurePath)); err != nil {
+		return err
+	}
 	path := SyncRunGuardPath(featurePath)
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return fmt.Errorf("create sync guard directory: %w", err)
@@ -397,12 +405,12 @@ func ReclaimSyncRunGuard(featurePath, token string) error {
 
 // ReadSyncRunGuard reads the guard read-only.
 func ReadSyncRunGuard(featurePath string) (*SyncRunGuard, error) {
-	data, err := os.ReadFile(SyncRunGuardPath(featurePath))
+	snapshot, err := scopedPushReadFile(SyncRunGuardPath(featurePath))
 	if err != nil {
 		return nil, err
 	}
 	var guard SyncRunGuard
-	if err := yaml.Unmarshal(data, &guard); err != nil {
+	if err := yaml.Unmarshal(snapshot.data, &guard); err != nil {
 		return nil, err
 	}
 	return &guard, nil
@@ -432,13 +440,14 @@ func ReleaseSyncRunGuard(featurePath string) {
 // safely use the unconditional compatibility remover.
 func ReleaseOwnedSyncRunGuard(featurePath, token string) error {
 	path := SyncRunGuardPath(featurePath)
-	data, err := os.ReadFile(path)
+	snapshot, err := scopedPushReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
+	data := snapshot.data
 	var guard SyncRunGuard
 	if err := yaml.Unmarshal(data, &guard); err != nil {
 		return fmt.Errorf("decode owned sync guard: %w", err)
@@ -446,7 +455,10 @@ func ReleaseOwnedSyncRunGuard(featurePath, token string) error {
 	if guard.Token != token || guard.PID != os.Getpid() {
 		return fmt.Errorf("refusing to release a feature mutation guard owned by another process")
 	}
-	return removeLockIfUnchanged(path, data)
+	if err := snapshot.verify(path); err != nil {
+		return err
+	}
+	return os.Remove(path)
 }
 
 func writeSyncGuardExclusive(path, token string) error {

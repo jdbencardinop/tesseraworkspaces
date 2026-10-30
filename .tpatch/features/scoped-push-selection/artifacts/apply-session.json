@@ -1,0 +1,8 @@
+{
+  "slug": "scoped-push-selection",
+  "completed_at": "2026-10-30T13:37:55Z",
+  "base_commit": "38a7baf6981c305f2f3c1cbe23b1db3406ee90e0",
+  "has_patch": true,
+  "validation_status": "passed",
+  "validation_notes": "Parent exact v5: all three reviews approved; ordinary full tests/vet/lint/build/diff/DAG and 38 real CLI cases passed; Linux cross-build passed."
+}
