@@ -1,0 +1,38 @@
+{
+  "base_commit": "6114e4f4dadb111c5fd47c11bd6f4d96e195c67a",
+  "feature": "update-github-actions-node24",
+  "planning_files": {
+    ".tpatch/features/update-github-actions-node24/analysis.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "a1f82b6f5a128b1fe1df0ee1e1d423ba8bbbfed720908b98a6de2f5dcc591557"
+    },
+    ".tpatch/features/update-github-actions-node24/exploration.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "551e3364df985a9ad789239a08a4ab15b2cb7982d181e44b88e794536c77bced"
+    },
+    ".tpatch/features/update-github-actions-node24/request.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "2786ddf104d49e11efcf17b743e73c5a8c58c3c049c10f6b193e9bb81eeddaa3"
+    },
+    ".tpatch/features/update-github-actions-node24/spec.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "ca512507393f0397ad46f28791b12605c558fbc507104105dfbde84fd18fe4ea"
+    }
+  },
+  "product_files": {
+    ".github/workflows/ci.yml": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "e8208499a477ba94d5a967aa1b4342100f5a00e2a1743a31f38d7d1316b88c56"
+    },
+    "CHANGELOG.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "351dcda184c80db7e911e203622625cc9cd41306dadb76cac4dd2bc1c6023099"
+    }
+  }
+}

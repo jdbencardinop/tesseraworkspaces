@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Node 24-native CI actions (#8), implementation candidate** — checkout and
+  setup-go now use v7, and release publication uses action-gh-release v3.
+  Explicit `cache-dependency-path: go.sum` preserves the previous dependency
+  invalidation input despite setup-go's changed default. Go version selection,
+  module/build caching, Ubuntu/macOS jobs, permissions, triggers, test budgets,
+  tag-version checks, and stable/prerelease conditions are unchanged. No tws
+  runtime behavior or Go dependency changes are included.
+
 ## v1.2.18
 
 Latest stable: [v1.2.18](https://github.com/jdbencardinop/tesseraworkspaces/releases/tag/v1.2.18).

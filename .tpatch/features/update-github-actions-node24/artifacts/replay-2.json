@@ -1,0 +1,10 @@
+{
+  "feature": "update-github-actions-node24",
+  "base_commit": "6114e4f4dadb111c5fd47c11bd6f4d96e195c67a",
+  "manifest_sha256": "a15518fad514f280db6bf02d353915e041c113ca2d3d56bfc74cac5337c6a0fa",
+  "recipe_sha256": "94dabf1fd4b323f3839bd33106689d2fd999a8895df10695ec779310acbe48a4",
+  "existing_preimages_verified": 2,
+  "new_paths_proven_absent": 0,
+  "postimages_verified": 2,
+  "passed": true
+}

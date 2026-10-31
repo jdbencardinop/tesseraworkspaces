@@ -2,12 +2,17 @@
   "id": "update-github-actions-node24",
   "slug": "update-github-actions-node24",
   "title": "Update GitHub Actions dependencies to versions that natively support Node.js 24. Current CI is green, but checkout@v4 and setup-go@v5 emit deprecation warnings because GitHub forces their Node 20 runtime to Node 24. Verify replacement action versions, preserve Go caching/version-file behavior, and keep the Linux/macOS/tag/release matrix green.",
-  "state": "requested",
+  "state": "applied",
   "compatibility": "unknown",
   "requested_at": "2026-08-05T01:48:41Z",
-  "updated_at": "2026-08-05T01:48:41Z",
-  "last_command": "add",
-  "apply": {},
+  "updated_at": "2026-10-31T10:09:33Z",
+  "last_command": "record",
+  "notes": "landed at 2026-10-31T10:18:06Z",
+  "apply": {
+    "completed_at": "2026-10-31T09:38:30Z",
+    "base_commit": "6114e4f4dadb111c5fd47c11bd6f4d96e195c67a",
+    "has_patch": true
+  },
   "reconcile": {},
   "depends_on": [
     {

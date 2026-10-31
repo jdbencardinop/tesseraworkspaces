@@ -1,0 +1,57 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 015a81d..e4060ae 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -23,15 +23,16 @@ jobs:
+       matrix:
+         os: [ubuntu-latest, macos-latest]
+     steps:
+-      - uses: actions/checkout@v4
++      - uses: actions/checkout@v7
+         with:
+           fetch-depth: 0
+ 
+       - name: Set up Go
+-        uses: actions/setup-go@v5
++        uses: actions/setup-go@v7
+         with:
+           go-version-file: go.mod
+           cache: true
++          cache-dependency-path: go.sum
+ 
+       - name: Verify formatting
+         run: |
+@@ -75,12 +76,12 @@ jobs:
+     permissions:
+       contents: write
+     steps:
+-      - uses: actions/checkout@v4
++      - uses: actions/checkout@v7
+         with:
+           fetch-depth: 0
+ 
+       - name: Create GitHub Release
+-        uses: softprops/action-gh-release@v2
++        uses: softprops/action-gh-release@v3
+         with:
+           generate_release_notes: true
+           draft: false
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 525ea55..daade5a 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,6 +2,14 @@
+ 
+ ## Unreleased
+ 
++- **Node 24-native CI actions (#8), implementation candidate** — checkout and
++  setup-go now use v7, and release publication uses action-gh-release v3.
++  Explicit `cache-dependency-path: go.sum` preserves the previous dependency
++  invalidation input despite setup-go's changed default. Go version selection,
++  module/build caching, Ubuntu/macOS jobs, permissions, triggers, test budgets,
++  tag-version checks, and stable/prerelease conditions are unchanged. No tws
++  runtime behavior or Go dependency changes are included.
++
+ ## v1.2.18
+ 
+ Latest stable: [v1.2.18](https://github.com/jdbencardinop/tesseraworkspaces/releases/tag/v1.2.18).
