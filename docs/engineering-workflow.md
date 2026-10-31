@@ -64,13 +64,22 @@ Current shipped checkout slices:
 The opt-in global workspace registry is also shipped for stable cross-repository
 discovery, health checks, and moved-target repair.
 
-Next roadmap work: **reparent completion context (#7)** — Path B implementation candidate (unreleased).
-The separate `fix-reparent-completion-context` boundary aligns shell completion
+Next roadmap work: **stable v1.2.18 release preparation**.
+The approved preparation target is the next patch after `v1.2.17`, using the
+published `v1.2.18-rc.9` runtime baseline plus documentation/tracking cleanup.
+Follow the [current release plan](v1.2-rc-validation.md#current-release-plan);
+provider integrations and the requested checkout recovery UX remain separate.
+
+Reparent completion context (#7) is fully released and verified in
+`v1.2.18-rc.9` at `fb03092`, with successful Ubuntu/macOS main and tag/release
+CI and exact-tag version checks. Its separate
+`fix-reparent-completion-context` boundary aligns shell completion
 with the execution-selected feature layout and target-entry repository.
 Completion stays read-only and local-only; preserve logical/Git name separation,
 candidate eligibility and ordering, and all existing execution safety.
-Implementation and RC publication are authorized through the established
-independent review, frozen-candidate gates, record/replay, and landing process.
+Issue #7 is closed. Release preparation does not authorize another product
+implementation, push, tag, or stable promotion; those require their own approved
+scope and the established review, validation, and release gates.
 Scoped standalone push (#6) is fully released and verified in
 `v1.2.18-rc.8` at `54f214f`, with successful Ubuntu/macOS main and tag/release
 CI and exact-tag version checks. Its `scoped-push-selection` boundary adds
@@ -95,8 +104,8 @@ Scoped status projection (#3) is fully released and verified in
 workspace evidence, with bounded probes and the existing versioned schema.
 Ordinary sync safety (#4) is fully released and verified in `v1.2.18-rc.2`.
 Slash-containing worktree injection (#1) is fully released and verified in
-`v1.2.18-rc.3`, including explicit checkout injection refusal. All seven
-milestones have successful main/tag CI, and issues #4, #1, #3, #2, #5, and #6 are closed.
+`v1.2.18-rc.3`, including explicit checkout injection refusal. All eight
+milestones have successful main/tag CI, and issues #4, #1, #3, #2, #5, #6, and #7 are closed.
 Preserve those status,
 sync/reparent/session, and injection behaviors.
 
@@ -183,11 +192,24 @@ mutators even after process death or lock removal; it is not a fabricated sync
 transaction and does not promise universal old-binary blocking. The rc.8
 release completed independent review, replay, landing and verified CI
 publication. Keep its published tpatch artifacts as historical evidence;
-the current #7 completion candidate does not change its runtime scope.
+the shipped #7 completion fix does not change its runtime scope.
+
+The requested
+[`checkout-metadata-move-recovery`](../.tpatch/features/checkout-metadata-move-recovery/request.md)
+follow-up will define guided recovery for retained checkout rename/migration
+evidence. Reconciliation remains manual today; do not delete evidence or bypass
+admission guards as release cleanup. It is separate from historical tpatch
+artifact repair and is not an unfinished publication release.
 
 ## Tpatch workflow
 
 Use tpatch as structured patch management, not primarily as a generator.
+
+**Path A** asks the configured provider to generate phase artifacts.
+**Path B** has the coding agent author them and advance the applicable phases
+with `--manual`. These are alternative workflows, not unfinished product
+features or the Lane A/Lane B delivery tracks. The released template, rename,
+scoped-push, and completion boundaries used Path B.
 
 1. Check `tpatch status <slug>` and `tpatch next <slug>`.
 2. Register with an explicit clean slug.
@@ -229,7 +251,7 @@ Before landing:
 
 ```bash
 gofmt -w <changed-go-files>
-go test ./... -count=1
+go test ./... -count=1 -timeout 40m
 go vet ./...
 golangci-lint run ./...
 make build
@@ -260,6 +282,15 @@ After landing, rerun full gates and check a clean tree before push/tag.
 - Agent skills/documentation must be updated when user-facing behavior changes.
 
 ## Release cadence
+
+The current official-release target is **v1.2.18**, not `v1.3.0`. It completes
+the existing RC cycle under this repository's patch-version cadence. Preserve
+all published RC tags and their evidence; the stable tag must identify the
+reviewed, clean landed commit after the remaining release gates and approval.
+
+The binary version is derived from Git tags for source builds and module
+metadata for versioned installs. Do not replace the source `dev` fallback with
+a planned release number or treat a documentation update as publication.
 
 - Each approved landed feature gets the next patch tag unless it changes incompatible storage/semantics; use an RC in that case.
 - Tag only after push-ready clean-tree audit and full gates.

@@ -122,8 +122,8 @@ func TestSyncPlanDocs_FlagWorkflowSurfacesCarryAllFiveLiterals(t *testing.T) {
 // own rule: neither file may carry any of the five flag literals.
 //
 // Released safety features stay in the shipped list. Post-release
-// prioritization advances to reparent completion after sync safety, injection
-// correctness, scoped status, both template slices, rename, and scoped push ship;
+// prioritization advances to release preparation after sync safety, injection,
+// scoped status, both template slices, rename, scoped push, and completion ship;
 // the negative flag-literal contract is unchanged.
 func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t *testing.T) {
 	literals := []string{"--plan", "--max-replay-per-entry", "--max-replay-total", "--approve-plan", "plan-guard:"}
@@ -156,9 +156,8 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 		}
 
 		targetTail := ci[targetIdx : targetIdx+min(120, len(ci)-targetIdx)]
-		if !strings.Contains(targetTail, "reparent completion context (#7)") ||
-			!strings.Contains(targetTail, "path b implementation candidate") || !strings.Contains(targetTail, "unreleased") {
-			t.Fatalf(`docs/roadmap.md's "Current target:" sentence must name reparent completion context (#7) as an unreleased Path B implementation candidate, got: %q`, targetTail)
+		if !strings.Contains(targetTail, "stable v1.2.18 release preparation") {
+			t.Fatalf(`docs/roadmap.md's "Current target:" sentence must name stable v1.2.18 release preparation, got: %q`, targetTail)
 		}
 		if !strings.Contains(content, "fix-reparent-completion-context") {
 			t.Fatal("docs/roadmap.md must name the separate issue-seven feature boundary")
@@ -184,8 +183,11 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 		if !strings.Contains(normalizeProse(content), "scoped standalone push (#6) is fully released and verified in v1.2.18-rc.8") {
 			t.Fatal("docs/roadmap.md must retain the verified scoped-push release milestone before advancing the target")
 		}
-		if !strings.Contains(normalizeProse(content), "issues #4, #1, #3, #2, #5, and #6 are closed after their verified releases") {
-			t.Fatal("docs/roadmap.md must distinguish the completed issue queue from the unreleased completion candidate")
+		if !strings.Contains(normalizeProse(content), "reparent completion context (#7) is fully released and verified in v1.2.18-rc.9") {
+			t.Fatal("docs/roadmap.md must retain the verified completion release milestone before advancing the target")
+		}
+		if !strings.Contains(normalizeProse(content), "issues #4, #1, #3, #2, #5, #6, and #7 are closed after their verified releases") {
+			t.Fatal("docs/roadmap.md must distinguish the completed issue queue from future release preparation")
 		}
 		previous := backlogIdx
 		for _, issue := range []string{"[#4:", "[#1:", "[#3:", "[#2:", "[#5:", "[#6:", "[#7:"} {
@@ -243,9 +245,8 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 		}
 
 		nextTail := ci[nextFeatureIdx : nextFeatureIdx+min(120, len(ci)-nextFeatureIdx)]
-		if !strings.Contains(nextTail, "reparent completion context (#7)") ||
-			!strings.Contains(nextTail, "path b implementation candidate") || !strings.Contains(nextTail, "unreleased") {
-			t.Fatalf(`docs/engineering-workflow.md's "Next roadmap work:" sentence must name reparent completion context (#7) as an unreleased Path B implementation candidate, got: %q`, nextTail)
+		if !strings.Contains(nextTail, "stable v1.2.18 release preparation") {
+			t.Fatalf(`docs/engineering-workflow.md's "Next roadmap work:" sentence must name stable v1.2.18 release preparation, got: %q`, nextTail)
 		}
 		if !strings.Contains(content, "fix-reparent-completion-context") {
 			t.Fatal("docs/engineering-workflow.md must name the separate issue-seven feature boundary")
@@ -271,9 +272,39 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 		if !strings.Contains(normalizeProse(content), "scoped standalone push (#6) is fully released and verified in v1.2.18-rc.8") {
 			t.Fatal("docs/engineering-workflow.md must retain the verified scoped-push release milestone before advancing the target")
 		}
+		if !strings.Contains(normalizeProse(content), "reparent completion context (#7) is fully released and verified in v1.2.18-rc.9") {
+			t.Fatal("docs/engineering-workflow.md must retain the verified completion release milestone before advancing the target")
+		}
 
 		assertNoFlagLiteral(t, "docs/engineering-workflow.md", content)
 	})
+}
+
+func TestReleaseDocs_PrereleaseHandoff(t *testing.T) {
+	for path, required := range map[string][]string{
+		"CHANGELOG.md": {
+			"Planned next stable release: **v1.2.18** (not yet published)",
+			"## v1.2.18 release candidates",
+			"Latest prerelease: [v1.2.18-rc.9]",
+			"Reparent completion context (#7), released in v1.2.18-rc.9",
+		},
+		"docs/v1.2-rc-validation.md": {
+			"Selected stable target: **v1.2.18**",
+			"## Current release plan",
+			"go install github.com/jdbencardinop/tesseraworkspaces/cmd/tws@v1.2.18-rc.9",
+			"tws version v1.2.18-rc.9",
+			"## 6. v1.2.18 regression boundaries",
+		},
+	} {
+		t.Run(path, func(t *testing.T) {
+			content := readRepoDoc(t, path)
+			for _, text := range required {
+				if !strings.Contains(content, text) {
+					t.Errorf("%s must contain current prerelease guidance %q", path, text)
+				}
+			}
+		})
+	}
 }
 
 func TestReparentDocs_NormativeClaimsAcrossEightSurfaces(t *testing.T) {
@@ -447,16 +478,16 @@ func TestReparentDocs_GuardedWorkflowExecutes(t *testing.T) {
 // TestSyncPlanDocs_ChangelogRecoveryCellsAreSeparateItems
 // ---------------------------------------------------------------------------
 
-// changelogUnreleasedBullets splits CHANGELOG.md's "## Unreleased" section
-// into its top-level "- " bulleted items, so callers can assert content
+// changelogSectionBullets splits one CHANGELOG.md section into its
+// top-level "- " bulleted items, so callers can assert content
 // scoped to one bullet rather than the whole section (which would let two
 // merged cells masquerade as three).
-func changelogUnreleasedBullets(t *testing.T) []string {
+func changelogSectionBullets(t *testing.T, heading string) []string {
 	t.Helper()
 	content := readRepoDoc(t, "CHANGELOG.md")
-	start := strings.Index(content, "## Unreleased")
+	start := strings.Index(content, heading+"\n")
 	if start < 0 {
-		t.Fatal("CHANGELOG.md must have an \"## Unreleased\" section")
+		t.Fatalf("CHANGELOG.md must have a %q section", heading)
 	}
 	rest := content[start:]
 	headingRe := regexp.MustCompile(`(?m)^## `)
@@ -468,7 +499,7 @@ func changelogUnreleasedBullets(t *testing.T) []string {
 	bulletRe := regexp.MustCompile(`(?m)^- `)
 	locs := bulletRe.FindAllStringIndex(block, -1)
 	if len(locs) == 0 {
-		t.Fatal("no top-level bullets found in CHANGELOG.md's Unreleased section")
+		t.Fatalf("no top-level bullets found in CHANGELOG.md section %q", heading)
 	}
 	bullets := make([]string, 0, len(locs))
 	for i, loc := range locs {
@@ -482,7 +513,8 @@ func changelogUnreleasedBullets(t *testing.T) []string {
 }
 
 // TestSyncPlanDocs_ChangelogRecoveryCellsAreSeparateItems implements
-// spec.md §22.33-i-a: the CHANGELOG.md Unreleased entry must disclose all
+// spec.md §22.33-i-a: the CHANGELOG.md entry, now in released foundations,
+// must still disclose all
 // three no-flag recovery cells (cell 1, cell 7, cell 4 — sync_recovery_test.go's
 // Case1/Case7/Cell4 coverage) as three separate bullets, each carrying its
 // own required content. The spec states plainly that "a check that finds
@@ -498,14 +530,14 @@ func TestSyncPlanDocs_ChangelogRecoveryCellsAreSeparateItems(t *testing.T) {
 		}
 	}
 
-	bullets := changelogUnreleasedBullets(t)
+	bullets := changelogSectionBullets(t, "## Released foundations (through v1.2.17)")
 	find := func(marker string) (int, string) {
 		for i, b := range bullets {
 			if strings.Contains(strings.ToLower(b), marker) {
 				return i, b
 			}
 		}
-		t.Fatalf("no CHANGELOG.md bullet in ## Unreleased names %q", marker)
+		t.Fatalf("no CHANGELOG.md released-foundation bullet names %q", marker)
 		return -1, ""
 	}
 
@@ -567,18 +599,18 @@ func TestSyncPlanDocs_ChangelogCheckoutDowngradeSentenceIsContinueOnly(t *testin
 		t.Fatalf("CHANGELOG.md must quote the checkout downgrade sentence %q", versionSentence)
 	}
 
-	bullets := changelogUnreleasedBullets(t)
+	bullets := changelogSectionBullets(t, "## Released foundations (through v1.2.17)")
 	var owner string
 	for _, b := range bullets {
 		if strings.Contains(normalizeProse(b), strings.ToLower(versionSentence)) {
 			if owner != "" {
-				t.Fatalf("the checkout downgrade sentence must live in exactly one Unreleased bullet")
+				t.Fatalf("the checkout downgrade sentence must live in exactly one released-foundation bullet")
 			}
 			owner = normalizeProse(b)
 		}
 	}
 	if owner == "" {
-		t.Fatal("no ## Unreleased bullet quotes the checkout downgrade sentence")
+		t.Fatal("no released-foundation bullet quotes the checkout downgrade sentence")
 	}
 
 	// The version sentence must be attributed to --continue...

@@ -1,0 +1,18 @@
+{
+  "id": "checkout-metadata-move-recovery",
+  "slug": "checkout-metadata-move-recovery",
+  "title": "Add evidence-bound recovery UX for interrupted checkout rename and layout migration without discarding movement or registry evidence.",
+  "state": "requested",
+  "compatibility": "unknown",
+  "requested_at": "2026-10-30T22:20:06Z",
+  "updated_at": "2026-10-30T22:20:06Z",
+  "last_command": "add",
+  "apply": {},
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "scoped-push-selection",
+      "kind": "hard"
+    }
+  ]
+}

@@ -2,15 +2,29 @@
 
 ## Unreleased
 
-Latest prerelease: [v1.2.18-rc.8](https://github.com/jdbencardinop/tesseraworkspaces/releases/tag/v1.2.18-rc.8).
-The release-candidate notes below remain part of the next stable release.
+Planned next stable release: **v1.2.18** (not yet published), following `v1.2.17`.
 
-- **Reparent completion context (#7), unreleased implementation candidate**
+- **Release preparation** — refresh the rc.9 handoff and validation guide,
+  distinguish released foundations from the current RC series, and track
+  checkout metadata-movement recovery UX as requested backlog. No runtime
+  behavior or recovery command changes. The selected official release keeps
+  the current patch-version cadence; tws/tss provider integration remains
+  separately scoped future work.
+
+## v1.2.18 release candidates
+
+Latest prerelease: [v1.2.18-rc.9](https://github.com/jdbencardinop/tesseraworkspaces/releases/tag/v1.2.18-rc.9).
+The notes below are the cumulative RC changes for the still-unreleased stable
+`v1.2.18`; they do not announce a new tag or stable promotion.
+
+- **Reparent completion context (#7), released in v1.2.18-rc.9**
   — logical entries come from the execution-selected feature layout, including
   external `TWS_ROOT`; a known target's repository supplies Git destinations.
   Completion preserves logical descendant exclusion, archive eligibility and
   ordering, never guesses a repository without a target, and silently refuses
   unavailable context. It never fetches or writes state; execution is unchanged.
+  Issue #7 is closed after verified Ubuntu/macOS main and tag/release CI and
+  exact-tag version checks.
 - **Scoped standalone push (#6), released in v1.2.18-rc.8**
   — `tws push <feature> --only <logical-entry>` / `--from <logical-entry>`
   publishes exactly the selected entry/subtree in external and checkout modes,
@@ -238,6 +252,12 @@ The release-candidate notes below remain part of the next stable release.
   or `--allow-nontransactional`; noninteractive use refuses by default and
   malformed/unreadable metadata never enters the fallback. Successful no-flag
   transactional behavior remains the compatibility target.
+
+## Released foundations (through v1.2.17)
+
+These features were already available by `v1.2.17`. Their detailed behavior
+notes remain as historical context, not new `v1.2.18` features.
+
 - **Safe reparent/restack** — `tws stack reparent <feature> <entry> --onto <dest>`
   moves one stack entry onto a new parent and replays its descendant closure.
   `--plan [--json]` previews the exact run — destination, per-row cutoff,

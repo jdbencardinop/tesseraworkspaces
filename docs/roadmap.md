@@ -84,13 +84,22 @@ Shipped foundations:
   reconstructs only the matching recovery reservation. v1.2.16 only fails closed for same-feature sync after envelope
   birth; do not use an older tws while any reparent is active or recoverable.
 
-Current target: **reparent completion context (#7)** — Path B implementation candidate (unreleased).
-The separate `fix-reparent-completion-context` boundary aligns shell completion
+Current target: **stable v1.2.18 release preparation**.
+The selected official release follows `v1.2.17`, using `v1.2.18-rc.9` as the
+published runtime baseline. This preparation contains documentation and tracking
+only; no new runtime slice or provider integration is included. The remaining
+review, landing, validation, and publication gates are tracked in the
+[release plan](v1.2-rc-validation.md#current-release-plan).
+
+Reparent completion context (#7) is fully released and verified in
+`v1.2.18-rc.9` at `fb03092`, with successful Ubuntu/macOS main and tag/release
+CI and exact-tag version checks. Its separate
+`fix-reparent-completion-context` boundary aligns shell completion
 with the execution-selected feature layout and target-entry repository.
 Completion stays read-only and local-only; execution and candidate eligibility
-remain unchanged.
-Implementation and RC publication are authorized through the established
-review, validation, replay, and landing process.
+remain unchanged. Issue #7 is closed. No product implementation is in progress
+in this handoff; selecting another feature or publishing another release
+requires a separate approved scope.
 Scoped standalone push (#6) is fully released and verified in
 `v1.2.18-rc.8` at `54f214f`, with successful Ubuntu/macOS main and tag/release
 CI and exact-tag version checks. Its `scoped-push-selection` boundary supplies
@@ -110,15 +119,21 @@ the requested feature plus shared workspace evidence, with bounded probes and
 the existing versioned schema. Ordinary sync safety (#4) is fully released and
 verified in `v1.2.18-rc.2`. Slash-containing worktree injection (#1) is fully
 released and verified in `v1.2.18-rc.3`, including verified external worktree
-discovery and explicit checkout injection refusal. All seven milestones have
+discovery and explicit checkout injection refusal. All eight milestones have
 successful main/tag CI.
 
 The approved delivery order **#4, #1, #3, #2** is complete. Keep each existing
 tpatch feature as its own implementation boundary; the mapping below records
-the delivered queue, the separate template/rename/publication follow-ups, and
-the current completion boundary, not permission to combine unrelated fixes.
-Lane B runtime-boundary coordination is complete; its remaining provider PRDs
-do not block this completion-only fix.
+the delivered queue and the separate template/rename/publication/completion
+follow-ups, not permission to combine unrelated fixes.
+
+**Lane A** was `safe-reparent-restack`, shipped in `v1.2.17`.
+**Lane B** runtime-boundary coordination with tesserasessions is complete;
+the [joint handoff](integrations/tesserasessions-collaboration.md) records the
+published boundary ADR and the separate status-consumer, identity, and
+session-control follow-ups. The provider integration is not declared shipped,
+and those follow-ups do not block release preparation. These delivery lanes
+are distinct from the tpatch Path A/Path B authoring workflows.
 
 Follow-ups explicitly owned by later features rather than by `tws status`:
 
@@ -165,9 +180,9 @@ For decoupled names, `StackEntry.Name` identifies the tws worktree while `StackE
 | 5 | Shipped: v1.2.18-rc.6 | Standalone follow-up; #2 is complete | [`template-conflict-resolution`](../.tpatch/features/template-conflict-resolution/request.md) |
 | 6 | Shipped: v1.2.18-rc.7 | [#5: external feature rename backpointers](https://github.com/jdbencardinop/tesseraworkspaces/issues/5) | [`fix-external-feature-rename-backpointers`](../.tpatch/features/fix-external-feature-rename-backpointers/request.md) |
 | 7 | Shipped: v1.2.18-rc.8 | [#6: scoped standalone push](https://github.com/jdbencardinop/tesseraworkspaces/issues/6) | [`scoped-push-selection`](../.tpatch/features/scoped-push-selection/request.md) |
-| 8 | Current: unreleased implementation candidate | [#7: reparent completion context](https://github.com/jdbencardinop/tesseraworkspaces/issues/7) | [`fix-reparent-completion-context`](../.tpatch/features/fix-reparent-completion-context/request.md) |
+| 8 | Shipped: v1.2.18-rc.9 | [#7: reparent completion context](https://github.com/jdbencardinop/tesseraworkspaces/issues/7) | [`fix-reparent-completion-context`](../.tpatch/features/fix-reparent-completion-context/request.md) |
 
-Issues #4, #1, #3, #2, #5, and #6 are closed after their verified releases.
+Issues #4, #1, #3, #2, #5, #6, and #7 are closed after their verified releases.
 [`named-feature-templates`](../.tpatch/features/named-feature-templates/request.md)
 shipped in [v1.2.18-rc.5](https://github.com/jdbencardinop/tesseraworkspaces/releases/tag/v1.2.18-rc.5),
 with successful Ubuntu/macOS main and tag CI and exact-tag binary checks.
@@ -264,12 +279,27 @@ results. Local-only dry-run must show exact selected local intent and mark
 remote state unverified. Shared reparent follow-up handling must preserve
 unselected rows and avoid probing unrelated repositories/worktrees.
 
-Current completion-only follow-up:
+The shipped completion-only follow-up:
 [`fix-reparent-completion-context`](../.tpatch/features/fix-reparent-completion-context/request.md)
 aligns shell-completion candidates with the execution-selected external feature
-root and target-entry repository. Explicit execution remains protected; this
-unreleased #7 candidate does not change the reparent planner, execution,
-mutation safety, or the shipped publication boundary.
+root and target-entry repository. Released in `v1.2.18-rc.9`, it does not change
+the reparent planner, execution, mutation safety, or the shipped publication
+boundary. Keep its published tpatch artifacts as historical evidence.
+
+### Checkout metadata-movement recovery UX (requested)
+
+[`checkout-metadata-move-recovery`](../.tpatch/features/checkout-metadata-move-recovery/request.md)
+tracks guided inspection and evidence-bound recovery for checkout rename and
+layout migration when safe compensation cannot finish. Reconciliation is
+currently manual; retained movement/registry evidence blocks mutations and
+session launches even without a live shared lock. This is not unfinished rc.8
+work or permission to delete evidence to unblock a workspace.
+
+The follow-up must preserve exact ownership, foreign changes, and shared
+exclusion; retire only verified owned artifacts after coherent completion or
+restoration. It depends on the shipped `scoped-push-selection` evidence
+protocol but is not publication recovery. Analysis and implementation remain
+separate future work, not part of this release-handoff cleanup.
 
 ## Agent integration — P2
 
@@ -284,6 +314,22 @@ mutation safety, or the shipped publication boundary.
 - **Context summaries**: maintain feature-level and worktree-session recaps while preserving authored source documents.
 
 ## Tool collaboration contracts
+
+### tesserasessions
+
+Status enrichment is not solely tss work. tss already owns and publishes the
+read-only status-v1 contract; tws owns `PRD-TSS-STATUS-CONSUMER` and the planned
+`tss-status-enrichment` adapter, including timeout/absence handling and merge
+precedence that preserves tws-owned evidence.
+
+Session control is split: tss owns the versioned provider protocol, durable
+runtime identity, target revalidation, and provider operations. tws owns the
+client, opaque reference storage, workspace/native-session admission, and
+recovery UX. Identity and threat-model decisions require joint review. The
+[joint deliverables](integrations/tesserasessions-collaboration.md#joint-deliverables)
+record the owning PRDs and approval order; implementation features wait for
+their approved canonical artifacts. These are future integration boundaries,
+not blockers or included features of the `v1.2.18` release.
 
 ### tesserapatch
 
