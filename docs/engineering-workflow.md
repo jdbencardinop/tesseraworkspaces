@@ -64,11 +64,18 @@ Current shipped checkout slices:
 The opt-in global workspace registry is also shipped for stable cross-repository
 discovery, health checks, and moved-target repair.
 
-Next roadmap work: **stable v1.2.18 release preparation**.
-The approved preparation target is the next patch after `v1.2.17`, using the
-published `v1.2.18-rc.9` runtime baseline plus documentation/tracking cleanup.
-Follow the [current release plan](v1.2-rc-validation.md#current-release-plan);
-provider integrations and the requested checkout recovery UX remain separate.
+Next roadmap work: **Node 24 CI maintenance**.
+Complete `update-github-actions-node24`, then implement `open-worktree-command`
+as a separate Path B boundary. Preserve the existing CI matrix, Go version-file
+and cache behavior, tag-version checks, and release semantics while upgrading
+action runtimes. Preserve existing agent launch behavior when adding explicit
+non-agent open surfaces.
+
+Stable `v1.2.18` is released and verified at `fb113b8`, with successful
+Ubuntu/macOS main and tag/release CI, exact-tag version checks, and published
+stable release metadata. Its [validation record](v1.2-rc-validation.md#completed-release)
+is complete; provider integration and the requested checkout recovery UX remain
+separate future work.
 
 Reparent completion context (#7) is fully released and verified in
 `v1.2.18-rc.9` at `fb03092`, with successful Ubuntu/macOS main and tag/release
@@ -77,9 +84,8 @@ CI and exact-tag version checks. Its separate
 with the execution-selected feature layout and target-entry repository.
 Completion stays read-only and local-only; preserve logical/Git name separation,
 candidate eligibility and ordering, and all existing execution safety.
-Issue #7 is closed. Release preparation does not authorize another product
-implementation, push, tag, or stable promotion; those require their own approved
-scope and the established review, validation, and release gates.
+Issue #7 is closed. Each later implementation and publication still requires
+its own approved scope and the established review, validation, and release gates.
 Scoped standalone push (#6) is fully released and verified in
 `v1.2.18-rc.8` at `54f214f`, with successful Ubuntu/macOS main and tag/release
 CI and exact-tag version checks. Its `scoped-push-selection` boundary adds
@@ -283,10 +289,10 @@ After landing, rerun full gates and check a clean tree before push/tag.
 
 ## Release cadence
 
-The current official-release target is **v1.2.18**, not `v1.3.0`. It completes
-the existing RC cycle under this repository's patch-version cadence. Preserve
-all published RC tags and their evidence; the stable tag must identify the
-reviewed, clean landed commit after the remaining release gates and approval.
+The latest stable release is **v1.2.18**, published after the complete RC cycle
+and verified release gates. Subsequent work starts from that baseline. Preserve
+all published tags and their evidence; every new tag must identify a reviewed,
+clean landed commit after its own release gates and approval.
 
 The binary version is derived from Git tags for source builds and module
 metadata for versioned installs. Do not replace the source `dev` fallback with

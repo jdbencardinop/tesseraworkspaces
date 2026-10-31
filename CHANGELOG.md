@@ -2,7 +2,12 @@
 
 ## Unreleased
 
-Planned next stable release: **v1.2.18** (not yet published), following `v1.2.17`.
+## v1.2.18
+
+Latest stable: [v1.2.18](https://github.com/jdbencardinop/tesseraworkspaces/releases/tag/v1.2.18).
+This release promotes the complete `v1.2.18-rc.1` through `rc.9` cycle at
+`fb113b8`. Ubuntu/macOS main and tag/release CI, exact-tag version checks, and
+the published non-draft, non-prerelease metadata are verified.
 
 - **Release preparation** — refresh the rc.9 handoff and validation guide,
   distinguish released foundations from the current RC series, and track
@@ -11,11 +16,8 @@ Planned next stable release: **v1.2.18** (not yet published), following `v1.2.17
   the current patch-version cadence; tws/tss provider integration remains
   separately scoped future work.
 
-## v1.2.18 release candidates
-
-Latest prerelease: [v1.2.18-rc.9](https://github.com/jdbencardinop/tesseraworkspaces/releases/tag/v1.2.18-rc.9).
-The notes below are the cumulative RC changes for the still-unreleased stable
-`v1.2.18`; they do not announce a new tag or stable promotion.
+The component notes below retain their first RC release labels as historical
+milestones; all are included in stable `v1.2.18`.
 
 - **Reparent completion context (#7), released in v1.2.18-rc.9**
   — logical entries come from the execution-selected feature layout, including

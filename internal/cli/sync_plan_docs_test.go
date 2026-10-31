@@ -122,7 +122,7 @@ func TestSyncPlanDocs_FlagWorkflowSurfacesCarryAllFiveLiterals(t *testing.T) {
 // own rule: neither file may carry any of the five flag literals.
 //
 // Released safety features stay in the shipped list. Post-release
-// prioritization advances to release preparation after sync safety, injection,
+// prioritization advances to CI maintenance after sync safety, injection,
 // scoped status, both template slices, rename, scoped push, and completion ship;
 // the negative flag-literal contract is unchanged.
 func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t *testing.T) {
@@ -156,8 +156,8 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 		}
 
 		targetTail := ci[targetIdx : targetIdx+min(120, len(ci)-targetIdx)]
-		if !strings.Contains(targetTail, "stable v1.2.18 release preparation") {
-			t.Fatalf(`docs/roadmap.md's "Current target:" sentence must name stable v1.2.18 release preparation, got: %q`, targetTail)
+		if !strings.Contains(targetTail, "node 24 ci maintenance") {
+			t.Fatalf(`docs/roadmap.md's "Current target:" sentence must name Node 24 CI maintenance, got: %q`, targetTail)
 		}
 		if !strings.Contains(content, "fix-reparent-completion-context") {
 			t.Fatal("docs/roadmap.md must name the separate issue-seven feature boundary")
@@ -245,8 +245,8 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 		}
 
 		nextTail := ci[nextFeatureIdx : nextFeatureIdx+min(120, len(ci)-nextFeatureIdx)]
-		if !strings.Contains(nextTail, "stable v1.2.18 release preparation") {
-			t.Fatalf(`docs/engineering-workflow.md's "Next roadmap work:" sentence must name stable v1.2.18 release preparation, got: %q`, nextTail)
+		if !strings.Contains(nextTail, "node 24 ci maintenance") {
+			t.Fatalf(`docs/engineering-workflow.md's "Next roadmap work:" sentence must name Node 24 CI maintenance, got: %q`, nextTail)
 		}
 		if !strings.Contains(content, "fix-reparent-completion-context") {
 			t.Fatal("docs/engineering-workflow.md must name the separate issue-seven feature boundary")
@@ -280,19 +280,18 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 	})
 }
 
-func TestReleaseDocs_PrereleaseHandoff(t *testing.T) {
+func TestReleaseDocs_StableHandoff(t *testing.T) {
 	for path, required := range map[string][]string{
 		"CHANGELOG.md": {
-			"Planned next stable release: **v1.2.18** (not yet published)",
-			"## v1.2.18 release candidates",
-			"Latest prerelease: [v1.2.18-rc.9]",
+			"## v1.2.18",
+			"Latest stable: [v1.2.18]",
 			"Reparent completion context (#7), released in v1.2.18-rc.9",
 		},
 		"docs/v1.2-rc-validation.md": {
-			"Selected stable target: **v1.2.18**",
-			"## Current release plan",
-			"go install github.com/jdbencardinop/tesseraworkspaces/cmd/tws@v1.2.18-rc.9",
-			"tws version v1.2.18-rc.9",
+			"Released stable baseline: **v1.2.18**",
+			"## Completed release",
+			"go install github.com/jdbencardinop/tesseraworkspaces/cmd/tws@v1.2.18",
+			"tws version v1.2.18",
 			"## 6. v1.2.18 regression boundaries",
 		},
 	} {
@@ -300,7 +299,7 @@ func TestReleaseDocs_PrereleaseHandoff(t *testing.T) {
 			content := readRepoDoc(t, path)
 			for _, text := range required {
 				if !strings.Contains(content, text) {
-					t.Errorf("%s must contain current prerelease guidance %q", path, text)
+					t.Errorf("%s must contain the verified stable-release handoff %q", path, text)
 				}
 			}
 		})

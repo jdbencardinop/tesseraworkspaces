@@ -84,12 +84,19 @@ Shipped foundations:
   reconstructs only the matching recovery reservation. v1.2.16 only fails closed for same-feature sync after envelope
   birth; do not use an older tws while any reparent is active or recoverable.
 
-Current target: **stable v1.2.18 release preparation**.
-The selected official release follows `v1.2.17`, using `v1.2.18-rc.9` as the
-published runtime baseline. This preparation contains documentation and tracking
-only; no new runtime slice or provider integration is included. The remaining
-review, landing, validation, and publication gates are tracked in the
-[release plan](v1.2-rc-validation.md#current-release-plan).
+Current target: **Node 24 CI maintenance**.
+Complete the existing
+[`update-github-actions-node24`](../.tpatch/features/update-github-actions-node24/request.md)
+boundary, then take
+[`open-worktree-command`](../.tpatch/features/open-worktree-command/request.md)
+through its own Path B analysis, specification, exploration, implementation,
+review, and release gates. Keep the two features independent.
+
+Stable `v1.2.18` is released and verified at `fb113b8`; it includes the complete
+rc.1-rc.9 cycle. Ubuntu/macOS main and tag/release CI, exact-version checks, and
+stable GitHub release metadata are complete. The
+[release validation record](v1.2-rc-validation.md#completed-release) describes
+that finished release, not pending implementation work.
 
 Reparent completion context (#7) is fully released and verified in
 `v1.2.18-rc.9` at `fb03092`, with successful Ubuntu/macOS main and tag/release
@@ -97,9 +104,8 @@ CI and exact-tag version checks. Its separate
 `fix-reparent-completion-context` boundary aligns shell completion
 with the execution-selected feature layout and target-entry repository.
 Completion stays read-only and local-only; execution and candidate eligibility
-remain unchanged. Issue #7 is closed. No product implementation is in progress
-in this handoff; selecting another feature or publishing another release
-requires a separate approved scope.
+remain unchanged. Issue #7 is closed. Preserve this completed boundary while
+advancing the separately scoped maintenance and open-command work.
 Scoped standalone push (#6) is fully released and verified in
 `v1.2.18-rc.8` at `54f214f`, with successful Ubuntu/macOS main and tag/release
 CI and exact-tag version checks. Its `scoped-push-selection` boundary supplies
