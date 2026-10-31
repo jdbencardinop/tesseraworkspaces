@@ -84,13 +84,23 @@ Shipped foundations:
   reconstructs only the matching recovery reservation. v1.2.16 only fails closed for same-feature sync after envelope
   birth; do not use an older tws while any reparent is active or recoverable.
 
-Current target: **Node 24 CI maintenance**.
-Complete the existing
-[`update-github-actions-node24`](../.tpatch/features/update-github-actions-node24/request.md)
-boundary, then take
+Current target: **open-worktree-command (#10)**.
+Implement
 [`open-worktree-command`](../.tpatch/features/open-worktree-command/request.md)
-through its own Path B analysis, specification, exploration, implementation,
-review, and release gates. Keep the two features independent.
+as its own Path B boundary: opt-in verified path queries and literal
+per-invocation programs without changing legacy agent behavior. Its intent
+artifacts are defined; implementation, review, full validation, and release
+gates belong to this candidate. No future open-command RC is verified yet.
+
+Node 24 CI maintenance and the separate inode-fixture repair are released and
+verified in `v1.2.19-rc.2` at `034126331db73522bb98d1f1a1fc08e146a68fe5`.
+Ubuntu/macOS main CI `41204870523` and tag/release CI `41207441379` passed;
+exact tag versions, native action-gh-release v3 execution, and non-draft
+prerelease release `429986003` are verified. Issues #8 and #9 are closed.
+The failed `v1.2.19-rc.1` tag remains immutable and has no release.
+Preserve the completed independent maintenance boundaries and their CI matrix,
+Go version-file/cache behavior, and release semantics. Stable `v1.2.18`
+remains latest.
 
 Stable `v1.2.18` is released and verified at `fb113b8`; it includes the complete
 rc.1-rc.9 cycle. Ubuntu/macOS main and tag/release CI, exact-version checks, and

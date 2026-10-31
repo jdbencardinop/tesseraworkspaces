@@ -1244,6 +1244,7 @@ var recognizedSessionStages = map[string]bool{
 	DirectStageStarting: true,
 	DirectStageAgent:    true,
 	DirectStageShell:    true,
+	DirectStageCommand:  true,
 	"tmux":              true,
 }
 

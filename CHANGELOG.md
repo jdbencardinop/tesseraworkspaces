@@ -2,13 +2,40 @@
 
 ## Unreleased
 
-- **Node 24-native CI actions (#8), implementation candidate** — checkout and
+- **Explicit non-agent open (#10), implementation candidate** —
+  `--print-path` is a verified, read-only absolute-path query, distinct from
+  legacy `--no-agent` guidance. `--command <executable> -- <args...>` binds one
+  caller-resolved program and literal argv, preserving configured/saved
+  renderers and injection guards without running an agent or follow-up shell.
+  Branch commands support direct/tmux in both workspace modes; feature-directory
+  commands default direct, with explicit tmux external-only. Checkout queries
+  never activate an entry. Command launches retain mutation admission and
+  token-owned state; checkout state is durable before child effects, and unsafe
+  or uncertain completion preserves evidence. Generic runtime presence does
+  not imply semantic agent activity. No session schema bump or command history.
+  GUI programs need wait flags; detached tmux does not forward eventual exit
+  status. Full candidate/release verification is still pending.
+
+## v1.2.19-rc.2
+
+Maintenance prerelease verified at `034126331db73522bb98d1f1a1fc08e146a68fe5`.
+Ubuntu/macOS main CI `41204870523` and tag/release CI `41207441379` passed,
+including exact tag-version checks and native action-gh-release v3 execution.
+Non-draft prerelease release `429986003` is published; issues #8 and #9 are
+closed. Stable `v1.2.18` remains latest. The failed `v1.2.19-rc.1` tag remains
+immutable and has no release.
+
+- **Node 24-native CI actions (#8)** — checkout and
   setup-go now use v7, and release publication uses action-gh-release v3.
   Explicit `cache-dependency-path: go.sum` preserves the previous dependency
   invalidation input despite setup-go's changed default. Go version selection,
   module/build caching, Ubuntu/macOS jobs, permissions, triggers, test budgets,
   tag-version checks, and stable/prerelease conditions are unchanged. No tws
   runtime behavior or Go dependency changes are included.
+- **Inode-fixture repair (#9)** — a separate test-only boundary repairs the
+  replacement-inode fixture exposed by CI, preserving production safety
+  assertions and the maintenance workflow. No open-command runtime change is
+  included in this prerelease.
 
 ## v1.2.18
 

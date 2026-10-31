@@ -1,0 +1,10 @@
+{
+  "feature": "open-worktree-command",
+  "base_commit": "034126331db73522bb98d1f1a1fc08e146a68fe5",
+  "manifest_sha256": "33d4d39e7b6601314efd3153e486bf92535eae15cace6f8266a493adbc6f7a2d",
+  "recipe_sha256": "67284c3d44774843359abd69b491d42d881a6e772f4bbdd5970f024ca2835eb8",
+  "existing_preimages_verified": 14,
+  "new_paths_proven_absent": 9,
+  "postimages_verified": 23,
+  "passed": true
+}

@@ -1,0 +1,4274 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index daade5a..a5db513 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,13 +2,40 @@
+ 
+ ## Unreleased
+ 
+-- **Node 24-native CI actions (#8), implementation candidate** — checkout and
++- **Explicit non-agent open (#10), implementation candidate** —
++  `--print-path` is a verified, read-only absolute-path query, distinct from
++  legacy `--no-agent` guidance. `--command <executable> -- <args...>` binds one
++  caller-resolved program and literal argv, preserving configured/saved
++  renderers and injection guards without running an agent or follow-up shell.
++  Branch commands support direct/tmux in both workspace modes; feature-directory
++  commands default direct, with explicit tmux external-only. Checkout queries
++  never activate an entry. Command launches retain mutation admission and
++  token-owned state; checkout state is durable before child effects, and unsafe
++  or uncertain completion preserves evidence. Generic runtime presence does
++  not imply semantic agent activity. No session schema bump or command history.
++  GUI programs need wait flags; detached tmux does not forward eventual exit
++  status. Full candidate/release verification is still pending.
++
++## v1.2.19-rc.2
++
++Maintenance prerelease verified at `034126331db73522bb98d1f1a1fc08e146a68fe5`.
++Ubuntu/macOS main CI `41204870523` and tag/release CI `41207441379` passed,
++including exact tag-version checks and native action-gh-release v3 execution.
++Non-draft prerelease release `429986003` is published; issues #8 and #9 are
++closed. Stable `v1.2.18` remains latest. The failed `v1.2.19-rc.1` tag remains
++immutable and has no release.
++
++- **Node 24-native CI actions (#8)** — checkout and
+   setup-go now use v7, and release publication uses action-gh-release v3.
+   Explicit `cache-dependency-path: go.sum` preserves the previous dependency
+   invalidation input despite setup-go's changed default. Go version selection,
+   module/build caching, Ubuntu/macOS jobs, permissions, triggers, test budgets,
+   tag-version checks, and stable/prerelease conditions are unchanged. No tws
+   runtime behavior or Go dependency changes are included.
++- **Inode-fixture repair (#9)** — a separate test-only boundary repairs the
++  replacement-inode fixture exposed by CI, preserving production safety
++  assertions and the maintenance workflow. No open-command runtime change is
++  included in this prerelease.
+ 
+ ## v1.2.18
+ 
+diff --git a/README.md b/README.md
+index 1ecdf6d..44a8154 100644
+--- a/README.md
++++ b/README.md
+@@ -663,6 +663,80 @@ skips missing worktrees; standalone checkout push still refuses.
+ Issue #6 was **released in `v1.2.18-rc.8`** and is closed after verified
+ Ubuntu/macOS main and tag/release CI and exact-tag version checks.
+ 
++## Open without an agent
++
++```sh
++# Machine-readable observation, not legacy --no-agent human guidance:
++path=$(tws open auth auth-models --print-path) && cd -- "$path"
++tws open auth --feature-dir --print-path
++
++# One executable, with literal child arguments after --:
++tws open auth auth-models --command nvim -- .
++tws open auth auth-models --command code -- --wait .
++tws open auth --feature-dir --command nvim -- FEATURE.md
++
++# Escape leading-dash selectors; put all tws flags before the first --:
++tws open --feature-dir --print-path -- -feature
++tws open --command nvim -- -feature -branch -- README.md
++```
++
++When `--` occurs before all required selectors are filled, it ends option
++parsing: consume the feature/branch slots first, even when a selector is
++literally `--`. Command arguments then require another `--` immediately after
++the selectors; a child argument literally `--` after that is preserved.
++Queries accept option-escaped selectors but no child arguments. A normal
++post-selector `--` keeps its child-argument meaning.
++
++Both modes require explicit selectors; neither opens a picker. `--print-path`
++writes exactly one verified absolute path and newline, or nothing on stdout
++on failure. It does not inject, fetch, refresh the index, acquire writer locks,
++activate a checkout, recover state, or launch anything. Ordinary dirt or a
++valid session does not prevent observation, but pending sync, reparent,
++rename, publication, or checkout metadata-movement evidence does. An external
++branch must already be a verified linked worktree (including supported legacy
++no-stack layouts). A checkout branch query requires the selected active logical
++entry to be the currently attached branch; it never silently activates it.
++Paths containing control characters refuse. A query is an observation, not a lease.
++
++| Command target | Direct | Tmux |
++|---|---|---|
++| External logical branch | Supported | Supported |
++| Checkout logical branch | Activate, run, safely restore | Recorded owner; restore after completion/close |
++| External feature directory | Default | Explicit `--tmux` |
++| Checkout feature directory | Default, no branch switch | Refused |
++
++Branch commands honor the configured tmux preference and `--tmux`/`--no-tmux`.
++Feature-directory commands default direct. The command executable is one
++PATH token or caller-relative path, resolved to an absolute executable before
++effects; quote paths containing spaces. Do not pass `"nvim file"` as the
++executable. Arguments after the post-selector `--` are literal, including empty
++strings and shell metacharacters: no shell evaluation, agent continuation, or
++follow-up shell.
++Direct mode inherits stdio and waits for exactly one child; a nonzero child
++exit is a normal CLI failure (usually exit 1). Neither mode rewrites
++`agent_command` or changes the saved template renderer. Commands still obey
++injection ownership and mutation/session admission.
++External feature-directory tmux sessions use tmux's own detach/kill controls;
++they have no logical branch for `tws close <feature> <branch>`.
++
++The two modes are exclusive and cannot be combined with enabled `--all` or
++`--no-agent`. Path queries reject explicit tmux flags; command mode rejects
++contradictory enabled tmux flags. A supplied command never silently attaches
++to an existing tmux session. Detaching leaves a live checkout command owned;
++tmux completion does not reliably forward the eventual child exit code.
++Checkout state is durable before command effects. Dirty work, changed branches,
++foreign ownership, or uncertain startup/cleanup retains evidence and returns an
++error: inspect `tws status --json`, preserve work, and use `tws close` only when
++the recorded ownership and checkout are safe. Do not delete evidence to bypass
++guards; unresolved metadata movement still needs manual reconciliation.
++
++Use GUI wait options, such as `code --wait`: tws does not adopt daemonized
++descendants. Runtime presence is visible, but a generic command is not semantic
++agent work (`agent_state` remains `unknown`). There is no new portable process
++birth-identity or arbitrary-writer isolation guarantee. A child cannot change
++the parent shell's cwd; the shell integration above changes it explicitly.
++Ordinary agent open, picker, `--all`, and legacy `--no-agent` output are unchanged.
++
+ ## All Commands
+ 
+ | Command | Description |
+@@ -670,6 +744,8 @@ Ubuntu/macOS main and tag/release CI and exact-tag version checks.
+ | `tws add <feature> [-n branch] [--open] [--tmux] [--template dir-or-name] [--worktree-template ref] [--orchestrator-template ref] [--agent claude\|copilot] [--resolve-conflicts]` | Create legacy or managed feature workspace |
+ | `tws new <feature> <branch> [--base] [--repo] [--force]` | Create worktree branch |
+ | `tws open [feature] [branch] [--tmux] [--no-agent]` | Open worktree (interactive picker if no args) |
++| `tws open <feature> <branch> --print-path` | Query one verified path; use `<feature> --feature-dir` for metadata |
++| `tws open <feature> <branch> --command <executable> [-- <args...>]` | Run one explicit program; feature-directory selectors also supported |
+ | `tws sync <feature> [--push] [--continue] [--abort] [--verbose] [--fetch\|--no-fetch] [--full\|--local-only] [--only <entry>\|--from <entry>]` | Rebase in dependency order, optionally scoped |
+ | `tws sync <feature> --plan [--json] [--max-replay-per-entry N] [--max-replay-total N]` | Preview the rebase; candidates are an upper bound, never applied |
+ | `tws sync <feature> --approve-plan <fingerprint> [--max-replay-per-entry N \| --max-replay-total N]` | Execute a previewed, guarded plan |
+@@ -898,7 +974,7 @@ tws space remove learning --workspace # drops the link; never deletes the target
+ - [Go](https://go.dev/dl/) 1.26+
+ - [git](https://git-scm.com/)
+ - [tmux](https://github.com/tmux/tmux) (optional, for `tws open --tmux`)
+-- A coding agent: [Claude Code](https://claude.ai/claude-code) (default), [OpenCode](https://opencode.ai), [Aider](https://aider.chat), or any CLI agent
++- For ordinary agent opens: [Claude Code](https://claude.ai/claude-code) (default), [OpenCode](https://opencode.ai), [Aider](https://aider.chat), or any CLI agent. Path queries and explicit commands do not require an installed agent.
+ 
+ ## Configuration
+ 
+diff --git a/assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md b/assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md
+index ec05e84..834c0bd 100644
+--- a/assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md
++++ b/assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md
+@@ -32,6 +32,48 @@ Resolve learning, ticket, patching, research, and documentation locations with
+ A bare `tws space list` is scoped to the current directory; pass `--all` when
+ you need the complete registry regardless of where the command runs.
+ 
++### Query paths or run a non-agent program
++
++```sh
++tws open <feature> <logical-branch> --print-path
++tws open <feature> --feature-dir --print-path
++tws open <feature> <logical-branch> --command nvim -- .
++tws open <feature> --feature-dir --command code -- --wait FEATURE.md
++tws open --feature-dir --print-path -- -feature
++tws open --command nvim -- -feature -branch -- README.md
++```
++
++An initial `--` before all required selectors are filled escapes option
++parsing; put all tws flags before it. Consume the selector slots first, even
++for a selector literally `--`, then use another `--` immediately after them
++for child argv. A child argument literally `--` is preserved. Queries reject
++extra arguments; an ordinary post-selector `--` still delimits child argv.
++
++These explicit-selector modes never open a picker. `--print-path` is exactly
++one verified absolute path/newline or no stdout on failure, unlike legacy
++`--no-agent` human guidance. It has no injection, writer locks, fetch, activation,
++or recovery; checkout entry queries require the current attached logical
++branch. Dirt and valid sessions alone are observable; pending mutation or
++retained metadata-movement evidence refuses. Parent-shell navigation must use
++an explicit shell `cd`; a child cannot change the parent's cwd.
++
++`--command` binds one executable in the caller's environment before effects.
++Only literal child arguments after the post-selector `--` are forwarded; no
++shell evaluation, agent resume, or trailing shell. Direct mode inherits stdio and reports child
++failures. Configured/saved renderers and injection safeguards remain intact.
++Branch commands support direct/tmux in both modes and honor tmux preferences;
++feature-directory commands default direct, with explicit tmux external-only.
++Never replace or attach a supplied command to an existing tmux session.
++
++The modes are exclusive and reject enabled `--all`/`--no-agent`. Queries reject
++explicit tmux flags; commands reject contradictory enabled tmux flags. A
++detached live checkout command remains owned and eventual tmux exit codes are
++not forwarded. Dirty/changed/foreign checkout state and uncertain cleanup retain
++evidence: inspect status, preserve work, then close safely; do not delete guards.
++Use GUI wait flags. Daemonized descendants are not adopted; no new portable
++process birth-identity guarantee exists. Generic runtime presence is not
++semantic agent activity (`agent_state` stays `unknown`).
++
+ ### Manage role-aware templates
+ 
+ ```sh
+diff --git a/assets/skills/claude/tesseraworkspaces/SKILL.md b/assets/skills/claude/tesseraworkspaces/SKILL.md
+index 9546022..47defbe 100644
+--- a/assets/skills/claude/tesseraworkspaces/SKILL.md
++++ b/assets/skills/claude/tesseraworkspaces/SKILL.md
+@@ -24,6 +24,8 @@ tws <command> [args]
+ | `tws add <feature> [-n <branch>] [--open] [--tmux] [--template <dir-or-name>] [--worktree-template <ref>] [--orchestrator-template <ref>] [--agent claude\|copilot] [--resolve-conflicts]` | Create a legacy or managed feature |
+ | `tws new <feature> <branch> [--base <parent>] [--force]` | Create a worktree branch |
+ | `tws open [feature] [branch] [--tmux] [--no-agent]` | Open worktree and run agent |
++| `tws open <feature> <branch> --print-path` | Read-only verified path; also accepts `<feature> --feature-dir` |
++| `tws open <feature> <branch> --command <executable> -- <args...>` | One literal-argv program; also accepts `<feature> --feature-dir` |
+ | `tws sync <feature> [--push] [--verbose] [--continue] [--abort] [--fetch\|--no-fetch] [--full\|--local-only] [--only <entry>\|--from <entry>]` | Rebase worktrees in dependency order, optionally scoped |
+ | `tws push <feature> [--only <entry>\|--from <entry>] [--dry-run]` | Publish selected refs; no selector preserves legacy external push |
+ | `tws push <feature> --continue [--dry-run]` / `--cancel` | Recover frozen standalone publication; never remote rollback |
+@@ -56,6 +58,42 @@ tws <command> [args]
+ | `tws init [--agent claude\|copilot]` | Install agent skills |
+ | `tws --version` | Print version |
+ 
++### Non-agent open
++
++Use `--print-path` for machine integration, not legacy `--no-agent` human
++guidance: `path=$(tws open auth api --print-path) && cd -- "$path"`.
++The query prints exactly one absolute verified path/newline, no stdout on
++failure, and never injects, locks, fetches, activates, or recovers. Checkout
++entry queries require the current attached logical branch. Dirt and valid
++sessions are observable; pending mutation/recovery evidence still refuses.
++A child cannot change the parent shell's cwd.
++
++`tws open auth api --command nvim -- .` runs one executable bound from the
++caller's PATH or relative path, with literal arguments after the post-selector
++`--`. No shell evaluation, agent continuation, or follow-up shell; configured/saved renderers
++stay unchanged and injection safeguards still apply. Direct execution inherits
++stdio and reports nonzero child exit as CLI failure. Both modes require explicit
++selectors, are exclusive, and reject enabled `--all`/`--no-agent`. Queries
++reject explicit tmux flags; commands reject contradictory enabled tmux flags.
++
++For leading-dash selectors, put all tws flags before an initial `--`:
++`tws open --feature-dir --print-path -- -feature` or
++`tws open --command nvim -- -feature -branch -- README.md`.
++Fill the required selector slots first (even a selector literally `--`), then
++use another `--` immediately after them for child argv. A later child argument
++literally `--` is preserved. Queries reject extra arguments; normal
++post-selector delimiters are unchanged.
++
++Branch commands support direct/tmux in both workspace modes and honor tmux
++preferences. Feature-directory commands default direct in both modes; explicit
++tmux is external-only. Supplied commands refuse existing tmux sessions.
++Detaching leaves a live checkout session owned, without eventual exit-code
++forwarding. Unsafe dirty/changed/foreign checkout state or uncertain cleanup
++retains evidence: inspect status, preserve work, then close safely; never erase
++guards. Use GUI wait flags (`--command code -- --wait .`); daemonized descendants
++are not adopted. Generic commands have semantic `agent_state: unknown`, and
++there is no new portable process birth-identity guarantee.
++
+ ### Reparent vs sync
+ 
+ `tws sync` replays a stack onto the parents it **already has**. `tws stack
+diff --git a/assets/skills/copilot/tws.prompt.md b/assets/skills/copilot/tws.prompt.md
+index 4f8cad1..cfa4449 100644
+--- a/assets/skills/copilot/tws.prompt.md
++++ b/assets/skills/copilot/tws.prompt.md
+@@ -15,6 +15,8 @@ You are working in a project that uses `tws` for feature-scoped workspaces with
+ - `tws add <feature> [-n <branch>] [--open] [--template <dir-or-name>] [--worktree-template <ref>] [--orchestrator-template <ref>] [--agent claude|copilot] [--resolve-conflicts]` — Create a legacy or managed feature
+ - `tws new <feature> <branch> [--base <parent>] [--force]` — Create worktree branch
+ - `tws open [feature] [branch] [--tmux] [--no-agent]` — Open worktree and run agent
++- `tws open <feature> <branch> --print-path` — Query one verified path; also accepts `<feature> --feature-dir`
++- `tws open <feature> <branch> --command <executable> -- <args...>` — Run one program; feature-directory selectors also supported
+ - `tws sync <feature> [--push] [--verbose] [--continue] [--abort] [--fetch|--no-fetch] [--full|--local-only] [--only <entry>|--from <entry>]` — Rebase worktrees in dependency order, optionally scoped
+ - `tws sync <feature> --plan [--json] [--max-replay-per-entry N] [--max-replay-total N]` — Preview the rebase and guard limits; candidates are an upper bound, never applied
+ - `tws sync <feature> --approve-plan <fingerprint> [--max-replay-per-entry N | --max-replay-total N]` — Execute a previewed, guarded plan
+@@ -45,6 +47,44 @@ You are working in a project that uses `tws` for feature-scoped workspaces with
+ - `tws template add/list/show/remove` — Manage global/per-repository named template packages
+ - `tws template sync <feature> [--template <dir-or-name>] [--scope worktree|orchestrator|both] [--resolve-conflicts] [--allow-managed-removal]` — Backfill legacy templates or refresh managed roles
+ 
++## Non-agent open
++
++`--print-path` is a machine query, not legacy `--no-agent` human guidance.
++Use `path=$(tws open auth api --print-path) && cd -- "$path"` for parent-shell
++navigation; a child cannot change its parent's cwd. Success prints exactly one
++verified absolute path/newline, errors no stdout. No injection, fetch, writer
++lock, activation, or recovery occurs. Checkout entry queries require the current
++attached logical branch. Dirt and valid sessions are observable, but pending
++mutation/recovery evidence still blocks.
++
++`tws open auth api --command nvim -- .` runs one executable bound from the
++caller's PATH or relative path, not a shell command line. Child arguments after
++the post-selector `--` are literal, with no evaluation, agent continuation, or
++follow-up shell.
++Direct execution inherits stdio and reports nonzero exit as CLI failure.
++Configured/saved renderers stay unchanged; injection safeguards still apply.
++Both modes require explicit selectors, are exclusive, and reject enabled
++`--all`/`--no-agent`. Queries reject explicit tmux flags; commands reject
++contradictory enabled tmux flags.
++
++Escape leading-dash selectors with an initial `--`, placing all tws flags
++before it: `tws open --feature-dir --print-path -- -feature` or
++`tws open --command nvim -- -feature -branch -- README.md`.
++Fill the required selector slots first, including a selector literally named
++`--`; child argv then needs another `--` immediately after them. A child
++argument literally `--` stays literal. Queries reject extra arguments, while
++normal post-selector delimiters retain their existing meaning.
++
++Branch commands support direct/tmux in both modes and honor tmux preferences.
++Feature-directory commands default direct; explicit tmux is external-only.
++Supplied commands refuse existing tmux sessions. Detaching retains a live
++checkout owner, without eventual tmux exit-code forwarding. Dirty/changed/
++foreign checkout state and uncertain cleanup preserve evidence: inspect
++status, keep work, then close safely; never erase guards. Use GUI wait flags
++(`--command code -- --wait .`); daemonized descendants are not adopted. Generic
++commands remain semantic `agent_state: unknown`; no new portable process
++birth-identity guarantee is added.
++
+ ## Selected standalone publication (released in v1.2.18-rc.8)
+ 
+ `tws push <feature> --only <entry>` publishes one logical entry; `--from <entry>`
+diff --git a/docs/cheatsheet.md b/docs/cheatsheet.md
+index 44c93f2..153042e 100644
+--- a/docs/cheatsheet.md
++++ b/docs/cheatsheet.md
+@@ -59,15 +59,54 @@ tws new auth main --force                         # force if already checked out
+ ## Work in a worktree
+ 
+ ```sh
+-tws open auth auth-models              # cd + run agent (default)
++tws open auth auth-models              # run agent in target cwd (default)
+ tws open auth auth-models --tmux       # wrap in tmux session
+-tws open auth auth-models --no-agent   # just print the path
++tws open auth auth-models --no-agent   # legacy human guidance, not a machine query
++tws open auth auth-models --print-path # exactly one verified absolute path
++tws open auth --feature-dir --print-path
++tws open auth auth-models --command nvim -- .
++tws open auth --feature-dir --command code -- --wait .
++tws open --feature-dir --print-path -- -feature
++tws open --command nvim -- -feature -branch -- README.md
+ tws open                               # interactive picker (fzf if available)
+ tws open auth                          # pick branch within feature
+ tws open auth --feature-dir            # feature orchestrator directory
+ tws open auth --all                    # tmux: orchestrator + one window per worktree
+ ```
+ 
++For leading-dash selectors, place all tws flags before an initial `--`.
++Fill the required feature/branch slots (a literal `--` is a selector there),
++then use another `--` immediately after them for child arguments. A child
++argument literally `--` stays literal; path queries accept no child arguments.
++The usual post-selector `--` remains the child delimiter.
++
++For parent-shell navigation:
++`path=$(tws open auth auth-models --print-path) && cd -- "$path"`.
++A child cannot change the parent shell's cwd. The query has no injection,
++writer locks, fetch, activation, or recovery, and no stdout on failure. Dirt
++and valid sessions are observable; pending mutation/recovery evidence refuses.
++Checkout branch queries require the current attached logical entry.
++
++`--command` takes one executable, resolved in the caller's environment before
++effects; arguments after the post-selector `--` are passed literally to it. No shell
++evaluation, configured agent, continuation flags, or trailing shell runs.
++Direct execution inherits stdio and returns failure for nonzero child exit.
++Branch commands support direct/tmux in both modes and honor tmux preferences.
++Feature-directory commands default direct in both modes; explicit tmux is
++external-only. Supplied commands refuse existing tmux sessions.
++Use tmux's own controls for an external feature-directory session; `tws close`
++still requires a logical branch there.
++
++Do not combine either mode with enabled `--all`/`--no-agent` or with each other.
++Path queries reject explicit tmux flags; commands reject enabled
++`--tmux` plus `--no-tmux`. Configured/saved injection renderers stay unchanged.
++Use GUI wait flags; daemonized descendants are not adopted. A detached live
++checkout tmux session stays owned until completion/close; its eventual exit
++code is not forwarded. Dirty/changed/foreign checkout state and uncertain
++cleanup retain evidence: inspect status, preserve work, then close safely,
++never delete guards. Generic commands remain semantic `agent_state: unknown`;
++there is no new process birth-identity guarantee.
++
+ ## Decisions (cross-worktree communication)
+ 
+ ```sh
+@@ -99,7 +138,7 @@ tws decisions ack auth
+ 
+ Decision types: `breaking` | `info` | `deprecation` | `review` | `question`
+ 
+-When you `tws open`, unread decisions are shown automatically:
++When you use ordinary agent `tws open`, unread decisions are shown automatically:
+ ```
+   2 new decision(s) (1 for you) (run: tws decisions show auth)
+ ```
+diff --git a/docs/configuration.md b/docs/configuration.md
+index 1cf4fff..052af06 100644
+--- a/docs/configuration.md
++++ b/docs/configuration.md
+@@ -55,7 +55,8 @@ orchestrator_template: orchestrator-base
+ 
+ ### Agent command
+ 
+-The `agent_command` field controls what `tws open` runs in the worktree. Defaults to `claude`.
++The `agent_command` field controls what ordinary agent `tws open` runs in the
++worktree. Defaults to `claude`.
+ 
+ Examples:
+ 
+@@ -77,6 +78,57 @@ execute the command to identify it. An explicit renderer records the current
+ continue to honor that renderer while the launch command is unchanged, and
+ require explicit reselection after a later launch-command change.
+ 
++### Per-invocation paths and commands
++
++Use `tws open <feature> <logical-branch> --print-path` for shell integration,
++not the legacy `--no-agent` human output. Use `<feature> --feature-dir` to query
++the feature metadata directory. Successful queries print only an absolute
++verified path and newline; failures print no stdout. They do not inject, fetch,
++lock, recover, or switch branches. A checkout entry must already be the current
++attached logical branch. Dirt and valid sessions alone do not block queries;
++pending mutation and retained metadata-movement evidence still do.
++
++`tws open <feature> <logical-branch> --command nvim -- .` overrides the program
++for one invocation without changing config bytes, saved renderers, or the next
++agent launch. The executable is a single PATH token or caller-relative path
++bound before effects; whitespace is not split. Literal arguments after the
++post-selector `--` belong to the child. There is no shell evaluation, agent
++resume flag, or follow-up shell. Direct mode inherits stdio, waits, and reports child failures
++using the ordinary CLI failure convention.
++
++Leading-dash selectors use `--` before the required selector slots, with all
++tws flags before that marker:
++
++```sh
++tws open --feature-dir --print-path -- -feature
++tws open --command nvim -- -feature -branch -- README.md
++```
++
++Consume those selector slots first, even for a selector literally named `--`.
++Command arguments then need another `--` immediately after the selectors;
++an argument literally `--` after that is preserved. Queries reject child
++arguments. The ordinary post-selector delimiter is unchanged.
++
++Both workspace modes support branch commands directly or in tmux, honoring
++`use_tmux` and explicit `--tmux`/`--no-tmux`. Feature-directory commands default
++direct and do not activate a branch; explicit tmux is external-only. No global
++editor setting or command history is introduced. The modes are exclusive,
++require explicit selectors, and reject enabled `--all`/`--no-agent`. Queries
++reject explicit tmux flags; commands reject both enabled tmux flags.
++External feature-directory tmux sessions use tmux's own controls, not
++branch-oriented `tws close`.
++
++GUI programs need their wait option, e.g. `--command code -- --wait .`.
++Daemonized descendants are not adopted and no new portable process-birth
++identity guarantee is made. A child cannot change the parent shell's cwd;
++use `path=$(tws open auth api --print-path) && cd -- "$path"` explicitly.
++An existing tmux session is never substituted for a supplied command.
++Detachment retains a live checkout session; eventual tmux exit codes are not
++forwarded. Checkout command state predates child effects and safe completion
++restores the caller. Dirty/changed/foreign or uncertain state is retained for
++inspection and safe `tws close`; never erase evidence to bypass recovery.
++Generic command presence is observable, but `agent_state` stays `unknown`.
++
+ ### Managed template defaults
+ 
+ `worktree_template` and `orchestrator_template` supply role defaults only when
+diff --git a/docs/engineering-workflow.md b/docs/engineering-workflow.md
+index 65849ff..8823178 100644
+--- a/docs/engineering-workflow.md
++++ b/docs/engineering-workflow.md
+@@ -64,12 +64,20 @@ Current shipped checkout slices:
+ The opt-in global workspace registry is also shipped for stable cross-repository
+ discovery, health checks, and moved-target repair.
+ 
+-Next roadmap work: **Node 24 CI maintenance**.
+-Complete `update-github-actions-node24`, then implement `open-worktree-command`
+-as a separate Path B boundary. Preserve the existing CI matrix, Go version-file
+-and cache behavior, tag-version checks, and release semantics while upgrading
+-action runtimes. Preserve existing agent launch behavior when adding explicit
+-non-agent open surfaces.
++Next roadmap work: **open-worktree-command (#10)**.
++Its Path B intent artifacts are defined; implement, review, validate, and
++release this independent boundary without changing legacy agent launches.
++Verified path queries and literal per-invocation programs are the candidate,
++not a claim that a future open-command RC has passed.
++
++Node 24 CI maintenance and the separate inode-fixture repair are released and
++verified in `v1.2.19-rc.2` at `034126331db73522bb98d1f1a1fc08e146a68fe5`.
++Main CI `41204870523` and tag/release CI `41207441379` passed on Ubuntu/macOS.
++Both exact tag-version checks, native action-gh-release v3 execution, and
++non-draft prerelease release `429986003` are verified; issues #8 and #9 are
++closed. The failed `v1.2.19-rc.1` tag is immutable and has no release.
++Stable `v1.2.18` remains latest. Preserve the completed maintenance's CI matrix,
++Go version-file/cache inputs, tag checks, and release semantics.
+ 
+ Stable `v1.2.18` is released and verified at `fb113b8`, with successful
+ Ubuntu/macOS main and tag/release CI, exact-tag version checks, and published
+diff --git a/docs/roadmap.md b/docs/roadmap.md
+index 0db40f4..6a64d2d 100644
+--- a/docs/roadmap.md
++++ b/docs/roadmap.md
+@@ -84,13 +84,23 @@ Shipped foundations:
+   reconstructs only the matching recovery reservation. v1.2.16 only fails closed for same-feature sync after envelope
+   birth; do not use an older tws while any reparent is active or recoverable.
+ 
+-Current target: **Node 24 CI maintenance**.
+-Complete the existing
+-[`update-github-actions-node24`](../.tpatch/features/update-github-actions-node24/request.md)
+-boundary, then take
++Current target: **open-worktree-command (#10)**.
++Implement
+ [`open-worktree-command`](../.tpatch/features/open-worktree-command/request.md)
+-through its own Path B analysis, specification, exploration, implementation,
+-review, and release gates. Keep the two features independent.
++as its own Path B boundary: opt-in verified path queries and literal
++per-invocation programs without changing legacy agent behavior. Its intent
++artifacts are defined; implementation, review, full validation, and release
++gates belong to this candidate. No future open-command RC is verified yet.
++
++Node 24 CI maintenance and the separate inode-fixture repair are released and
++verified in `v1.2.19-rc.2` at `034126331db73522bb98d1f1a1fc08e146a68fe5`.
++Ubuntu/macOS main CI `41204870523` and tag/release CI `41207441379` passed;
++exact tag versions, native action-gh-release v3 execution, and non-draft
++prerelease release `429986003` are verified. Issues #8 and #9 are closed.
++The failed `v1.2.19-rc.1` tag remains immutable and has no release.
++Preserve the completed independent maintenance boundaries and their CI matrix,
++Go version-file/cache behavior, and release semantics. Stable `v1.2.18`
++remains latest.
+ 
+ Stable `v1.2.18` is released and verified at `fb113b8`; it includes the complete
+ rc.1-rc.9 cycle. Ubuntu/macOS main and tag/release CI, exact-version checks, and
+diff --git a/internal/agent_status.go b/internal/agent_status.go
+index 8b01196..dcc5ae5 100644
+--- a/internal/agent_status.go
++++ b/internal/agent_status.go
+@@ -1244,6 +1244,7 @@ var recognizedSessionStages = map[string]bool{
+ 	DirectStageStarting: true,
+ 	DirectStageAgent:    true,
+ 	DirectStageShell:    true,
++	DirectStageCommand:  true,
+ 	"tmux":              true,
+ }
+ 
+diff --git a/internal/cli/direct_command.go b/internal/cli/direct_command.go
+new file mode 100644
+index 0000000..76f6d34
+--- /dev/null
++++ b/internal/cli/direct_command.go
+@@ -0,0 +1,95 @@
++package cli
++
++import (
++	"errors"
++	"fmt"
++	"path/filepath"
++	"strings"
++
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
++)
++
++type directCommandOptions struct {
++	Path, FeaturePath, Feature, Name, GitBranch string
++	Command                                     []string
++	Runner                                      directRunner
++	Store                                       directSessionStore
++	FinalGuard                                  func() error
++}
++
++func openDirectCommand(opts directCommandOptions) (retErr error) {
++	if len(opts.Command) == 0 || !filepath.IsAbs(opts.Command[0]) {
++		return errors.New("command executable must be bound to an absolute path before launch")
++	}
++	for _, arg := range opts.Command {
++		if strings.ContainsRune(arg, '\x00') {
++			return errors.New("command argv cannot contain NUL")
++		}
++	}
++	runner := opts.Runner
++	if runner == nil {
++		runner = realDirectRunner{}
++	}
++	store := opts.Store
++	if store == nil {
++		store = realDirectSessionStore{}
++	}
++	tracked := opts.FeaturePath != "" && opts.Feature != "" && opts.Name != ""
++	var branchID, token string
++	if tracked {
++		branchID = internal.DirectSessionBranchID(opts.Feature, opts.Name)
++		var err error
++		token, err = store.Create(opts.FeaturePath, internal.DirectSessionRecord{
++			Feature: opts.Feature, Name: opts.Name, GitBranch: opts.GitBranch,
++			Path: opts.Path, Stage: internal.DirectStageCommand,
++		})
++		if err != nil {
++			return err
++		}
++		defer func() {
++			if err := store.Update(opts.FeaturePath, branchID, token, func(*internal.DirectSessionRecord) {}); err != nil {
++				retErr = errors.Join(retErr, fmt.Errorf("command record cleanup refused: %w", err))
++				return
++			}
++			retErr = errors.Join(retErr, store.RemoveOwned(opts.FeaturePath, branchID, token))
++		}()
++		if DirectSessionLaunchIntentHook != nil {
++			if err := DirectSessionLaunchIntentHook(); err != nil {
++				return err
++			}
++		}
++	}
++	if opts.FinalGuard != nil {
++		if err := opts.FinalGuard(); err != nil {
++			return err
++		}
++	}
++	if tracked {
++		if err := store.Update(opts.FeaturePath, branchID, token, func(*internal.DirectSessionRecord) {}); err != nil {
++			return err
++		}
++	}
++	child, err := runner.Start(opts.Path, opts.Command)
++	if err != nil {
++		return fmt.Errorf("start command: %w", err)
++	}
++	if tracked {
++		if err := store.Update(opts.FeaturePath, branchID, token, func(rec *internal.DirectSessionRecord) {
++			rec.ChildPID = child.PID()
++		}); err != nil {
++			terminateErr := child.Terminate()
++			waitErr := child.Wait()
++			return errors.Join(err, terminateErr, waitErr)
++		}
++	}
++	if err := child.Wait(); err != nil {
++		return fmt.Errorf("command: %w", err)
++	}
++	return nil
++}
++
++type checkoutDirectCommandRunner struct{}
++
++func (checkoutDirectCommandRunner) Run(path string, command []string) error {
++	return openDirectCommand(directCommandOptions{Path: path, Command: command})
++}
+diff --git a/internal/cli/direct_command_test.go b/internal/cli/direct_command_test.go
+new file mode 100644
+index 0000000..37f1ca9
+--- /dev/null
++++ b/internal/cli/direct_command_test.go
+@@ -0,0 +1,178 @@
++package cli
++
++import (
++	"bytes"
++	"encoding/json"
++	"errors"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
++)
++
++type directCommandTestProcess struct {
++	wait func() error
++}
++
++func (p directCommandTestProcess) PID() int         { return os.Getpid() }
++func (p directCommandTestProcess) Wait() error      { return p.wait() }
++func (p directCommandTestProcess) Terminate() error { return nil }
++
++type directCommandTestRunner func(string, []string) (directProcess, error)
++
++func (r directCommandTestRunner) Start(path string, command []string) (directProcess, error) {
++	return r(path, command)
++}
++
++func TestDirectCommandLiveRecordAndMutationExclusion(t *testing.T) {
++	f := newInjectFixture(t, "feature")
++	path := f.addWorktree(t, "", "one", "actual")
++	if err := internal.SaveStack(f.featurePath, internal.Stack{Branches: []internal.StackEntry{{Name: "one", Branch: "actual", Base: "main"}}}); err != nil {
++		t.Fatal(err)
++	}
++	opts := directCommandOptions{Path: path, FeaturePath: f.featurePath, Feature: f.feature, Name: "one", GitBranch: "actual",
++		Command: []string{"/editor", "private literal argv"}}
++	calls := 0
++	opts.Runner = directCommandTestRunner(func(string, []string) (directProcess, error) {
++		calls++
++		record := loadOnlyRecord(t, f.featurePath, f.feature, "one")
++		if record.Stage != internal.DirectStageCommand || record.Agent != "" {
++			t.Fatalf("pre-spawn record=%+v", record)
++		}
++		return directCommandTestProcess{wait: func() error {
++			record := loadOnlyRecord(t, f.featurePath, f.feature, "one")
++			if record.ChildPID != os.Getpid() {
++				t.Fatal("child PID missing")
++			}
++			blocking, _, err := internal.GuardDirectSessionsFor(f.featurePath, directRecordTargetForBranch(f.feature, "one"), nil)
++			if err != nil || len(blocking) != 1 {
++				t.Fatalf("mutation exclusion: blocking=%v err=%v", blocking, err)
++			}
++			report, err := internal.BuildAgentStatusScoped(internal.Workspace{
++				Mode: internal.ModeExternal, RepoRoot: f.repo, MetadataRoot: f.workspace,
++			}, "", f.feature, nil)
++			if err != nil {
++				t.Fatal(err)
++			}
++			data, err := json.Marshal(report)
++			if err != nil || !bytes.Contains(data, []byte(`"stage":"command"`)) ||
++				!bytes.Contains(data, []byte(`"stage_recognized":true`)) ||
++				!bytes.Contains(data, []byte(`"agent_state":"unknown"`)) ||
++				!bytes.Contains(data, []byte(`"agent":null`)) ||
++				bytes.Contains(data, []byte(opts.Command[1])) || bytes.Contains(data, []byte(record.Token)) {
++				t.Fatalf("command observation invalid or leaked: %s %v", data, err)
++			}
++			return nil
++		}}, nil
++	})
++	if err := openDirectCommand(opts); err != nil {
++		t.Fatal(err)
++	}
++	if calls != 1 || len(recordFiles(t, f.featurePath)) != 0 {
++		t.Fatalf("calls=%d files=%v", calls, recordFiles(t, f.featurePath))
++	}
++}
++
++func TestDirectCommandPersistenceFailures(t *testing.T) {
++	for _, stage := range []string{"create", "before-spawn", "after-spawn", "remove"} {
++		t.Run(stage, func(t *testing.T) {
++			f := newInjectFixture(t, "feature")
++			path := f.addWorktree(t, "", "one", "actual")
++			var calls []string
++			store := &fakeDirectStore{calls: &calls}
++			broken := errors.New("store failed")
++			switch stage {
++			case "create":
++				store.failCreate = map[int]error{1: broken}
++			case "before-spawn":
++				store.failUpdate = map[int]error{1: broken}
++			case "after-spawn":
++				store.failUpdate = map[int]error{2: broken}
++			case "remove":
++				store.failUpdate = map[int]error{3: broken}
++			}
++			opts := directCommandOptions{
++				Path: path, FeaturePath: f.featurePath, Feature: f.feature, Name: "one", Command: []string{"/editor"},
++				Store: store, Runner: &fakeDirectRunner{calls: &calls, label: "command", pid: os.Getpid()},
++			}
++			err := openDirectCommand(opts)
++			if !errors.Is(err, broken) {
++				t.Fatalf("err=%v calls=%v", err, calls)
++			}
++			text := strings.Join(calls, "\n")
++			if (stage == "create" || stage == "before-spawn") && strings.Contains(text, "command.start") {
++				t.Fatalf("spawn after persistence refusal: %v", calls)
++			}
++			if stage == "after-spawn" && (!strings.Contains(text, "command.terminate") || strings.Count(text, "command.wait") != 1) {
++				t.Fatalf("failed update did not terminate/reap exactly once: %v", calls)
++			}
++			if stage == "remove" && len(recordFiles(t, f.featurePath)) != 1 {
++				t.Fatal("unverifiable record was deleted")
++			}
++			if strings.Contains(text, "shell") || strings.Contains(text, "agent") {
++				t.Fatalf("command used agent/shell: %v", calls)
++			}
++		})
++	}
++}
++
++func TestDirectCommandForeignRecordBeforeLaunch(t *testing.T) {
++	f := newInjectFixture(t, "feature")
++	path := f.addWorktree(t, "", "one", "actual")
++	var foreignPath string
++	DirectSessionLaunchIntentHook = func() error {
++		files := recordFiles(t, f.featurePath)
++		foreignPath = filepath.Join(internal.DirectSessionsDir(f.featurePath), files[0])
++		record := loadOnlyRecord(t, f.featurePath, f.feature, "one")
++		record.Token = "foreign"
++		data, err := json.Marshal(record)
++		if err != nil {
++			return err
++		}
++		return os.WriteFile(foreignPath, data, 0600)
++	}
++	t.Cleanup(func() { DirectSessionLaunchIntentHook = nil })
++	var calls []string
++	err := openDirectCommand(directCommandOptions{
++		Path: path, FeaturePath: f.featurePath, Feature: f.feature, Name: "one", Command: []string{"/editor"},
++		Runner: &fakeDirectRunner{calls: &calls, label: "command"},
++	})
++	if err == nil || len(calls) != 0 {
++		t.Fatalf("err=%v calls=%v", err, calls)
++	}
++	data, err := os.ReadFile(foreignPath)
++	if err != nil || !bytes.Contains(data, []byte(`"token":"foreign"`)) {
++		t.Fatalf("foreign record lost: %s %v", data, err)
++	}
++}
++
++func TestDirectCommandExitFailureHasNoFollowup(t *testing.T) {
++	f := newInjectFixture(t, "feature")
++	path := f.addWorktree(t, "", "one", "actual")
++	var calls []string
++	childErr := errors.New("exit status 31")
++	err := openDirectCommand(directCommandOptions{
++		Path: path, FeaturePath: f.featurePath, Feature: f.feature, Name: "one", Command: []string{"/editor"},
++		Runner: &fakeDirectRunner{calls: &calls, label: "command", waitErr: childErr},
++	})
++	if !errors.Is(err, childErr) || len(calls) != 2 || !strings.HasPrefix(calls[0], "command.start") || calls[1] != "command.wait" {
++		t.Fatalf("err=%v calls=%v", err, calls)
++	}
++	assertNotExists(t, internal.DirectSessionsDir(f.featurePath))
++}
++
++func TestDirectCommandNULRefusesBeforePersistence(t *testing.T) {
++	f := newInjectFixture(t, "feature")
++	path := f.addWorktree(t, "", "one", "actual")
++	var calls []string
++	err := openDirectCommand(directCommandOptions{
++		Path: path, FeaturePath: f.featurePath, Feature: f.feature, Name: "one", Command: []string{"/editor", "bad\x00argument"},
++		Store: &fakeDirectStore{calls: &calls}, Runner: &fakeDirectRunner{calls: &calls, label: "command"},
++	})
++	if err == nil || len(calls) != 0 {
++		t.Fatalf("err=%v effects=%v", err, calls)
++	}
++	assertNotExists(t, internal.DirectSessionsDir(f.featurePath))
++}
+diff --git a/internal/cli/open.go b/internal/cli/open.go
+index 78cadea..e0126c8 100644
+--- a/internal/cli/open.go
++++ b/internal/cli/open.go
+@@ -18,16 +18,53 @@ func openCmd() *cobra.Command {
+ 	var noAgent bool
+ 	var featureDir bool
+ 	var all bool
++	var printPath bool
++	var command string
+ 
+ 	cmd := &cobra.Command{
+ 		Use:   "open [feature] [branch]",
+-		Short: "Open worktree and run agent",
++		Short: "Open a worktree with an agent, command, or path query",
+ 		Long: `Open a worktree and run the configured agent. With no args, shows an interactive picker.
+ 
+ Use --feature-dir to open the feature directory itself (orchestrator mode).
+-Use --all to create a tmux session with windows for every worktree in the feature.`,
+-		Args: cobra.RangeArgs(0, 2),
++Use --all to create a tmux session with windows for every worktree in the feature.
++
++Explicit non-agent modes (no picker):
++  tws open <feature> <branch> --print-path
++  tws open <feature> --feature-dir --print-path
++  tws open <feature> <branch> --command nvim -- .
++  tws open <feature> --feature-dir --command code -- --wait .
++
++For leading-dash selectors, put all tws flags before an initial --:
++  tws open --feature-dir --print-path -- -feature
++  tws open --command nvim -- -feature -branch -- README.md
++The initial -- escapes options while selector slots remain. Consume those
++slots (even a selector literally named --) before another -- for child argv.
++
++--print-path is a read-only query: exactly one verified absolute path.
++In checkout mode a branch query requires that branch to be currently attached.
++--command runs one executable with literal arguments after the post-selector --.
++It never evaluates a shell command line or starts a follow-up shell, and does
++not change agent_command.
++Branch commands honor tmux preferences; feature-directory commands default
++direct (explicit tmux is external-only). Use GUI wait flags to track lifetime.
++A child cannot change your parent shell's directory.`,
++		Args: func(cmd *cobra.Command, args []string) error {
++			if printPath || cmd.Flags().Changed("command") {
++				_, err := parseExplicitOpen(cmd, args, printPath, command, featureDir, useTmux, noTmux, noAgent, all)
++				return err
++			}
++			return cobra.RangeArgs(0, 2)(cmd, args)
++		},
+ 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
++			if printPath || cmd.Flags().Changed("command") {
++				want := explicitOpenSelectorCount(featureDir)
++				selectors, _, childMarker, err := splitExplicitOpenArgs(args, cmd.ArgsLenAtDash(), want)
++				if err != nil || childMarker || len(selectors) >= want {
++					return nil, cobra.ShellCompDirectiveNoFileComp
++				}
++				args = selectors
++			}
+ 			switch len(args) {
+ 			case 0:
+ 				ws, err := internal.RequireWorkspace()
+@@ -350,11 +387,25 @@ Use --all to create a tmux session with windows for every worktree in the featur
+ 
+ 	cmd.Flags().BoolVar(&useTmux, "tmux", false, "Wrap in tmux session")
+ 	cmd.Flags().BoolVar(&noTmux, "no-tmux", false, "Skip tmux even if configured")
+-	cmd.Flags().BoolVar(&noAgent, "no-agent", false, "Just print the worktree path")
++	cmd.Flags().BoolVar(&noAgent, "no-agent", false, "Legacy human path guidance without launching an agent")
+ 	cmd.Flags().BoolVar(&featureDir, "feature-dir", false, "Open the feature directory (orchestrator mode)")
+ 	cmd.Flags().BoolVar(&all, "all", false, "Create tmux session with windows for all worktrees")
+-
+-	return featureRenameAdmittedCommand(cmd)
++	cmd.Flags().BoolVar(&printPath, "print-path", false, "Print one verified absolute path without launching or changing state")
++	cmd.Flags().StringVar(&command, "command", "", "Run one executable; literal child arguments follow a post-selector --")
++
++	cmd = featureRenameAdmittedCommand(cmd)
++	legacyRun := cmd.RunE
++	cmd.RunE = func(cmd *cobra.Command, args []string) error {
++		if !printPath && !cmd.Flags().Changed("command") {
++			return legacyRun(cmd, args)
++		}
++		opts, err := parseExplicitOpen(cmd, args, printPath, command, featureDir, useTmux, noTmux, noAgent, all)
++		if err != nil {
++			return err
++		}
++		return runExplicitOpen(cmd, opts)
++	}
++	return cmd
+ }
+ 
+ func resolveOpenArgs(ws internal.Workspace, args []string) (resolvedFeatureContext, string, error) {
+diff --git a/internal/cli/open_explicit.go b/internal/cli/open_explicit.go
+new file mode 100644
+index 0000000..07098f2
+--- /dev/null
++++ b/internal/cli/open_explicit.go
+@@ -0,0 +1,504 @@
++package cli
++
++import (
++	"errors"
++	"fmt"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"strings"
++
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
++	"github.com/spf13/cobra"
++)
++
++type explicitOpenOptions struct {
++	feature, name         string
++	printPath, featureDir bool
++	executable            string
++	args                  []string
++	tmux, noTmux, tmuxSet bool
++}
++
++func explicitOpenSelectorCount(featureDir bool) int {
++	if featureDir {
++		return 1
++	}
++	return 2
++}
++
++// A marker before the required selector slots escapes options. Only a marker
++// after those slots delimits child argv; a selector itself may be "--".
++func splitExplicitOpenArgs(args []string, dash, count int) (selectors, child []string, childMarker bool, err error) {
++	if dash < 0 {
++		return args, nil, false, nil
++	}
++	if dash >= count {
++		at := min(dash, len(args))
++		return args[:at], args[at:], true, nil
++	}
++	if len(args) <= count {
++		return args, nil, false, nil
++	}
++	if args[count] != "--" {
++		return nil, nil, false, errors.New("child arguments require another -- immediately after option-escaped selectors")
++	}
++	return args[:count], args[count+1:], true, nil
++}
++
++func parseExplicitOpen(cmd *cobra.Command, args []string, printPath bool, executable string, featureDir, tmux, noTmux, noAgent, all bool) (explicitOpenOptions, error) {
++	o := explicitOpenOptions{
++		printPath: printPath, featureDir: featureDir, executable: executable,
++		tmux: tmux, noTmux: noTmux, tmuxSet: cmd.Flags().Changed("tmux"),
++	}
++	commandSet := cmd.Flags().Changed("command")
++	if printPath && commandSet {
++		return o, errors.New("--print-path and --command are mutually exclusive")
++	}
++	if all || noAgent {
++		return o, errors.New("--print-path and --command cannot be combined with --all or --no-agent")
++	}
++	if printPath && (cmd.Flags().Changed("tmux") || cmd.Flags().Changed("no-tmux")) {
++		return o, errors.New("--print-path does not accept tmux launch flags")
++	}
++	if tmux && noTmux {
++		return o, errors.New("--tmux and --no-tmux cannot both be enabled")
++	}
++	want := explicitOpenSelectorCount(featureDir)
++	selectors, child, childMarker, err := splitExplicitOpenArgs(args, cmd.ArgsLenAtDash(), want)
++	if err != nil {
++		return o, err
++	}
++	if childMarker && !commandSet {
++		return o, errors.New("only --command accepts a post-selector -- and child arguments")
++	}
++	o.args = append([]string(nil), child...)
++	if len(selectors) != want {
++		return o, errors.New("explicit open requires <feature> <logical-branch>, or <feature> --feature-dir; child arguments must follow --")
++	}
++	for _, value := range selectors {
++		if value == "" || strings.ContainsRune(value, '\x00') {
++			return o, errors.New("open selectors must be nonempty and contain no NUL")
++		}
++	}
++	o.feature = selectors[0]
++	if err := internal.GuardFeatureName("", o.feature); err != nil {
++		return o, err
++	}
++	if !featureDir {
++		o.name = selectors[1]
++		if filepath.IsAbs(o.name) || filepath.Clean(o.name) != o.name ||
++			o.name == "." || o.name == ".." || strings.HasPrefix(o.name, "../") ||
++			strings.Contains(o.name, "\\") {
++			return o, errors.New("logical branch must be a safe relative name")
++		}
++	}
++	if commandSet {
++		if executable == "" || strings.ContainsRune(executable, '\x00') {
++			return o, errors.New("--command requires one nonempty executable without NUL")
++		}
++		for _, arg := range o.args {
++			if strings.ContainsRune(arg, '\x00') {
++				return o, errors.New("command arguments cannot contain NUL")
++			}
++		}
++	}
++	return o, nil
++}
++
++// Bind before admission or checkout activation. In particular, ErrDot is not
++// permission to search the target directory instead of the caller's PATH.
++func bindOpenExecutable(executable string) (string, error) {
++	path, err := exec.LookPath(executable)
++	if err != nil {
++		return "", fmt.Errorf("resolve --command executable: %w", err)
++	}
++	return filepath.Abs(path)
++}
++
++type explicitOpenTarget struct {
++	context resolvedFeatureContext
++	path    string
++	entry   internal.StackEntry
++	info    os.FileInfo
++}
++
++func resolveExplicitOpenTarget(ws internal.Workspace, o explicitOpenOptions) (explicitOpenTarget, error) {
++	var target explicitOpenTarget
++	context, err := resolveFeatureContext(ws, o.feature)
++	if err != nil {
++		return target, err
++	}
++	target.context = context
++	if err := verifyOpenFeatureDirectory(context); err != nil {
++		return target, err
++	}
++	target.path = context.FeaturePath
++	if !o.featureDir {
++		if context.Workspace.Mode == internal.ModeExternal {
++			target.path, err = internal.ResolveInjectWorktree(context.FeaturePath, o.name)
++			if err != nil {
++				return target, fmt.Errorf("resolve worktree %q: %w", o.name, err)
++			}
++			target.entry = internal.StackEntry{Name: o.name, Branch: resolveDirectGitBranch(context.FeaturePath, o.name)}
++		} else {
++			target.entry, err = internal.CheckoutCommandEntry(context.Workspace, context.FeaturePath, o.name)
++			if err != nil {
++				return target, err
++			}
++			target.path = context.Workspace.RepoRoot
++			if o.printPath {
++				if err := internal.CheckoutCommandCurrentEntry(context.Workspace, target.entry); err != nil {
++					return target, err
++				}
++			}
++		}
++	}
++	target.path, err = filepath.Abs(target.path)
++	if err != nil {
++		return target, err
++	}
++	target.info, err = os.Lstat(target.path)
++	if err != nil {
++		return target, err
++	}
++	if target.info.Mode()&os.ModeSymlink != 0 || !target.info.IsDir() {
++		return target, errors.New("open target must be a real directory, not a symlink")
++	}
++	return target, nil
++}
++
++func verifyOpenFeatureDirectory(context resolvedFeatureContext) error {
++	rel, err := filepath.Rel(context.Workspace.MetadataRoot, context.FeaturePath)
++	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
++		return errors.New("feature directory escapes its workspace")
++	}
++	path := context.Workspace.MetadataRoot
++	for _, part := range strings.Split(rel, string(filepath.Separator)) {
++		path = filepath.Join(path, part)
++		info, err := os.Lstat(path)
++		if err != nil {
++			return fmt.Errorf("feature directory: %w", err)
++		}
++		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
++			return fmt.Errorf("feature directory %s is not a real directory", path)
++		}
++	}
++	return nil
++}
++
++func explicitOpenMutationGuard(context resolvedFeatureContext) error {
++	if context.Workspace.Mode == internal.ModeCheckout {
++		return internal.CheckoutSessionMutationPreconditions(context.Workspace)
++	}
++	if _, err := featureRenameRouteAdmission(internal.ModeExternal, context.Feature, context.FeaturePath, true); err != nil {
++		return err
++	}
++	if err := refuseExternalOpenDuringMutation(context.Feature, context.FeaturePath); err != nil {
++		return err
++	}
++	for _, path := range []string{internal.SyncStatePath(context.FeaturePath), internal.SyncRunStatePath(context.FeaturePath)} {
++		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
++			if err != nil {
++				return fmt.Errorf("sync evidence could not be verified: %w", err)
++			}
++			return fmt.Errorf("sync recovery is pending for %q; use tws sync %s --continue (or --abort)", context.Feature, context.Feature)
++		}
++	}
++	return nil
++}
++
++// OpenPrintPathBeforeOutputHook is a test-only seam before the final read-only
++// namespace and target checks.
++var OpenPrintPathBeforeOutputHook func() error
++
++func runExplicitOpen(cmd *cobra.Command, o explicitOpenOptions) (retErr error) {
++	var command []string
++	if !o.printPath {
++		path, err := bindOpenExecutable(o.executable)
++		if err != nil {
++			return err
++		}
++		command = append([]string{path}, o.args...)
++	}
++	ws, err := internal.RequireWorkspace()
++	if err != nil {
++		return err
++	}
++	if ws.Mode == internal.ModeCheckout && o.featureDir && o.tmux {
++		return errors.New("--feature-dir --command does not support tmux in checkout mode; use --no-tmux or a logical branch")
++	}
++	selectedRoot := ""
++	if ws.Mode == internal.ModeExternal {
++		selectedRoot, err = filepath.Abs(internal.TwsRoot())
++		if err != nil {
++			return err
++		}
++		if _, err := featureRenameSelectionAdmission(selectedRoot, o.feature, true); err != nil {
++			return err
++		}
++	}
++	target, err := resolveExplicitOpenTarget(ws, o)
++	if err != nil {
++		return err
++	}
++	guard := func() error {
++		if _, err := featureRenameSelectionAdmission(selectedRoot, o.feature, true); err != nil {
++			return err
++		}
++		if err := explicitOpenMutationGuard(target.context); err != nil {
++			return err
++		}
++		current, err := resolveExplicitOpenTarget(ws, o)
++		if err != nil {
++			return err
++		}
++		if current.path != target.path || current.context.FeaturePath != target.context.FeaturePath ||
++			current.entry != target.entry || !os.SameFile(current.info, target.info) {
++			return errors.New("open target changed during admission; retry after inspecting the workspace")
++		}
++		return nil
++	}
++	if err := guard(); err != nil {
++		return err
++	}
++	if o.printPath {
++		if strings.ContainsFunc(target.path, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
++			return errors.New("cannot print a path containing control characters")
++		}
++		if OpenPrintPathBeforeOutputHook != nil {
++			if err := OpenPrintPathBeforeOutputHook(); err != nil {
++				return err
++			}
++		}
++		if err := guard(); err != nil {
++			return err
++		}
++		_, err := fmt.Fprintln(cmd.OutOrStdout(), target.path)
++		return err
++	}
++
++	cfg, err := resolveManagedConfig(target.context.Workspace)
++	if err != nil {
++		return err
++	}
++	useTmux := o.tmux
++	if !o.featureDir && !o.tmuxSet && !o.noTmux && cfg.Config.UseTmux != nil {
++		useTmux = *cfg.Config.UseTmux
++	}
++	if o.noTmux {
++		useTmux = false
++	}
++	var tmux internal.SessionTmuxRunner
++	if useTmux {
++		if _, err := exec.LookPath("tmux"); err != nil {
++			return errors.New("required tool \"tmux\" not found in PATH")
++		}
++		tmux = internal.RealSessionTmuxRunner{}
++		name := explicitCommandSessionName(target, o)
++		if err := internal.RefuseCommandTmuxCollision(tmux, name); err != nil {
++			return err
++		}
++	}
++	selection, err := featureRenameSelectionAdmission(selectedRoot, o.feature, false)
++	if err != nil {
++		return err
++	}
++	defer func() { retErr = errors.Join(retErr, selection.Release()) }()
++	admission, err := featureRenameAdmissionAt(target.context.Workspace, o.feature)
++	if err != nil {
++		return err
++	}
++	defer func() { retErr = errors.Join(retErr, admission.Release()) }()
++	finalGuard := func() error {
++		return errors.Join(selection.Verify(), admission.Verify(), guard())
++	}
++	if target.context.Workspace.Mode == internal.ModeCheckout {
++		if o.featureDir {
++			return internal.WithCheckoutCommandLaunchIntent(target.context.Workspace, func() error {
++				if err := finalGuard(); err != nil {
++					return err
++				}
++				if err := internal.ValidateManagedOrchestratorContext(target.context.Workspace, o.feature, target.context.FeaturePath, cfg.AgentCommand); err != nil {
++					return err
++				}
++				return internal.CheckoutFeatureDirSessionPreconditions(target.context.Workspace)
++			}, func() error {
++				return openDirectCommand(directCommandOptions{Path: target.path, Command: command})
++			})
++		}
++		return internal.OpenCheckoutCommand(target.context.Workspace, o.feature, target.entry, command,
++			checkoutDirectCommandRunner{}, tmux, cfg.Config.InjectInto, finalGuard)
++	}
++	return withExternalCommandIntent(target, o, func(token string) error {
++		if err := finalGuard(); err != nil {
++			return err
++		}
++		if err := verifyCommandIntent(target, o, token); err != nil {
++			return err
++		}
++		if useTmux {
++			if err := internal.RefuseCommandTmuxCollision(tmux, explicitCommandSessionName(target, o)); err != nil {
++				return err
++			}
++		}
++		if o.featureDir {
++			if err := internal.ValidateManagedOrchestratorContext(target.context.Workspace, o.feature, target.context.FeaturePath, cfg.AgentCommand); err != nil {
++				return err
++			}
++		} else if err := injectOpenCommand(target, o, cfg.Config.InjectInto, token); err != nil {
++			return err
++		}
++		launchGuard := func() error {
++			return errors.Join(finalGuard(), verifyCommandIntent(target, o, token))
++		}
++		if err := launchGuard(); err != nil {
++			return err
++		}
++		if useTmux {
++			return internal.RunExternalTmuxCommand(tmux, explicitCommandSessionName(target, o), target.path, command, token)
++		}
++		opts := directCommandOptions{Path: target.path, Command: command, FinalGuard: launchGuard}
++		if !o.featureDir {
++			opts.FeaturePath, opts.Feature, opts.Name = target.context.FeaturePath, o.feature, o.name
++			opts.GitBranch = target.entry.Branch
++		}
++		return openDirectCommand(opts)
++	})
++}
++
++func explicitCommandSessionName(target explicitOpenTarget, o explicitOpenOptions) string {
++	if target.context.Workspace.Mode == internal.ModeCheckout {
++		return internal.CheckoutAgentSessionName(target.context.Workspace.StableID, o.feature, o.name)
++	}
++	if o.featureDir {
++		return internal.ExternalFeatureTmuxSessionName(o.feature)
++	}
++	return internal.ExternalTmuxSessionName(o.feature, o.name)
++}
++
++func withExternalCommandIntent(target explicitOpenTarget, o explicitOpenOptions, action func(string) error) (err error) {
++	names := []string{o.name}
++	token, err := internal.CreateExternalSessionIntent(target.context.FeaturePath, o.feature, names, commandIntentFeatureWide(o))
++	if err != nil {
++		return err
++	}
++	defer func() {
++		if verifyErr := verifyCommandIntent(target, o, token); verifyErr != nil {
++			err = errors.Join(err, verifyErr)
++			return
++		}
++		err = errors.Join(err, internal.RemoveOwnedExternalSessionIntent(target.context.FeaturePath, token))
++	}()
++	if ExternalSessionLaunchIntentHook != nil {
++		if err := ExternalSessionLaunchIntentHook(); err != nil {
++			return err
++		}
++	}
++	return action(token)
++}
++
++func commandIntentFeatureWide(o explicitOpenOptions) bool {
++	// Existing branch intents trim edge whitespace. Broaden the reservation
++	// rather than changing a verified legacy logical identity.
++	return o.featureDir || strings.TrimSpace(o.name) != o.name
++}
++
++func verifyCommandIntent(target explicitOpenTarget, o explicitOpenOptions, token string) error {
++	intents, _, err := internal.LoadExternalSessionIntents(target.context.FeaturePath, o.feature, []string{o.name}, nil)
++	if err != nil {
++		return err
++	}
++	for _, intent := range intents {
++		if intent.State == internal.DirectRecordOK && intent.Record.Token == token &&
++			intent.Record.OwnerPID == os.Getpid() &&
++			((commandIntentFeatureWide(o) && intent.Record.Scope == internal.ExternalSessionIntentFeature) ||
++				(!commandIntentFeatureWide(o) && intent.Record.Scope == internal.ExternalSessionIntentBranches &&
++					len(intent.Record.Names) == 1 && intent.Record.Names[0] == o.name)) {
++			return nil
++		}
++	}
++	return errors.New("command launch intent ownership changed; preserve the remaining evidence")
++}
++
++func injectOpenCommand(target explicitOpenTarget, o explicitOpenOptions, into, token string) (retErr error) {
++	fp := target.context.FeaturePath
++	managed, err := internal.ManagedTemplateStatePresent(fp)
++	if err != nil {
++		return err
++	}
++	if !managed {
++		return internal.InjectFiles(fp, target.path, into)
++	}
++	state, err := internal.LoadManagedTemplateState(fp)
++	if err != nil {
++		return err
++	}
++	if _, ok := state.Roles[string(internal.ManagedTemplateRoleWorktree)]; !ok {
++		return internal.InjectFiles(fp, target.path, into)
++	}
++	plan, err := internal.PlanManagedTemplate(internal.ManagedTemplatePlanRequest{
++		Workspace: target.context.Workspace, Feature: o.feature, FeaturePath: fp,
++		Roles:               []internal.ManagedTemplateRole{internal.ManagedTemplateRoleWorktree},
++		LinkMaterializeOnly: true, OnlyWorktree: o.name, InjectInto: into,
++	})
++	if err != nil {
++		return err
++	}
++	if noop, err := verifiedManagedInjectNoop(plan, []managedInjectDestination{{path: target.path}}); err != nil || noop {
++		return err
++	}
++	held, err := acquireManagedTemplateReservations([]*internal.ManagedTemplatePlan{plan}, nil, nil)
++	if err != nil {
++		return err
++	}
++	defer func() { retErr = errors.Join(retErr, releaseManagedTemplateReservations(held)) }()
++	// The entry intent is ours, but every other live/unverifiable runtime
++	// still excludes a managed update. The direct record is created later.
++	if err := verifyCommandIntent(target, o, token); err != nil {
++		return err
++	}
++	blocking, _, err := internal.GuardDirectSessionsFor(fp, directRecordTargetForBranch(o.feature, o.name), nil)
++	if err != nil {
++		return err
++	}
++	intents, _, err := internal.LoadExternalSessionIntents(fp, o.feature, []string{o.name}, nil)
++	if err != nil {
++		return err
++	}
++	for _, intent := range intents {
++		if intent.State != internal.DirectRecordOK || intent.Record.Token != token {
++			return errors.New("another session intent blocks managed command injection")
++		}
++	}
++	if len(blocking) > 0 {
++		return errors.New("live or unverifiable direct sessions block managed command injection")
++	}
++	probe := managedTemplateTmuxProbe
++	if probe == nil {
++		probe = internal.RealTmuxInventory{}
++	}
++	snapshot := probe.Snapshot()
++	if snapshot.Err != nil {
++		return snapshot.Err
++	}
++	if snapshot.Sessions[internal.ExternalTmuxSessionName(o.feature, o.name)] ||
++		snapshot.Sessions[internal.ExternalFeatureTmuxSessionName(o.feature)] {
++		return errors.New("an existing tmux session blocks managed command injection")
++	}
++	replanned, err := internal.ReplanManagedTemplate(plan)
++	if err != nil {
++		return err
++	}
++	if err := internal.ValidateManagedTemplateReplan(plan, replanned, held.template[0]); err != nil {
++		return err
++	}
++	if err := internal.ApplyManagedTemplatePlan(replanned); err != nil {
++		return err
++	}
++	excluded, err := internal.ManagedTemplateOwnedWorktreePaths(fp)
++	if err != nil {
++		return err
++	}
++	return internal.InjectFilesExcluding(fp, target.path, "", excluded)
++}
+diff --git a/internal/cli/open_explicit_test.go b/internal/cli/open_explicit_test.go
+new file mode 100644
+index 0000000..e3c9932
+--- /dev/null
++++ b/internal/cli/open_explicit_test.go
+@@ -0,0 +1,781 @@
++package cli
++
++import (
++	"bytes"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"os"
++	"path/filepath"
++	"reflect"
++	"strings"
++	"testing"
++
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
++	"github.com/spf13/cobra"
++)
++
++func runOpenModeCommand(t *testing.T, args ...string) (string, error) {
++	t.Helper()
++	cmd := openCmd()
++	cmd.SilenceErrors, cmd.SilenceUsage = true, true
++	cmd.SetArgs(args)
++	var err error
++	out := captureStdout(t, func() { err = cmd.Execute() })
++	return out, err
++}
++
++func setupOpenCheckoutCLI(t *testing.T) (string, internal.Workspace) {
++	t.Helper()
++	repo, ws := setupSessionCLI(t)
++	repo = canonicalOpenFixturePath(t, repo)
++	if err := os.WriteFile(filepath.Join(repo, ".git", "info", "exclude"), []byte(".tws/\n"), 0644); err != nil {
++		t.Fatal(err)
++	}
++	return repo, ws
++}
++
++func canonicalOpenFixturePath(t *testing.T, path string) string {
++	t.Helper()
++	canonical, err := filepath.EvalSymlinks(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	return canonical
++}
++
++func newOpenInjectFixture(t *testing.T, feature string) *injectFixture {
++	t.Helper()
++	f := newInjectFixture(t, feature)
++	for _, path := range []*string{&f.root, &f.home, &f.repo, &f.workspace, &f.featurePath} {
++		*path = canonicalOpenFixturePath(t, *path)
++	}
++	// Declare one physical fixture spelling, independent of macOS's /var
++	// alias. Output and child argv assertions below remain exact.
++	writeInjectTWSConfig(t, f.home, f.repo, f.workspace, "")
++	t.Setenv("HOME", f.home)
++	t.Setenv("TWS_ROOT", filepath.Join(f.root, "decoy-workspace"))
++	return f
++}
++
++type openPathSnapshot struct {
++	info os.FileInfo
++	data string
++}
++
++func snapshotOpenPaths(t *testing.T, root string) map[string]openPathSnapshot {
++	t.Helper()
++	snapshot := map[string]openPathSnapshot{}
++	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
++		if err != nil {
++			return err
++		}
++		var data []byte
++		if info.Mode().IsRegular() {
++			data, err = os.ReadFile(path)
++		} else if info.Mode()&os.ModeSymlink != 0 {
++			var target string
++			target, err = os.Readlink(path)
++			data = []byte(target)
++		}
++		if err != nil {
++			return err
++		}
++		snapshot[path] = openPathSnapshot{info: info, data: string(data)}
++		return nil
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	return snapshot
++}
++
++func assertOpenPathsUnchanged(t *testing.T, root string, before map[string]openPathSnapshot) {
++	t.Helper()
++	after := snapshotOpenPaths(t, root)
++	if len(before) != len(after) {
++		t.Fatalf("path inventory changed: %d -> %d", len(before), len(after))
++	}
++	for path, was := range before {
++		now, ok := after[path]
++		if !ok || !os.SameFile(was.info, now.info) || was.info.Mode() != now.info.Mode() ||
++			!was.info.ModTime().Equal(now.info.ModTime()) || was.data != now.data {
++			t.Fatalf("path query/refusal changed %s", path)
++		}
++	}
++}
++
++func TestOpenCommandPureValidation(t *testing.T) {
++	f := newOpenInjectFixture(t, "feature")
++	f.addWorktree(t, "", "one", "actual")
++	for _, args := range [][]string{
++		{"feature", "one", "--print-path", "--command", "/usr/bin/true"},
++		{"feature", "one", "--print-path", "--no-agent"},
++		{"feature", "one", "--print-path", "--all"},
++		{"feature", "one", "--print-path", "--tmux=false"},
++		{"feature", "one", "--print-path", "--no-tmux=false"},
++		{"feature", "one", "--print-path", "--", "child"},
++		{"feature", "one", "--command", "/usr/bin/true", "--tmux", "--no-tmux"},
++		{"feature", "one", "--command", ""},
++		{"feature", "one", "--command", "no-such-open-command"},
++		{"feature", "one", "--command", "bad\x00command"},
++		{"feature", "one", "--command", "/usr/bin/true", "--", "bad\x00argument"},
++		{"feature", "one", "--command", "/usr/bin/true", "not-after-separator"},
++		{"feature", "--command", "/usr/bin/true"},
++		{"--print-path"},
++		{"feature", "one", "--feature-dir", "--command", "/usr/bin/true"},
++		{"feature", "../unsafe", "--command", "/usr/bin/true"},
++		{"", "one", "--print-path"},
++	} {
++		t.Run(fmt.Sprintf("%q", args), func(t *testing.T) {
++			before := snapshotOpenPaths(t, f.root)
++			out, err := runOpenModeCommand(t, args...)
++			if err == nil || out != "" {
++				t.Fatalf("out=%q err=%v", out, err)
++			}
++			assertOpenPathsUnchanged(t, f.root, before)
++		})
++	}
++}
++
++func TestOpenPrintPathExternalSelectedAndFallback(t *testing.T) {
++	f := newOpenInjectFixture(t, "feature")
++	want := f.addWorktree(t, "", "review/topic", "decoupled")
++	secondary := createInjectRepo(t, f.root, "secondary")
++	other := f.addWorktree(t, secondary, "docs/api", "docs-branch")
++	if err := internal.SaveStack(f.featurePath, internal.Stack{Branches: []internal.StackEntry{
++		{Name: "review/topic", Branch: "decoupled", Base: "main"},
++		{Name: "docs/api", Branch: "docs-branch", Repo: secondary, Base: "main"},
++		{Name: "unmaterialized", Branch: "missing", Repo: "/unavailable/unrelated"},
++	}}); err != nil {
++		t.Fatal(err)
++	}
++	f.writeInjectFile(t, "context", "must not be injected")
++	if err := os.WriteFile(filepath.Join(want, "dirty"), []byte("keep"), 0600); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := internal.CreateDirectSession(f.featurePath, internal.DirectSessionRecord{
++		Feature: f.feature, Name: "review/topic", Path: want, Stage: internal.DirectStageCommand,
++	}); err != nil {
++		t.Fatal(err)
++	}
++	for _, route := range []struct{ name, path string }{{"review/topic", want}, {"docs/api", other}, {"", f.featurePath}} {
++		before := snapshotOpenPaths(t, f.root)
++		args := []string{f.feature, route.name, "--print-path"}
++		if route.name == "" {
++			args = []string{f.feature, "--feature-dir", "--print-path"}
++		}
++		out, err := runOpenModeCommand(t, args...)
++		if err != nil || out != route.path+"\n" {
++			t.Fatalf("out=%q err=%v want=%q", out, err, route.path)
++		}
++		assertOpenPathsUnchanged(t, f.root, before)
++	}
++	injectGit(t, want, "switch", "--detach")
++	beforeDetached := snapshotOpenPaths(t, f.root)
++	if out, err := runOpenModeCommand(t, f.feature, "review/topic", "--print-path"); err != nil || out != want+"\n" {
++		t.Fatalf("external detached observation: out=%q err=%v", out, err)
++	}
++	assertOpenPathsUnchanged(t, f.root, beforeDetached)
++	// An existing selected no-stack feature is authoritative, not fallback.
++	selected := filepath.Join(f.root, "selected")
++	selectedFeature := filepath.Join(selected, f.feature)
++	if err := os.MkdirAll(filepath.Join(selectedFeature, "worktrees"), 0755); err != nil {
++		t.Fatal(err)
++	}
++	selectedPath := filepath.Join(selectedFeature, "worktrees", "review", "topic")
++	injectGit(t, f.repo, "worktree", "add", "-b", "selected-actual", selectedPath, "main")
++	t.Setenv("TWS_ROOT", selected)
++	before := snapshotOpenPaths(t, f.root)
++	out, err := runOpenModeCommand(t, f.feature, "review/topic", "--print-path")
++	if err != nil || out != selectedPath+"\n" {
++		t.Fatalf("selected legacy route: out=%q err=%v", out, err)
++	}
++	assertOpenPathsUnchanged(t, f.root, before)
++}
++
++func TestOpenPrintPathCheckoutObservation(t *testing.T) {
++	repo, ws := setupOpenCheckoutCLI(t)
++	out, err := runOpenModeCommand(t, "feature", "one", "--print-path")
++	if err == nil || out != "" || !strings.Contains(err.Error(), "current attached") {
++		t.Fatalf("inactive: out=%q err=%v", out, err)
++	}
++	gitInDir(t, repo, "switch", "one")
++	if err := os.WriteFile(filepath.Join(repo, "dirty"), []byte("ordinary dirt"), 0600); err != nil {
++		t.Fatal(err)
++	}
++	if err := internal.SaveCheckoutAgentSession(ws, &internal.CheckoutAgentSession{
++		SchemaVersion: 1, WorkspaceID: ws.StableID, Feature: "feature", Name: "one", GitBranch: "one",
++		Mode: internal.AgentSessionDirect, PID: os.Getpid(), Stage: internal.DirectStageCommand,
++	}); err != nil {
++		t.Fatal(err)
++	}
++	for _, args := range [][]string{{"feature", "one", "--print-path"}, {"feature", "--feature-dir", "--print-path"}} {
++		before := snapshotOpenPaths(t, repo)
++		out, err := runOpenModeCommand(t, args...)
++		want := repo
++		if len(args) == 3 && args[1] == "--feature-dir" {
++			want = ws.FeaturePath("feature")
++		}
++		if err != nil || out != want+"\n" {
++			t.Fatalf("out=%q err=%v want=%q", out, err, want)
++		}
++		assertOpenPathsUnchanged(t, repo, before)
++	}
++}
++
++func TestOpenPrintPathCheckoutLegacyAndRefusals(t *testing.T) {
++	repo, ws := setupOpenCheckoutCLI(t)
++	fp := ws.FeaturePath("feature")
++	legacy := filepath.Join(ws.MetadataRoot, "feature")
++	if err := os.Rename(fp, legacy); err != nil {
++		t.Fatal(err)
++	}
++	out, err := runOpenModeCommand(t, "feature", "--feature-dir", "--print-path")
++	if err != nil || out != legacy+"\n" {
++		t.Fatalf("legacy out=%q err=%v", out, err)
++	}
++	for _, entry := range []internal.StackEntry{
++		{Name: "one", Archived: true},
++		{Name: "one", Repo: repo},
++		{Name: "one", Branch: "missing"},
++	} {
++		if err := internal.SaveStack(legacy, internal.Stack{Branches: []internal.StackEntry{entry}}); err != nil {
++			t.Fatal(err)
++		}
++		before := snapshotOpenPaths(t, repo)
++		if out, err := runOpenModeCommand(t, "feature", "one", "--print-path"); err == nil || out != "" {
++			t.Fatalf("entry=%+v out=%q err=%v", entry, out, err)
++		}
++		assertOpenPathsUnchanged(t, repo, before)
++	}
++}
++
++func TestOpenPrintPathRetainedMutationEvidence(t *testing.T) {
++	for _, evidence := range []string{"sync", "reparent", "publication", "metadata-move"} {
++		t.Run(evidence, func(t *testing.T) {
++			repo, ws := setupOpenCheckoutCLI(t)
++			path := filepath.Join(ws.CheckoutStateDir(), "other-checkout-sync.yaml")
++			switch evidence {
++			case "reparent":
++				path = filepath.Join(ws.CheckoutStateDir(), "other-reparent.v1.yaml")
++			case "publication":
++				path = internal.ScopedPushStatePath(internal.ScopedPushLocation{
++					Mode: internal.ModeCheckout, Feature: "other", FeaturePath: ws.FeaturePath("other"), MetadataRoot: ws.MetadataRoot,
++				})
++			case "metadata-move":
++				path = filepath.Join(ws.CheckoutStateDir(), ".checkout-metadata-"+strings.Repeat("a", 32))
++			}
++			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
++				t.Fatal(err)
++			}
++			if err := os.WriteFile(path, []byte("retained evidence"), 0600); err != nil {
++				t.Fatal(err)
++			}
++			before := snapshotOpenPaths(t, repo)
++			if out, err := runOpenModeCommand(t, "feature", "--feature-dir", "--print-path"); err == nil || out != "" {
++				t.Fatalf("out=%q err=%v", out, err)
++			}
++			assertOpenPathsUnchanged(t, repo, before)
++		})
++	}
++}
++
++func TestOpenPrintPathSelectedPublicationPrecedesFallback(t *testing.T) {
++	for _, selectedExists := range []bool{false, true} {
++		t.Run(fmt.Sprint(selectedExists), func(t *testing.T) {
++			f := newOpenInjectFixture(t, "feature")
++			f.addWorktree(t, "", "one", "actual")
++			selected := filepath.Join(f.root, "selected")
++			path := internal.ScopedPushStatePath(internal.ScopedPushLocation{
++				Mode: internal.ModeExternal, Feature: f.feature, FeaturePath: filepath.Join(selected, f.feature), MetadataRoot: selected,
++			})
++			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
++				t.Fatal(err)
++			}
++			if selectedExists {
++				injectGit(t, f.repo, "worktree", "add", "-b", "selected-one", filepath.Join(selected, f.feature, "worktrees", "one"), "main")
++			}
++			if err := os.WriteFile(path, []byte("unverifiable publication"), 0600); err != nil {
++				t.Fatal(err)
++			}
++			t.Setenv("TWS_ROOT", selected)
++			before := snapshotOpenPaths(t, f.root)
++			for _, mode := range [][]string{{"--print-path"}, {"--command", "/usr/bin/true"}} {
++				out, err := runOpenModeCommand(t, append([]string{f.feature, "one"}, mode...)...)
++				if err == nil || out != "" || !strings.Contains(err.Error(), "scoped push evidence") {
++					t.Fatalf("out=%q err=%v", out, err)
++				}
++			}
++			assertOpenPathsUnchanged(t, f.root, before)
++		})
++	}
++}
++
++func TestOpenPrintPathUnsafeTargets(t *testing.T) {
++	for _, kind := range []string{"missing", "archived", "symlink", "backpointer", "control-path"} {
++		t.Run(kind, func(t *testing.T) {
++			f := newOpenInjectFixture(t, "feature")
++			path := f.addWorktree(t, "", "one", "actual")
++			switch kind {
++			case "missing":
++				if err := os.Rename(path, path+"-away"); err != nil {
++					t.Fatal(err)
++				}
++			case "archived":
++				if err := internal.SaveStack(f.featurePath, internal.Stack{Branches: []internal.StackEntry{{Name: "one", Archived: true}}}); err != nil {
++					t.Fatal(err)
++				}
++			case "symlink":
++				if err := os.Rename(path, path+"-away"); err != nil {
++					t.Fatal(err)
++				}
++				if err := os.Symlink(path+"-away", path); err != nil {
++					t.Fatal(err)
++				}
++			case "backpointer":
++				gitDir := injectGit(t, path, "rev-parse", "--absolute-git-dir")
++				if err := os.WriteFile(filepath.Join(gitDir, "gitdir"), []byte(filepath.Join(f.repo, ".git")), 0644); err != nil {
++					t.Fatal(err)
++				}
++			case "control-path":
++				f.feature = "bad\x7fname"
++				f.featurePath = filepath.Join(f.workspace, f.feature)
++				if err := os.MkdirAll(f.featurePath, 0755); err != nil {
++					t.Fatal(err)
++				}
++			}
++			args := []string{f.feature, "one", "--print-path"}
++			if kind == "control-path" {
++				args = []string{f.feature, "--feature-dir", "--print-path"}
++			}
++			before := snapshotOpenPaths(t, f.root)
++			if out, err := runOpenModeCommand(t, args...); err == nil || out != "" {
++				t.Fatalf("out=%q err=%v", out, err)
++			}
++			assertOpenPathsUnchanged(t, f.root, before)
++		})
++	}
++}
++
++func TestOpenPrintPathLateGuard(t *testing.T) {
++	f := newOpenInjectFixture(t, "feature")
++	f.addWorktree(t, "", "one", "actual")
++	OpenPrintPathBeforeOutputHook = func() error {
++		return os.WriteFile(internal.SyncStatePath(f.featurePath), []byte("late sync"), 0600)
++	}
++	t.Cleanup(func() { OpenPrintPathBeforeOutputHook = nil })
++	if out, err := runOpenModeCommand(t, f.feature, "one", "--print-path"); err == nil || out != "" {
++		t.Fatalf("out=%q err=%v", out, err)
++	}
++	assertNotExists(t, internal.DirectSessionsDir(f.featurePath))
++	assertNotExists(t, internal.ExternalSessionIntentsDir(f.featurePath))
++}
++
++func TestOpenCommandPreservesLegacyLogicalWhitespace(t *testing.T) {
++	f := newOpenInjectFixture(t, "feature")
++	path := f.addWorktree(t, "", " review", "actual")
++	for _, flags := range [][]string{{"--print-path"}, {"--command", "/bin/pwd", "--no-tmux"}} {
++		out, err := runOpenModeCommand(t, append([]string{f.feature, " review"}, flags...)...)
++		if err != nil || out != path+"\n" {
++			t.Fatalf("logical identity changed: out=%q err=%v", out, err)
++		}
++	}
++	assertNotExists(t, internal.ExternalSessionIntentsDir(f.featurePath))
++}
++
++func writeOpenProgram(t *testing.T, path, body string) {
++	t.Helper()
++	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0755); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestOpenCommandLiteralArgvAndCallerBinding(t *testing.T) {
++	f := newOpenInjectFixture(t, "feature")
++	path := f.addWorktree(t, "", "review/one", "actual")
++	f.writeInjectFile(t, "context", "context remains configured")
++	program := "editor ; 'literal'"
++	writeOpenProgram(t, filepath.Join(f.repo, program), `printf '%s\000' "$PWD" "$@" > "$OPEN_CAPTURE"`)
++	writeOpenProgram(t, filepath.Join(path, program), `exit 88`)
++	capture := filepath.Join(f.root, "argv")
++	t.Setenv("OPEN_CAPTURE", capture)
++	configPath := filepath.Join(f.home, ".config", "tws", "config.yaml")
++	config, err := os.ReadFile(configPath)
++	if err != nil {
++		t.Fatal(err)
++	}
++	config = append(config, []byte("agent_command: missing-agent --must-not-run\n")...)
++	if err := os.WriteFile(configPath, config, 0600); err != nil {
++		t.Fatal(err)
++	}
++	shell := filepath.Join(f.root, "forbidden-shell")
++	writeOpenProgram(t, shell, `touch "$OPEN_CAPTURE.shell"`)
++	t.Setenv("SHELL", shell)
++	literal := []string{"", "two words", "'quoted'", `"double"`, "$HOME", "*.go", "; touch not-created", "$(exit 17)", "--option", "line\nbreak"}
++	args := []string{f.feature, "review/one", "--no-tmux", "--command", "./" + program, "--"}
++	out, err := runOpenModeCommand(t, append(args, literal...)...)
++	if err != nil {
++		t.Fatalf("out=%q err=%v", out, err)
++	}
++	data, err := os.ReadFile(capture)
++	if err != nil {
++		t.Fatal(err)
++	}
++	want := strings.Join(append([]string{path}, literal...), "\x00") + "\x00"
++	if string(data) != want {
++		t.Fatalf("argv=%q want=%q", data, want)
++	}
++	assertNotExists(t, capture+".shell")
++	assertNotExists(t, internal.DirectSessionsDir(f.featurePath))
++	assertNotExists(t, internal.ExternalSessionIntentsDir(f.featurePath))
++	after, err := os.ReadFile(configPath)
++	if err != nil || !bytes.Equal(config, after) {
++		t.Fatalf("config changed: %v", err)
++	}
++	if strings.Contains(out, literal[1]) || strings.Contains(out, "Running:") {
++		t.Fatalf("raw command was echoed: %q", out)
++	}
++}
++
++func TestOpenCommandPATHDotRefusesWithoutEffects(t *testing.T) {
++	f := newOpenInjectFixture(t, "feature")
++	f.addWorktree(t, "", "one", "actual")
++	writeOpenProgram(t, filepath.Join(f.repo, "editor"), "exit 0")
++	t.Setenv("PATH", ".")
++	t.Setenv("GODEBUG", "execerrdot=1")
++	before := snapshotOpenPaths(t, f.root)
++	if out, err := runOpenModeCommand(t, f.feature, "one", "--command", "editor"); err == nil || out != "" {
++		t.Fatalf("out=%q err=%v", out, err)
++	}
++	assertOpenPathsUnchanged(t, f.root, before)
++}
++
++func TestOpenCommandFeatureDirBothModes(t *testing.T) {
++	t.Run("external", func(t *testing.T) {
++		f := newOpenInjectFixture(t, "feature")
++		config := filepath.Join(f.home, ".config", "tws", "config.yaml")
++		data, err := os.ReadFile(config)
++		if err != nil {
++			t.Fatal(err)
++		}
++		if err := os.WriteFile(config, append(data, []byte("use_tmux: true\n")...), 0600); err != nil {
++			t.Fatal(err)
++		}
++		out, err := runOpenModeCommand(t, f.feature, "--feature-dir", "--command", "/bin/pwd")
++		if err != nil || out != f.featurePath+"\n" {
++			t.Fatalf("out=%q err=%v", out, err)
++		}
++	})
++	t.Run("checkout-dirty", func(t *testing.T) {
++		repo, ws := setupOpenCheckoutCLI(t)
++		if err := os.WriteFile(filepath.Join(repo, "dirty"), []byte("keep"), 0600); err != nil {
++			t.Fatal(err)
++		}
++		before := gitInDir(t, repo, "symbolic-ref", "HEAD")
++		out, err := runOpenModeCommand(t, "feature", "--feature-dir", "--command", "/bin/pwd")
++		if err != nil || out != ws.FeaturePath("feature")+"\n" {
++			t.Fatalf("out=%q err=%v", out, err)
++		}
++		if got := gitInDir(t, repo, "symbolic-ref", "HEAD"); got != before {
++			t.Fatalf("branch changed: %s", got)
++		}
++		assertNotExists(t, internal.CheckoutSessionIntentDir(ws))
++		beforeFiles := snapshotOpenPaths(t, repo)
++		out, err = runOpenModeCommand(t, "feature", "--feature-dir", "--command", "/usr/bin/true", "--tmux")
++		if err == nil || out != "" {
++			t.Fatalf("tmux feature dir out=%q err=%v", out, err)
++		}
++		assertOpenPathsUnchanged(t, repo, beforeFiles)
++	})
++}
++
++func TestOpenCommandCheckoutRestoresAndFailsNormally(t *testing.T) {
++	repo, ws := setupOpenCheckoutCLI(t)
++	for _, executable := range []string{"/usr/bin/true", "/usr/bin/false"} {
++		out, err := runOpenModeCommand(t, "feature", "one", "--command", executable, "--no-tmux")
++		if (err != nil) != (executable == "/usr/bin/false") || out != "" {
++			t.Fatalf("%s: out=%q err=%v", executable, out, err)
++		}
++		if got := gitInDir(t, repo, "branch", "--show-current"); got != "main" {
++			t.Fatalf("not restored: %q", got)
++		}
++		if internal.HasCheckoutAgentSession(ws) {
++			t.Fatal("record remains")
++		}
++		assertNotExists(t, internal.CheckoutSessionIntentDir(ws))
++	}
++}
++
++func TestOpenCommandLateIntentGuards(t *testing.T) {
++	for _, mode := range []string{"external", "checkout"} {
++		t.Run(mode, func(t *testing.T) {
++			var statePath, root string
++			if mode == "external" {
++				f := newOpenInjectFixture(t, "feature")
++				path := f.addWorktree(t, "", "one", "actual")
++				root = f.root
++				f.writeInjectFile(t, "context", "not injected")
++				statePath = internal.SyncStatePath(f.featurePath)
++				ExternalSessionLaunchIntentHook = func() error {
++					assertNotExists(t, filepath.Join(path, "context"))
++					return os.WriteFile(statePath, []byte("late sync"), 0600)
++				}
++				t.Cleanup(func() { ExternalSessionLaunchIntentHook = nil })
++			} else {
++				repo, ws := setupOpenCheckoutCLI(t)
++				root = repo
++				statePath = filepath.Join(ws.CheckoutStateDir(), "other-reparent.v1.yaml")
++				internal.CheckoutSessionLaunchIntentHook = func() error {
++					return os.WriteFile(statePath, []byte("late reparent"), 0600)
++				}
++				t.Cleanup(func() { internal.CheckoutSessionLaunchIntentHook = nil })
++			}
++			program := filepath.Join(t.TempDir(), "must-not-run")
++			marker := filepath.Join(root, "ran")
++			t.Setenv("OPEN_MARKER", marker)
++			writeOpenProgram(t, program, `touch "$OPEN_MARKER"`)
++			out, err := runOpenModeCommand(t, "feature", "one", "--command", program, "--no-tmux")
++			if err == nil || out != "" {
++				t.Fatalf("out=%q err=%v", out, err)
++			}
++			assertNotExists(t, marker)
++			if _, err := os.ReadFile(statePath); err != nil {
++				t.Fatal("late evidence was removed", err)
++			}
++		})
++	}
++}
++
++func TestOpenCommandCompletionAfterSeparator(t *testing.T) {
++	f := newOpenInjectFixture(t, "feature")
++	f.addWorktree(t, "", "one", "actual")
++	cmd := openCmd()
++	if err := cmd.ParseFlags([]string{"feature", "--feature-dir", "--command", "/usr/bin/true", "--", ""}); err != nil {
++		t.Fatal(err)
++	}
++	out, directive := cmd.ValidArgsFunction(cmd, []string{"feature"}, "")
++	if len(out) != 0 || directive != cobra.ShellCompDirectiveNoFileComp {
++		t.Fatalf("completion=%v directive=%v", out, directive)
++	}
++	ordinary := openCmd()
++	got, _ := ordinary.ValidArgsFunction(ordinary, []string{"feature"}, "")
++	if !reflect.DeepEqual(got, []string{"one"}) {
++		t.Fatalf("ordinary completion=%v", got)
++	}
++	root := &cobra.Command{Use: "tws"}
++	root.AddCommand(openCmd())
++	stdout, _, err := runManagedCobra(t, root, []string{
++		"__complete", "open", "feature", "--feature-dir", "--command", "/usr/bin/true", "--", "",
++	}, nil)
++	if err != nil || strings.Contains(stdout, "one") || !strings.Contains(stdout, ":4") {
++		t.Fatalf("actual command completion=%q err=%v", stdout, err)
++	}
++}
++
++func TestOpenCommandForeignIntentIsRetained(t *testing.T) {
++	f := newOpenInjectFixture(t, "feature")
++	f.addWorktree(t, "", "one", "actual")
++	var foreignPath string
++	ExternalSessionLaunchIntentHook = func() error {
++		dir := internal.ExternalSessionIntentsDir(f.featurePath)
++		entries, err := os.ReadDir(dir)
++		if err != nil || len(entries) != 1 {
++			return errors.New("expected one intent")
++		}
++		foreignPath = filepath.Join(dir, entries[0].Name())
++		return os.WriteFile(foreignPath, []byte(`{"token":"foreign"}`), 0600)
++	}
++	t.Cleanup(func() { ExternalSessionLaunchIntentHook = nil })
++	out, err := runOpenModeCommand(t, "feature", "one", "--command", "/usr/bin/true", "--no-tmux")
++	if err == nil || out != "" {
++		t.Fatalf("out=%q err=%v", out, err)
++	}
++	data, err := os.ReadFile(foreignPath)
++	if err != nil || string(data) != `{"token":"foreign"}` {
++		t.Fatalf("foreign intent changed: %q %v", data, err)
++	}
++}
++
++func TestOpenCommandManagedRendererIsNotTheExecutable(t *testing.T) {
++	t.Run("external", func(t *testing.T) {
++		f := newOpenInjectFixture(t, "feature")
++		t.Setenv("TWS_ROOT", f.workspace)
++		path := f.addWorktree(t, "", "one", "actual")
++		if err := internal.SaveStack(f.featurePath, internal.Stack{Branches: []internal.StackEntry{{Name: "one", Branch: "actual", Base: "main"}}}); err != nil {
++			t.Fatal(err)
++		}
++		configPath := filepath.Join(f.home, ".config", "tws", "config.yaml")
++		config, err := os.ReadFile(configPath)
++		if err != nil {
++			t.Fatal(err)
++		}
++		config = append(config, []byte("agent_command: unavailable-agent-wrapper --profile retained\n")...)
++		if err := os.WriteFile(configPath, config, 0600); err != nil {
++			t.Fatal(err)
++		}
++		oldProbe := managedTemplateTmuxProbe
++		managedTemplateTmuxProbe = managedTemplateTestTmuxProbe{}
++		t.Cleanup(func() { managedTemplateTmuxProbe = oldProbe })
++		if _, _, err := runManagedCobra(t, templateSyncCmd(), []string{f.feature, "--scope", "both", "--agent", "copilot"}, nil); err != nil {
++			t.Fatal(err)
++		}
++		ledgerPath := filepath.Join(f.featurePath, ".tws-templates.json")
++		ledger, err := os.ReadFile(ledgerPath)
++		if err != nil {
++			t.Fatal(err)
++		}
++		// This forces injection through the reserved (not no-op) managed path,
++		// while the launch intent must remain held.
++		f.writeInjectFile(t, "legacy-extra", "additional user context")
++		for _, args := range [][]string{
++			{f.feature, "one", "--command", "/usr/bin/true", "--no-tmux"},
++			{f.feature, "--feature-dir", "--command", "/usr/bin/true"},
++		} {
++			if out, err := runOpenModeCommand(t, args...); err != nil {
++				t.Fatalf("out=%q err=%v", out, err)
++			}
++		}
++		if data, err := os.ReadFile(filepath.Join(path, "legacy-extra")); err != nil || string(data) != "additional user context" {
++			t.Fatalf("legacy injection failed: %q %v", data, err)
++		}
++		if after, err := os.ReadFile(ledgerPath); err != nil || !bytes.Equal(after, ledger) {
++			t.Fatalf("command changed saved renderer/ledger: %v", err)
++		}
++		if after, err := os.ReadFile(configPath); err != nil || !bytes.Equal(after, config) {
++			t.Fatalf("command changed configured agent: %v", err)
++		}
++		state, err := internal.LoadManagedTemplateState(f.featurePath)
++		if err != nil {
++			t.Fatal(err)
++		}
++		source := filepath.Join(internal.InjectPath(f.featurePath), filepath.FromSlash(state.Roles["worktree"].Files[0].Path))
++		data, err := os.ReadFile(source)
++		if err != nil {
++			t.Fatal(err)
++		}
++		local := append(data, []byte("\nlocal owned edit\n")...)
++		if err := os.WriteFile(source, local, 0644); err != nil {
++			t.Fatal(err)
++		}
++		if out, err := runOpenModeCommand(t, f.feature, "one", "--print-path"); err != nil || out != path+"\n" {
++			t.Fatalf("query should bypass injection conflict: out=%q err=%v", out, err)
++		}
++		if out, err := runOpenModeCommand(t, f.feature, "one", "--command", "/usr/bin/true", "--no-tmux"); err == nil {
++			t.Fatalf("command ignored owned-source conflict: out=%q", out)
++		}
++		if after, err := os.ReadFile(source); err != nil || !bytes.Equal(after, local) {
++			t.Fatalf("local owned content changed: %v", err)
++		}
++	})
++	t.Run("checkout", func(t *testing.T) {
++		f := newManagedCLIFixture(t)
++		if err := os.WriteFile(filepath.Join(f.repo, ".git", "info", "exclude"), []byte(".tws/\n"), 0644); err != nil {
++			t.Fatal(err)
++		}
++		if err := internal.SaveConfigFile(internal.ConfigPath(), internal.Config{AgentCommand: "missing-agent-wrapper --profile retained"}); err != nil {
++			t.Fatal(err)
++		}
++		if _, _, err := runManagedCobra(t, addCmd(), []string{"managed-command", "--agent", "copilot"}, nil); err != nil {
++			t.Fatal(err)
++		}
++		gitInDir(t, f.repo, "branch", "one")
++		fp := f.ws.FeaturePath("managed-command")
++		if err := internal.SaveStack(fp, internal.Stack{Branches: []internal.StackEntry{{Name: "one", Base: "main"}}}); err != nil {
++			t.Fatal(err)
++		}
++		before := snapshotTree(t, fp)
++		if out, err := runOpenModeCommand(t, "managed-command", "one", "--command", "/usr/bin/true", "--no-tmux"); err != nil {
++			t.Fatalf("out=%q err=%v", out, err)
++		}
++		if after := snapshotTree(t, fp); before != after {
++			t.Fatal("checkout command changed managed sources/renderer")
++		}
++	})
++}
++
++func TestOpenCommandChangedIntentIdentityRetained(t *testing.T) {
++	if field := os.Getenv("TWS_TEST_MUTATE_OPEN_INTENT"); field != "" {
++		dir := os.Getenv("TWS_TEST_OPEN_INTENT_DIR")
++		files, err := os.ReadDir(dir)
++		if err != nil || len(files) != 1 {
++			t.Fatalf("intent inventory: %v %v", files, err)
++		}
++		path := filepath.Join(dir, files[0].Name())
++		data, err := os.ReadFile(path)
++		if err != nil {
++			t.Fatal(err)
++		}
++		var intent internal.ExternalSessionIntent
++		if err := json.Unmarshal(data, &intent); err != nil {
++			t.Fatal(err)
++		}
++		switch field {
++		case "owner":
++			intent.OwnerPID = 1
++		case "scope":
++			if intent.Scope == internal.ExternalSessionIntentFeature {
++				intent.Scope, intent.Names = internal.ExternalSessionIntentBranches, []string{"foreign"}
++			} else {
++				intent.Scope, intent.Names = internal.ExternalSessionIntentFeature, nil
++			}
++		default:
++			t.Fatalf("unexpected test field %q", field)
++		}
++		data, err = json.Marshal(intent)
++		if err != nil {
++			t.Fatal(err)
++		}
++		if err := os.WriteFile(path, data, 0600); err != nil {
++			t.Fatal(err)
++		}
++		if err := os.WriteFile(os.Getenv("TWS_TEST_OPEN_INTENT_RECEIPT"), data, 0600); err != nil {
++			t.Fatal(err)
++		}
++		os.Exit(0)
++	}
++	executable, err := os.Executable()
++	if err != nil {
++		t.Fatal(err)
++	}
++	for _, featureDir := range []bool{false, true} {
++		for _, field := range []string{"owner", "scope"} {
++			t.Run(fmt.Sprintf("feature-dir=%t/%s", featureDir, field), func(t *testing.T) {
++				f := newOpenInjectFixture(t, "feature")
++				f.addWorktree(t, "", "one", "actual")
++				dir := internal.ExternalSessionIntentsDir(f.featurePath)
++				receipt := filepath.Join(f.root, "foreign-intent.json")
++				t.Setenv("TWS_TEST_MUTATE_OPEN_INTENT", field)
++				t.Setenv("TWS_TEST_OPEN_INTENT_DIR", dir)
++				t.Setenv("TWS_TEST_OPEN_INTENT_RECEIPT", receipt)
++				selectors := []string{f.feature, "one"}
++				if featureDir {
++					selectors = []string{f.feature, "--feature-dir"}
++				}
++				args := append(selectors, "--command", executable, "--no-tmux", "--",
++					"-test.run=^TestOpenCommandChangedIntentIdentityRetained$", "-test.paniconexit0=false")
++				out, err := runOpenModeCommand(t, args...)
++				if err == nil || !strings.Contains(err.Error(), "ownership changed") || out != "" {
++					t.Fatalf("out=%q err=%v", out, err)
++				}
++				files, err := os.ReadDir(dir)
++				if err != nil || len(files) != 1 {
++					t.Fatalf("changed-identity intent was not retained: %v %v", files, err)
++				}
++				data, err := os.ReadFile(filepath.Join(dir, files[0].Name()))
++				if err != nil {
++					t.Fatal(err)
++				}
++				want, err := os.ReadFile(receipt)
++				if err != nil || !bytes.Equal(data, want) {
++					t.Fatalf("foreign intent bytes changed: %v", err)
++				}
++				var intent internal.ExternalSessionIntent
++				if err := json.Unmarshal(data, &intent); err != nil ||
++					intent.Token != strings.TrimSuffix(files[0].Name(), ".json") {
++					t.Fatalf("test must retain the original token: %+v %v", intent, err)
++				}
++			})
++		}
++	}
++}
+diff --git a/internal/cli/open_selectors_test.go b/internal/cli/open_selectors_test.go
+new file mode 100644
+index 0000000..580c7aa
+--- /dev/null
++++ b/internal/cli/open_selectors_test.go
+@@ -0,0 +1,202 @@
++package cli
++
++import (
++	"fmt"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/jdbencardinop/tesseraworkspaces/internal"
++	"github.com/spf13/cobra"
++)
++
++type openSelectorFixture struct {
++	root, repo, featurePath, path string
++}
++
++func newOpenSelectorFixture(t *testing.T, checkout bool, feature, logical string) openSelectorFixture {
++	t.Helper()
++	if !checkout {
++		f := newOpenInjectFixture(t, feature)
++		path := f.addWorktree(t, "", logical, "actual")
++		if err := internal.SaveStack(f.featurePath, internal.Stack{Branches: []internal.StackEntry{
++			{Name: logical, Branch: "actual", Base: "main"},
++		}}); err != nil {
++			t.Fatal(err)
++		}
++		return openSelectorFixture{root: f.root, repo: f.repo, featurePath: f.featurePath, path: path}
++	}
++	repo, ws := setupOpenCheckoutCLI(t)
++	path := ws.FeaturePath(feature)
++	if feature != "feature" {
++		if err := os.Rename(ws.FeaturePath("feature"), path); err != nil {
++			t.Fatal(err)
++		}
++	}
++	gitInDir(t, repo, "branch", "actual")
++	if err := internal.SaveStack(path, internal.Stack{Branches: []internal.StackEntry{
++		{Name: logical, Branch: "actual", Base: "main"},
++	}}); err != nil {
++		t.Fatal(err)
++	}
++	gitInDir(t, repo, "switch", "actual")
++	return openSelectorFixture{root: repo, repo: repo, featurePath: path, path: repo}
++}
++
++func TestOpenCommandOptionEscapedSelectors(t *testing.T) {
++	for _, checkout := range []bool{false, true} {
++		for _, tc := range []struct {
++			name, feature, logical string
++			partial                bool
++		}{
++			{"leading-dash", "-feature", "-logical", false},
++			{"literal-markers", "--", "--", false},
++			{"partial-selectors", "feature", "-logical", true},
++		} {
++			t.Run(fmt.Sprintf("checkout=%t/%s", checkout, tc.name), func(t *testing.T) {
++				f := newOpenSelectorFixture(t, checkout, tc.feature, tc.logical)
++				makeArgs := func(flags []string, featureDir, childMarker bool, child ...string) []string {
++					args := append([]string(nil), flags...)
++					if tc.partial && !featureDir {
++						args = append([]string{tc.feature}, args...)
++						args = append(args, "--", tc.logical)
++					} else {
++						args = append(args, "--", tc.feature)
++						if !featureDir {
++							args = append(args, tc.logical)
++						}
++					}
++					if childMarker {
++						args = append(args, "--")
++					}
++					return append(args, child...)
++				}
++				for _, featureDir := range []bool{false, true} {
++					flags := []string{"--print-path"}
++					want := f.path
++					if featureDir {
++						flags = append(flags, "--feature-dir")
++						want = f.featurePath
++					}
++					before := snapshotOpenPaths(t, f.root)
++					out, err := runOpenModeCommand(t, makeArgs(flags, featureDir, false)...)
++					if err != nil || out != want+"\n" {
++						t.Fatalf("query: out=%q err=%v want=%q", out, err, want)
++					}
++					assertOpenPathsUnchanged(t, f.root, before)
++				}
++				out, err := runOpenModeCommand(t, "--feature-dir", "--no-agent", "--", tc.feature)
++				if err != nil || out != "cd "+f.featurePath+"\n" {
++					t.Fatalf("legacy option escaping changed: out=%q err=%v", out, err)
++				}
++
++				support := canonicalOpenFixturePath(t, t.TempDir())
++				program := filepath.Join(support, "capture")
++				capture := filepath.Join(support, "argv")
++				branchCapture := filepath.Join(support, "branch")
++				writeOpenProgram(t, program, `printf '%s\000' "$PWD" "$@" > "$OPEN_CAPTURE"
++if [ -n "$OPEN_BRANCH_CAPTURE" ]; then git symbolic-ref --short HEAD > "$OPEN_BRANCH_CAPTURE"; fi`)
++				t.Setenv("OPEN_CAPTURE", capture)
++				child := []string{"", "--", "README.md", "--print-path", "literal;"}
++				for _, featureDir := range []bool{false, true} {
++					flags := []string{"--command", program, "--no-tmux"}
++					wantPath := f.path
++					if featureDir {
++						flags = append(flags, "--feature-dir")
++						wantPath = f.featurePath
++						t.Setenv("OPEN_BRANCH_CAPTURE", "")
++					} else {
++						t.Setenv("OPEN_BRANCH_CAPTURE", branchCapture)
++						if checkout {
++							gitInDir(t, f.repo, "switch", "main")
++						}
++					}
++					original := gitInDir(t, f.repo, "symbolic-ref", "--short", "HEAD")
++					out, err := runOpenModeCommand(t, makeArgs(flags, featureDir, true, child...)...)
++					if err != nil || out != "" {
++						t.Fatalf("command: out=%q err=%v", out, err)
++					}
++					data, err := os.ReadFile(capture)
++					want := strings.Join(append([]string{wantPath}, child...), "\x00") + "\x00"
++					if err != nil || string(data) != want {
++						t.Fatalf("literal cwd/argv changed: got=%q want=%q err=%v", data, want, err)
++					}
++					if !featureDir {
++						data, err := os.ReadFile(branchCapture)
++						if err != nil || string(data) != "actual\n" {
++							t.Fatalf("logical selector did not activate actual branch: %q %v", data, err)
++						}
++					}
++					if got := gitInDir(t, f.repo, "symbolic-ref", "--short", "HEAD"); got != original {
++						t.Fatalf("caller branch changed: %q -> %q", original, got)
++					}
++					flags = []string{"--command", "/usr/bin/true", "--no-tmux"}
++					if featureDir {
++						flags = append(flags, "--feature-dir")
++					}
++					if out, err := runOpenModeCommand(t, makeArgs(flags, featureDir, false)...); err != nil || out != "" {
++						t.Fatalf("zero-argument command requires no second marker: %q %v", out, err)
++					}
++				}
++
++				for _, args := range [][]string{
++					makeArgs([]string{"--print-path"}, false, true, "README.md"),
++					makeArgs([]string{"--print-path", "--feature-dir"}, true, true, "--"),
++					makeArgs([]string{"--command", program, "--no-tmux"}, false, false, "README.md"),
++					makeArgs([]string{"--command", program, "--no-tmux", "--feature-dir"}, true, false, "README.md"),
++				} {
++					before := snapshotOpenPaths(t, f.root)
++					beforeSupport := snapshotOpenPaths(t, support)
++					if out, err := runOpenModeCommand(t, args...); err == nil || out != "" {
++						t.Fatalf("invalid post-selector arguments accepted: args=%q out=%q err=%v", args, out, err)
++					}
++					assertOpenPathsUnchanged(t, f.root, before)
++					assertOpenPathsUnchanged(t, support, beforeSupport)
++				}
++
++				complete := func(args []string) string {
++					t.Helper()
++					root := &cobra.Command{Use: "tws"}
++					root.AddCommand(openCmd())
++					out, _, err := runManagedCobra(t, root, append([]string{"__complete", "open"}, args...), nil)
++					if err != nil {
++						t.Fatal(err)
++					}
++					return out
++				}
++				if !checkout {
++					// Feature completion, unlike a named route, cannot
++					// choose a configured fallback using a known feature.
++					t.Setenv("TWS_ROOT", filepath.Dir(f.featurePath))
++				}
++				before := snapshotOpenPaths(t, f.root)
++				beforeSupport := snapshotOpenPaths(t, support)
++				if out := complete([]string{"--feature-dir", "--print-path", "--", ""}); !strings.Contains(out, tc.feature+"\n") {
++					t.Fatalf("escaped feature completion missing: %q", out)
++				}
++				if strings.HasPrefix(tc.feature, "-") {
++					if out := complete([]string{"--feature-dir", "--print-path", "--", "-"}); !strings.Contains(out, tc.feature+"\n") {
++						t.Fatalf("leading-dash feature completion missing: %q", out)
++					}
++				}
++				branchArgs := []string{"--command", program, "--", tc.feature, ""}
++				if tc.partial {
++					branchArgs = []string{tc.feature, "--command", program, "--", ""}
++				}
++				if out := complete(branchArgs); !strings.Contains(out, tc.logical+"\n") {
++					t.Fatalf("escaped logical branch completion missing: %q", out)
++				}
++				branchArgs[len(branchArgs)-1] = "-"
++				if out := complete(branchArgs); !strings.Contains(out, tc.logical+"\n") {
++					t.Fatalf("leading-dash branch completion missing: %q", out)
++				}
++				if out := complete(makeArgs([]string{"--command", program}, false, true, "")); out != ":4\n" {
++					t.Fatalf("child arguments offered tws candidates: %q", out)
++				}
++				assertOpenPathsUnchanged(t, f.root, before)
++				assertOpenPathsUnchanged(t, support, beforeSupport)
++			})
++		}
++	}
++}
+diff --git a/internal/cli/sync_plan_docs_test.go b/internal/cli/sync_plan_docs_test.go
+index 124b1d7..dae4911 100644
+--- a/internal/cli/sync_plan_docs_test.go
++++ b/internal/cli/sync_plan_docs_test.go
+@@ -156,8 +156,8 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t
+ 		}
+ 
+ 		targetTail := ci[targetIdx : targetIdx+min(120, len(ci)-targetIdx)]
+-		if !strings.Contains(targetTail, "node 24 ci maintenance") {
+-			t.Fatalf(`docs/roadmap.md's "Current target:" sentence must name Node 24 CI maintenance, got: %q`, targetTail)
++		if !strings.Contains(targetTail, "open-worktree-command") {
++			t.Fatalf(`docs/roadmap.md's "Current target:" sentence must name open-worktree-command, got: %q`, targetTail)
+ 		}
+ 		if !strings.Contains(content, "fix-reparent-completion-context") {
+ 			t.Fatal("docs/roadmap.md must name the separate issue-seven feature boundary")
+@@ -245,8 +245,8 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t
+ 		}
+ 
+ 		nextTail := ci[nextFeatureIdx : nextFeatureIdx+min(120, len(ci)-nextFeatureIdx)]
+-		if !strings.Contains(nextTail, "node 24 ci maintenance") {
+-			t.Fatalf(`docs/engineering-workflow.md's "Next roadmap work:" sentence must name Node 24 CI maintenance, got: %q`, nextTail)
++		if !strings.Contains(nextTail, "open-worktree-command") {
++			t.Fatalf(`docs/engineering-workflow.md's "Next roadmap work:" sentence must name open-worktree-command, got: %q`, nextTail)
+ 		}
+ 		if !strings.Contains(content, "fix-reparent-completion-context") {
+ 			t.Fatal("docs/engineering-workflow.md must name the separate issue-seven feature boundary")
+@@ -306,6 +306,33 @@ func TestReleaseDocs_StableHandoff(t *testing.T) {
+ 	}
+ }
+ 
++func TestOpenCommandDocsMaintenanceHandoff(t *testing.T) {
++	for _, path := range []string{"CHANGELOG.md", "docs/roadmap.md", "docs/engineering-workflow.md"} {
++		content := readRepoDoc(t, path)
++		for _, required := range []string{
++			"v1.2.19-rc.2", "034126331db73522bb98d1f1a1fc08e146a68fe5",
++			"41204870523", "41207441379", "429986003", "v1.2.18",
++		} {
++			if !strings.Contains(content, required) {
++				t.Errorf("%s lacks completed maintenance evidence %q", path, required)
++			}
++		}
++	}
++	for _, path := range []string{
++		"README.md", "docs/cheatsheet.md", "docs/configuration.md",
++		"assets/skills/claude/tesseraworkspaces/SKILL.md",
++		"assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md",
++		"assets/skills/copilot/tws.prompt.md",
++	} {
++		content := readRepoDoc(t, path)
++		for _, required := range []string{"--print-path", "--command", "--feature-dir", "--wait", "literal"} {
++			if !strings.Contains(content, required) {
++				t.Errorf("%s lacks explicit command/query guidance %q", path, required)
++			}
++		}
++	}
++}
++
+ func TestReparentDocs_NormativeClaimsAcrossEightSurfaces(t *testing.T) {
+ 	_ = "asserts AC-100"
+ 	assertReparentMatrixBehavior(t, "T-086", "documentation-surfaces")
+diff --git a/internal/command_session.go b/internal/command_session.go
+new file mode 100644
+index 0000000..e6f001b
+--- /dev/null
++++ b/internal/command_session.go
+@@ -0,0 +1,618 @@
++package internal
++
++import (
++	"bytes"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"os"
++	"path/filepath"
++	"strings"
++	"time"
++)
++
++func CheckoutCommandEntry(ws Workspace, featurePath, name string) (StackEntry, error) {
++	info, err := os.Lstat(StackPath(featurePath))
++	if err != nil || !info.Mode().IsRegular() {
++		return StackEntry{}, errors.New("checkout stack metadata is missing or is not a regular file")
++	}
++	stack, err := LoadStack(featurePath)
++	if err != nil {
++		return StackEntry{}, err
++	}
++	var found StackEntry
++	for _, entry := range stack.Branches {
++		if entry.Name == name {
++			if found.Name != "" {
++				return StackEntry{}, fmt.Errorf("duplicate logical branch %q", name)
++			}
++			found = entry
++		}
++	}
++	if found.Name == "" {
++		return found, fmt.Errorf("logical branch %q is not in the selected feature", name)
++	}
++	if found.Archived || found.Repo != "" {
++		return found, errors.New("checkout open requires an active single-repository logical branch")
++	}
++	if _, err := sessionGitOutput(ws.RepoRoot, "show-ref", "--verify", "--quiet", "refs/heads/"+found.GitBranch()); err != nil {
++		return found, fmt.Errorf("local checkout branch %q is missing", found.GitBranch())
++	}
++	return found, nil
++}
++
++func CheckoutCommandCurrentEntry(ws Workspace, entry StackEntry) error {
++	current, err := sessionGitOutput(ws.RepoRoot, "symbolic-ref", "--quiet", "HEAD")
++	if err != nil || current != "refs/heads/"+entry.GitBranch() {
++		return fmt.Errorf("path query requires logical entry %q to be the current attached checkout; it does not switch branches", entry.Name)
++	}
++	return nil
++}
++
++type checkoutCommandOwnership struct {
++	state     *CheckoutAgentSession
++	lock      checkoutSessionIntentSnapshot
++	stateInfo os.FileInfo
++	stateData []byte
++}
++
++func verifyCheckoutCommandIntent(ws Workspace, expected checkoutSessionIntentSnapshot, token string) error {
++	current, present, err := loadCheckoutSessionIntentSnapshot(ws)
++	if err != nil || !present {
++		return errors.Join(errors.New("checkout command launch intent is missing or unverifiable"), err)
++	}
++	owner, err := current.decodeOwner()
++	if err != nil || owner.Token != token || owner.PID != os.Getpid() ||
++		!os.SameFile(expected.dirInfo, current.dirInfo) ||
++		!os.SameFile(expected.ownerInfo, current.ownerInfo) ||
++		!bytes.Equal(expected.ownerBytes, current.ownerBytes) {
++		return errors.New("checkout command launch intent ownership changed; preserve the remaining evidence")
++	}
++	return nil
++}
++
++// CheckoutCommandIntentCaptureHook is a test-only seam after acquisition and
++// before the launcher can establish its initial ownership snapshot.
++var CheckoutCommandIntentCaptureHook func() error
++
++func captureCheckoutCommandIntent(ws Workspace, token string) (checkoutSessionIntentSnapshot, error) {
++	if CheckoutCommandIntentCaptureHook != nil {
++		if err := CheckoutCommandIntentCaptureHook(); err != nil {
++			return checkoutSessionIntentSnapshot{}, fmt.Errorf("checkout command intent capture failed; preserve the remaining evidence: %w", err)
++		}
++	}
++	snapshot, present, err := loadCheckoutSessionIntentSnapshot(ws)
++	if err != nil || !present {
++		return checkoutSessionIntentSnapshot{}, errors.Join(
++			errors.New("checkout command intent could not be captured; preserve the remaining evidence"), err)
++	}
++	if err := verifyCheckoutCommandIntent(ws, snapshot, token); err != nil {
++		return checkoutSessionIntentSnapshot{}, err
++	}
++	return snapshot, nil
++}
++
++// WithCheckoutCommandLaunchIntent protects a branchless command without
++// inventing a branch session. Unlike legacy open, it verifies its intent
++// before effects and makes the directory publications durable.
++func WithCheckoutCommandLaunchIntent(ws Workspace, finalCheck, launch func() error) (retErr error) {
++	if err := commandSessionStateDirectories(ws, false); err != nil {
++		return err
++	}
++	token, err := acquireAgentSessionLock(ws, RealSessionTmuxRunner{})
++	if err != nil {
++		return err
++	}
++	snapshot, err := captureCheckoutCommandIntent(ws, token)
++	if err != nil {
++		return err
++	}
++	defer func() {
++		if err := verifyCheckoutCommandIntent(ws, snapshot, token); err != nil {
++			retErr = errors.Join(retErr, err)
++			return
++		}
++		retErr = errors.Join(retErr, removeCheckoutSessionIntentSnapshot(ws, snapshot))
++	}()
++	if CheckoutSessionLaunchIntentHook != nil {
++		if err := CheckoutSessionLaunchIntentHook(); err != nil {
++			return err
++		}
++	}
++	if finalCheck != nil {
++		if err := finalCheck(); err != nil {
++			return err
++		}
++	}
++	if err := verifyCheckoutCommandIntent(ws, snapshot, token); err != nil {
++		return err
++	}
++	for _, dir := range []string{sessionLockDir(ws), filepath.Join(ws.MetadataRoot, "state"), ws.MetadataRoot} {
++		if err := syncDir(dir); err != nil {
++			return err
++		}
++	}
++	if launch == nil {
++		return nil
++	}
++	return launch()
++}
++
++func loadCheckoutCommandOwnership(ws Workspace, state *CheckoutAgentSession) (*checkoutCommandOwnership, error) {
++	if state.SchemaVersion != checkoutSessionSchema || state.Stage != DirectStageCommand ||
++		state.LockToken == "" || state.WorkspaceID != ws.StableID || state.RepoDir != ws.RepoRoot ||
++		(state.Mode != AgentSessionDirect && state.Mode != AgentSessionTmux) ||
++		state.Feature == "" || state.Name == "" || state.GitBranch == "" || state.OriginalBranch == "" ||
++		state.OriginalHEAD == "" || state.PID <= 0 {
++		return nil, errors.New("checkout command state identity is invalid; preserve it for manual reconciliation")
++	}
++	if err := validateFeatureName(state.Feature); err != nil {
++		return nil, err
++	}
++	if state.Mode == AgentSessionTmux && state.TmuxSession != CheckoutAgentSessionName(ws.StableID, state.Feature, state.Name) ||
++		state.Mode == AgentSessionDirect && state.TmuxSession != "" {
++		return nil, errors.New("checkout command transport identity is invalid; state retained")
++	}
++	lock, present, err := loadCheckoutSessionIntentSnapshot(ws)
++	if err != nil || !present {
++		return nil, errors.Join(errors.New("checkout command lock is missing or unverifiable; state retained"), err)
++	}
++	owner, err := lock.decodeOwner()
++	if err != nil || owner.Token != state.LockToken || owner.PID != state.PID {
++		return nil, errors.New("checkout command lock ownership changed; state retained")
++	}
++	if err := commandSessionStateDirectories(ws, false); err != nil {
++		return nil, err
++	}
++	info, err := os.Lstat(sessionStatePath(ws))
++	if err != nil || !info.Mode().IsRegular() {
++		return nil, errors.Join(errors.New("checkout command record is missing or not a regular file; state retained"), err)
++	}
++	data, err := os.ReadFile(sessionStatePath(ws))
++	if err != nil {
++		return nil, err
++	}
++	expected, err := json.MarshalIndent(state, "", "  ")
++	if err != nil {
++		return nil, err
++	}
++	if !bytes.Equal(data, expected) {
++		return nil, errors.New("checkout command record changed; state retained")
++	}
++	return &checkoutCommandOwnership{state: state, lock: lock, stateInfo: info, stateData: data}, nil
++}
++
++func (owned *checkoutCommandOwnership) verify(ws Workspace) error {
++	current, err := loadCheckoutCommandOwnership(ws, owned.state)
++	if err != nil {
++		return err
++	}
++	if !os.SameFile(owned.lock.dirInfo, current.lock.dirInfo) ||
++		!os.SameFile(owned.lock.ownerInfo, current.lock.ownerInfo) ||
++		!bytes.Equal(owned.lock.ownerBytes, current.lock.ownerBytes) ||
++		!os.SameFile(owned.stateInfo, current.stateInfo) ||
++		!bytes.Equal(owned.stateData, current.stateData) {
++		return errors.New("checkout command ownership changed; preserve the record and lock")
++	}
++	return nil
++}
++
++func commandSessionStateDirectories(ws Workspace, create bool) error {
++	for _, path := range []string{ws.MetadataRoot, filepath.Join(ws.MetadataRoot, "state"), sessionStateDir(ws)} {
++		info, err := os.Lstat(path)
++		if errors.Is(err, os.ErrNotExist) {
++			if create {
++				if err := os.Mkdir(path, 0700); err != nil {
++					return err
++				}
++			}
++			continue
++		}
++		if err != nil {
++			return err
++		}
++		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
++			return errors.New("checkout command state directory is not a real directory")
++		}
++	}
++	return nil
++}
++
++// CheckoutCommandStateWriteHook is a test-only persistence failure seam.
++var CheckoutCommandStateWriteHook func() error
++
++func createCheckoutCommandState(ws Workspace, state *CheckoutAgentSession) error {
++	if CheckoutCommandStateWriteHook != nil {
++		if err := CheckoutCommandStateWriteHook(); err != nil {
++			return err
++		}
++	}
++	if err := commandSessionStateDirectories(ws, true); err != nil {
++		return err
++	}
++	data, err := json.MarshalIndent(state, "", "  ")
++	if err != nil {
++		return err
++	}
++	// Exclusive publication cannot replace a foreign record appearing after
++	// admission. A failed write keeps evidence and never permits child effects.
++	file, err := os.OpenFile(sessionStatePath(ws), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
++	if err != nil {
++		return err
++	}
++	_, writeErr := file.Write(data)
++	syncErr := file.Sync()
++	closeErr := file.Close()
++	if err := errors.Join(writeErr, syncErr, closeErr); err != nil {
++		return err
++	}
++	for _, dir := range []string{sessionStateDir(ws), sessionLockDir(ws), filepath.Join(ws.MetadataRoot, "state"), ws.MetadataRoot} {
++		if err := syncDir(dir); err != nil {
++			return err
++		}
++	}
++	return nil
++}
++
++func checkoutCommandGitOperation(repo string) (bool, error) {
++	for _, name := range []string{"rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"} {
++		path, err := sessionGitOutput(repo, "rev-parse", "--git-path", name)
++		if err != nil {
++			return false, err
++		}
++		if !filepath.IsAbs(path) {
++			path = filepath.Join(repo, path)
++		}
++		if _, err := os.Lstat(path); err == nil {
++			return true, nil
++		} else if !errors.Is(err, os.ErrNotExist) {
++			return false, err
++		}
++	}
++	return false, nil
++}
++
++func checkoutCommandPreconditions(ws Workspace, feature string, entry StackEntry) error {
++	if active, err := checkoutCommandGitOperation(ws.RepoRoot); err != nil {
++		return fmt.Errorf("Git operation state is unverifiable: %w", err)
++	} else if active {
++		return errors.New("another Git operation is in progress")
++	}
++	return CheckoutSessionPreconditions(ws, feature, entry)
++}
++
++// OpenCheckoutCommand uses the existing one-owner session record and lock.
++// A non-nil tmux selects tmux; a nil runner selects the ordinary direct runner.
++func OpenCheckoutCommand(ws Workspace, feature string, entry StackEntry, command []string, runner SessionAgentRunner, tmux SessionTmuxRunner, into string, finalGuard func() error) (retErr error) {
++	if len(command) == 0 || !filepath.IsAbs(command[0]) {
++		return errors.New("command executable must be bound before checkout activation")
++	}
++	for _, arg := range command {
++		if strings.ContainsRune(arg, '\x00') {
++			return errors.New("command argv cannot contain NUL")
++		}
++	}
++	if err := commandSessionStateDirectories(ws, false); err != nil {
++		return err
++	}
++	if err := checkoutCommandPreconditions(ws, feature, entry); err != nil {
++		return err
++	}
++	name := CheckoutAgentSessionName(ws.StableID, feature, entry.Name)
++	if tmux != nil {
++		if err := RefuseCommandTmuxCollision(tmux, name); err != nil {
++			return err
++		}
++	}
++	token, err := acquireAgentSessionLock(ws, tmux)
++	if err != nil {
++		return err
++	}
++	initialLock, err := captureCheckoutCommandIntent(ws, token)
++	if err != nil {
++		return err
++	}
++	release := true
++	defer func() {
++		if release {
++			if err := verifyCheckoutCommandIntent(ws, initialLock, token); err != nil {
++				retErr = errors.Join(retErr, err)
++				return
++			}
++			retErr = errors.Join(retErr, removeCheckoutSessionIntentSnapshot(ws, initialLock))
++		}
++	}()
++	if CheckoutSessionLaunchIntentHook != nil {
++		if err := CheckoutSessionLaunchIntentHook(); err != nil {
++			return err
++		}
++	}
++	if finalGuard != nil {
++		if err := finalGuard(); err != nil {
++			return err
++		}
++	}
++	if err := verifyCheckoutCommandIntent(ws, initialLock, token); err != nil {
++		return err
++	}
++	if err := checkoutCommandPreconditions(ws, feature, entry); err != nil {
++		return err
++	}
++	if tmux != nil {
++		if err := RefuseCommandTmuxCollision(tmux, name); err != nil {
++			return err
++		}
++	}
++	if err := verifyCheckoutCommandIntent(ws, initialLock, token); err != nil {
++		return err
++	}
++	original, err := sessionCurrentBranch(ws.RepoRoot)
++	if err != nil {
++		return err
++	}
++	head, err := sessionHEAD(ws.RepoRoot)
++	if err != nil {
++		return err
++	}
++	links, err := PlanCheckoutSessionLinks(ws, feature, into)
++	if err != nil {
++		return err
++	}
++	excludes, err := newCommandExcludes(ws.RepoRoot, links)
++	if err != nil {
++		return err
++	}
++	state := &CheckoutAgentSession{
++		SchemaVersion: checkoutSessionSchema, WorkspaceID: ws.StableID, Feature: feature,
++		Name: entry.Name, GitBranch: entry.GitBranch(), OriginalBranch: original, OriginalHEAD: head,
++		Mode: AgentSessionDirect, PID: os.Getpid(), Stage: DirectStageCommand,
++		StartedAt: time.Now().UTC().Format(time.RFC3339), RepoDir: ws.RepoRoot,
++		Links: links, ExcludeEntries: excludes, LockToken: token,
++	}
++	if tmux != nil {
++		state.Mode, state.TmuxSession = AgentSessionTmux, name
++	}
++	if err := createCheckoutCommandState(ws, state); err != nil {
++		if _, statErr := os.Lstat(sessionStatePath(ws)); !errors.Is(statErr, os.ErrNotExist) {
++			release = false
++			return fmt.Errorf("command state publication failed; preserve the record and lock for inspection (no command ran): %w", err)
++		}
++		return err
++	}
++	release = false
++	owned, err := loadCheckoutCommandOwnership(ws, state)
++	if err != nil {
++		return err
++	}
++	if !os.SameFile(initialLock.dirInfo, owned.lock.dirInfo) || !os.SameFile(initialLock.ownerInfo, owned.lock.ownerInfo) ||
++		!bytes.Equal(initialLock.ownerBytes, owned.lock.ownerBytes) {
++		return errors.New("checkout command lock changed during state publication; state retained")
++	}
++	failBeforeLaunch := func(cause error) error {
++		return errors.Join(cause, finishCheckoutCommandSession(ws, owned, true))
++	}
++	if err := owned.verify(ws); err != nil {
++		return err
++	}
++	if finalGuard != nil {
++		if err := finalGuard(); err != nil {
++			return failBeforeLaunch(err)
++		}
++	}
++	if err := CheckoutSessionMutationPreconditions(ws); err != nil {
++		return failBeforeLaunch(err)
++	}
++	if err := sessionSwitch(ws.RepoRoot, entry.GitBranch()); err != nil {
++		return failBeforeLaunch(err)
++	}
++	if _, err := ApplyCheckoutSessionLinks(ws.RepoRoot, links); err != nil {
++		return failBeforeLaunch(err)
++	}
++	if err := owned.verify(ws); err != nil {
++		return err
++	}
++	if finalGuard != nil {
++		if err := finalGuard(); err != nil {
++			return failBeforeLaunch(err)
++		}
++	}
++	if err := CheckoutSessionMutationPreconditions(ws); err != nil {
++		return failBeforeLaunch(err)
++	}
++	if tmux != nil {
++		return runCheckoutTmuxCommand(ws, owned, command, tmux)
++	}
++	if runner == nil {
++		runner = RealSessionAgentRunner{}
++	}
++	runErr := runner.Run(ws.RepoRoot, command)
++	return errors.Join(wrapSessionErr("command", runErr), finishCheckoutCommandSession(ws, owned, false))
++}
++
++func runCheckoutTmuxCommand(ws Workspace, owned *checkoutCommandOwnership, command []string, runner SessionTmuxRunner) error {
++	tmux, err := commandTmuxRunner(runner)
++	if err != nil {
++		return errors.Join(err, finishCheckoutCommandSession(ws, owned, true))
++	}
++	state := owned.state
++	if err := RefuseCommandTmuxCollision(runner, state.TmuxSession); err != nil {
++		// A session appeared after activation. It may already be writing this
++		// checkout; neither restoration nor killing is safe.
++		return fmt.Errorf("tmux collision after admission; checkout command state retained: %w", err)
++	}
++	startErr := tmux.NewCommandSession(state.TmuxSession, ws.RepoRoot, command, state.LockToken)
++	present, probeErr := tmux.OwnedCommandSession(state.TmuxSession, state.LockToken)
++	if probeErr != nil {
++		return errors.Join(startErr, fmt.Errorf("tmux startup ownership is uncertain; checkout state retained: %w", probeErr))
++	}
++	if !present {
++		return errors.Join(startErr, finishCheckoutCommandSession(ws, owned, false))
++	}
++	if startErr != nil {
++		return fmt.Errorf("tmux startup failed but the owned command is live; checkout state retained; inspect or use tws close: %w", startErr)
++	}
++	if err := owned.verify(ws); err != nil {
++		return err
++	}
++	attachErr := tmux.AttachCommandSession(state.TmuxSession, state.LockToken)
++	present, probeErr = tmux.OwnedCommandSession(state.TmuxSession, state.LockToken)
++	if probeErr != nil {
++		return errors.Join(attachErr, probeErr)
++	}
++	if present {
++		if attachErr != nil {
++			return fmt.Errorf("tmux attach failed but the command remains active; use tws close %s %s: %w", state.Feature, state.Name, attachErr)
++		}
++		return owned.verify(ws)
++	}
++	return errors.Join(wrapSessionErr("tmux attach (child exit status unavailable)", attachErr), finishCheckoutCommandSession(ws, owned, false))
++}
++
++func newCommandExcludes(repo string, links []SessionContextLink) ([]string, error) {
++	data, err := os.ReadFile(filepath.Join(repo, ".git", "info", "exclude"))
++	if err != nil && !errors.Is(err, os.ErrNotExist) {
++		return nil, err
++	}
++	existing := map[string]bool{}
++	for _, line := range strings.Split(string(data), "\n") {
++		existing[line] = true
++	}
++	var owned []string
++	for _, link := range links {
++		rel, err := filepath.Rel(repo, link.Path)
++		if err != nil {
++			return nil, err
++		}
++		name := filepath.ToSlash(rel)
++		if !existing[name] {
++			owned = append(owned, name)
++		}
++	}
++	return owned, nil
++}
++
++func finishCheckoutCommandSession(ws Workspace, owned *checkoutCommandOwnership, unstarted bool) error {
++	retained := func(err error) error {
++		return fmt.Errorf("cannot restore checkout command; session state retained: %w; commit/stash work or reconcile the recorded branch/ownership, then use tws close", err)
++	}
++	if err := owned.verify(ws); err != nil {
++		return retained(err)
++	}
++	state := owned.state
++	current, err := sessionCurrentBranch(ws.RepoRoot)
++	if err != nil {
++		return retained(errors.New("HEAD is detached"))
++	}
++	if current != state.GitBranch && (!unstarted || current != state.OriginalBranch) {
++		return retained(errors.New("the attached branch changed"))
++	}
++	if err := CheckoutSessionMutationPreconditions(ws); err != nil {
++		return retained(err)
++	}
++	if active, err := checkoutCommandGitOperation(ws.RepoRoot); err != nil {
++		return retained(err)
++	} else if active {
++		return retained(errors.New("another Git operation is in progress"))
++	}
++	dirty, err := sessionDirty(ws.RepoRoot)
++	if err != nil {
++		return retained(err)
++	}
++	if dirty {
++		return retained(errors.New("working tree is dirty"))
++	}
++	if state.OriginalBranch != state.GitBranch {
++		head, err := sessionGitOutput(ws.RepoRoot, "rev-parse", "--verify", "refs/heads/"+state.OriginalBranch)
++		if err != nil || head != state.OriginalHEAD {
++			return retained(errors.New("original branch HEAD changed or disappeared"))
++		}
++	}
++	for _, link := range state.Links {
++		if err := ensureSessionDestination(ws.RepoRoot, link.Path); err != nil {
++			return retained(err)
++		}
++		if trackedPath(ws.RepoRoot, link.Path) {
++			return retained(fmt.Errorf("context link %s became tracked; preserve it", link.Path))
++		}
++		target, err := os.Readlink(link.Path)
++		if errors.Is(err, os.ErrNotExist) && unstarted {
++			continue
++		}
++		if err != nil || target != link.Target {
++			return retained(fmt.Errorf("context link %s changed or disappeared", link.Path))
++		}
++	}
++	if err := owned.verify(ws); err != nil {
++		return retained(err)
++	}
++	for _, link := range state.Links {
++		if err := os.Remove(link.Path); err != nil && (!unstarted || !errors.Is(err, os.ErrNotExist)) {
++			return retained(err)
++		}
++	}
++	if len(state.ExcludeEntries) > 0 {
++		if err := removeSessionExcludes(ws.RepoRoot, state.ExcludeEntries); err != nil {
++			return retained(err)
++		}
++	}
++	if current != state.OriginalBranch {
++		if err := sessionSwitch(ws.RepoRoot, state.OriginalBranch); err != nil {
++			return retained(err)
++		}
++		if head, err := sessionHEAD(ws.RepoRoot); err != nil || head != state.OriginalHEAD {
++			return retained(errors.New("original branch HEAD changed during restoration"))
++		}
++		if current, err := sessionCurrentBranch(ws.RepoRoot); err != nil || current != state.OriginalBranch {
++			return retained(errors.New("attached branch changed during restoration"))
++		}
++		if dirty, err := sessionDirty(ws.RepoRoot); err != nil || dirty {
++			return retained(errors.Join(errors.New("checkout became dirty or unverifiable during restoration"), err))
++		}
++	}
++	if err := owned.verify(ws); err != nil {
++		return retained(err)
++	}
++	if err := os.Remove(sessionStatePath(ws)); err != nil {
++		return retained(err)
++	}
++	if err := syncDir(sessionStateDir(ws)); err != nil {
++		return fmt.Errorf("checkout restored and command record removed, but cleanup durability failed; preserve the remaining lock: %w", err)
++	}
++	if err := releaseAgentSessionLock(ws, state.LockToken); err != nil {
++		return fmt.Errorf("checkout restored but command lock cleanup failed: %w", err)
++	}
++	return syncDir(filepath.Join(ws.MetadataRoot, "state"))
++}
++
++func closeCheckoutCommandSession(ws Workspace, state *CheckoutAgentSession, runner SessionTmuxRunner) error {
++	owned, err := loadCheckoutCommandOwnership(ws, state)
++	if err != nil {
++		return err
++	}
++	if state.Mode == AgentSessionDirect {
++		if state.PID > 0 && processAlive(state.PID) {
++			return errors.New("direct checkout command is still active; exit it before closing")
++		}
++	} else {
++		tmux, err := commandTmuxRunner(runner)
++		if err != nil {
++			return err
++		}
++		present, err := tmux.OwnedCommandSession(state.TmuxSession, state.LockToken)
++		if err != nil {
++			return err
++		}
++		if present {
++			if err := owned.verify(ws); err != nil {
++				return err
++			}
++			if err := tmux.KillCommandSession(state.TmuxSession, state.LockToken); err != nil {
++				return err
++			}
++			if present, err := tmux.OwnedCommandSession(state.TmuxSession, state.LockToken); err != nil || present {
++				return errors.Join(errors.New("tmux command termination could not be confirmed; state retained"), err)
++			}
++		}
++	}
++	return finishCheckoutCommandSession(ws, owned, false)
++}
+diff --git a/internal/command_session_test.go b/internal/command_session_test.go
+new file mode 100644
+index 0000000..650e6c2
+--- /dev/null
++++ b/internal/command_session_test.go
+@@ -0,0 +1,705 @@
++package internal
++
++import (
++	"bytes"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"os"
++	"path/filepath"
++	"reflect"
++	"strings"
++	"testing"
++)
++
++type commandTestRunner func(string, []string) error
++
++func (f commandTestRunner) Run(dir string, command []string) error { return f(dir, command) }
++
++type commandTestTmux struct {
++	*testTmux
++	tokens    map[string]string
++	args      []string
++	dir       string
++	exists    func(string) error
++	onCreate  func(string, string) error
++	onAttach  func(string) error
++	onOwned   func(string) error
++	onKill    func(string) error
++	createErr error
++}
++
++func newCommandTestTmux() *commandTestTmux {
++	return &commandTestTmux{testTmux: newTestTmux(), tokens: map[string]string{}}
++}
++
++func (f *commandTestTmux) CommandSessionExists(name string) (bool, error) {
++	if f.exists != nil {
++		if err := f.exists(name); err != nil {
++			return false, err
++		}
++	}
++	return f.sessions[name], nil
++}
++
++func (f *commandTestTmux) NewCommandSession(name, dir string, command []string, token string) error {
++	f.sessions[name], f.tokens[name] = true, token
++	f.args, f.dir = append([]string(nil), command...), dir
++	f.created = append(f.created, name)
++	if f.onCreate != nil {
++		if err := f.onCreate(name, token); err != nil {
++			return err
++		}
++	}
++	return f.createErr
++}
++
++func (f *commandTestTmux) OwnedCommandSession(name, token string) (bool, error) {
++	if f.onOwned != nil {
++		if err := f.onOwned(name); err != nil {
++			return false, err
++		}
++	}
++	if f.sessions[name] && f.tokens[name] != token {
++		return false, errors.New("foreign tmux session owner")
++	}
++	return f.sessions[name], nil
++}
++
++func (f *commandTestTmux) AttachCommandSession(name, token string) error {
++	if _, err := f.OwnedCommandSession(name, token); err != nil {
++		return err
++	}
++	if f.onAttach != nil {
++		return f.onAttach(name)
++	}
++	return f.attachErr
++}
++
++func (f *commandTestTmux) KillCommandSession(name, token string) error {
++	if _, err := f.OwnedCommandSession(name, token); err != nil {
++		return err
++	}
++	if f.onKill != nil {
++		if err := f.onKill(name); err != nil {
++			return err
++		}
++	}
++	return f.KillSession(name)
++}
++
++func assertCheckoutCommandRetained(t *testing.T, ws Workspace, branch string) {
++	t.Helper()
++	if !HasCheckoutAgentSession(ws) {
++		t.Fatal("command state was lost")
++	}
++	if _, err := os.Lstat(sessionLockDir(ws)); err != nil {
++		t.Fatal("command lock was lost", err)
++	}
++	if got, _ := sessionCurrentBranch(ws.RepoRoot); got != branch {
++		t.Fatalf("current branch=%q want=%q", got, branch)
++	}
++}
++
++func assertCheckoutCommandCleaned(t *testing.T, ws Workspace) {
++	t.Helper()
++	if HasCheckoutAgentSession(ws) {
++		t.Fatal("command state remains")
++	}
++	if _, err := os.Lstat(sessionLockDir(ws)); !errors.Is(err, os.ErrNotExist) {
++		t.Fatalf("command lock remains: %v", err)
++	}
++	if got, _ := sessionCurrentBranch(ws.RepoRoot); got != "main" {
++		t.Fatalf("not restored: %q", got)
++	}
++}
++
++func TestCheckoutCommandDirectDurabilityAndObservation(t *testing.T) {
++	repo, ws, entry := setupSessionRepo(t)
++	context := filepath.Join(ws.FeaturePath("feature"), "inject", "context")
++	if err := os.WriteFile(context, []byte("configured context"), 0600); err != nil {
++		t.Fatal(err)
++	}
++	command := []string{"/absolute/editor", "", "literal ; argv", "line\nbreak", "--option"}
++	calls := 0
++	runner := commandTestRunner(func(dir string, args []string) error {
++		calls++
++		if dir != repo || !reflect.DeepEqual(args, command) {
++			t.Fatalf("dir=%q argv=%q", dir, args)
++		}
++		state, err := LoadCheckoutAgentSession(ws)
++		if err != nil || state.Stage != DirectStageCommand || state.GitBranch != entry.GitBranch() {
++			t.Fatalf("state=%+v err=%v", state, err)
++		}
++		if _, err := loadCheckoutCommandOwnership(ws, state); err != nil {
++			t.Fatal("state is not owned before child effects", err)
++		}
++		if got := gitS(t, repo, "branch", "--show-current"); got != entry.GitBranch() {
++			t.Fatal("not activated", got)
++		}
++		if target, err := os.Readlink(filepath.Join(repo, "context")); err != nil || target != context {
++			t.Fatalf("context target=%q err=%v", target, err)
++		}
++		report, err := BuildAgentStatusScoped(ws, "", "feature", nil)
++		if err != nil {
++			t.Fatal(err)
++		}
++		observation := report.Workspace.CheckoutSession
++		if observation == nil || !observation.StageRecognized || observation.Stage == nil ||
++			*observation.Stage != DirectStageCommand || observation.Agent != nil ||
++			observation.AgentState != AgentStateUnknown || observation.Presence != PresencePresent {
++			t.Fatalf("observation=%+v", observation)
++		}
++		raw, err := json.Marshal(report)
++		if err != nil || bytes.Contains(raw, []byte(command[2])) || bytes.Contains(raw, []byte(state.LockToken)) {
++			t.Fatalf("status leaked command/token or failed: %v", err)
++		}
++		if _, err := acquireAgentSessionLock(ws, newTestTmux()); err == nil {
++			t.Fatal("second checkout owner admitted")
++		}
++		if err := CloseCheckoutSession(ws, "feature", entry.Name, nil); err == nil {
++			t.Fatal("close interrupted a live direct command")
++		}
++		return nil
++	})
++	if err := OpenCheckoutCommand(ws, "feature", entry, command, runner, nil, "", nil); err != nil {
++		t.Fatal(err)
++	}
++	if calls != 1 {
++		t.Fatalf("child calls=%d", calls)
++	}
++	assertCheckoutCommandCleaned(t, ws)
++	if _, err := os.Lstat(filepath.Join(repo, "context")); !errors.Is(err, os.ErrNotExist) {
++		t.Fatalf("context remains: %v", err)
++	}
++}
++
++func TestCheckoutCommandNonzeroRestores(t *testing.T) {
++	_, ws, entry := setupSessionRepo(t)
++	childErr := errors.New("exit status 9")
++	err := OpenCheckoutCommand(ws, "feature", entry, []string{"/editor"}, commandTestRunner(func(string, []string) error {
++		return childErr
++	}), nil, "", nil)
++	if !errors.Is(err, childErr) {
++		t.Fatalf("nonzero result=%v", err)
++	}
++	assertCheckoutCommandCleaned(t, ws)
++}
++
++func TestCheckoutCommandPersistencePrecedesActivationAndEffects(t *testing.T) {
++	_, ws, entry := setupSessionRepo(t)
++	failure := errors.New("disk full")
++	CheckoutCommandStateWriteHook = func() error { return failure }
++	t.Cleanup(func() { CheckoutCommandStateWriteHook = nil })
++	calls := 0
++	err := OpenCheckoutCommand(ws, "feature", entry, []string{"/editor"}, commandTestRunner(func(string, []string) error {
++		calls++
++		return nil
++	}), nil, "", nil)
++	if !errors.Is(err, failure) || calls != 0 {
++		t.Fatalf("err=%v calls=%d", err, calls)
++	}
++	assertCheckoutCommandCleaned(t, ws)
++}
++
++func TestCheckoutCommandForeignStateAtPublication(t *testing.T) {
++	_, ws, entry := setupSessionRepo(t)
++	foreign := []byte(`{"foreign":"do not replace"}`)
++	CheckoutCommandStateWriteHook = func() error {
++		if err := os.MkdirAll(sessionStateDir(ws), 0700); err != nil {
++			return err
++		}
++		return os.WriteFile(sessionStatePath(ws), foreign, 0600)
++	}
++	t.Cleanup(func() { CheckoutCommandStateWriteHook = nil })
++	runner := &testAgent{}
++	err := OpenCheckoutCommand(ws, "feature", entry, []string{"/editor"}, runner, nil, "", nil)
++	if err == nil || runner.calls != 0 {
++		t.Fatalf("err=%v calls=%d", err, runner.calls)
++	}
++	got, err := os.ReadFile(sessionStatePath(ws))
++	if err != nil || !bytes.Equal(got, foreign) {
++		t.Fatalf("foreign state overwritten: %q %v", got, err)
++	}
++	assertCheckoutCommandRetained(t, ws, "main")
++}
++
++func TestCheckoutCommandUnsafeCompletionRetainsEvidence(t *testing.T) {
++	for _, change := range []string{"dirty", "detached", "branch", "original-head", "record", "lock", "link", "tracked-link"} {
++		t.Run(change, func(t *testing.T) {
++			repo, ws, entry := setupSessionRepo(t)
++			inject := filepath.Join(ws.FeaturePath("feature"), "inject", "context")
++			if err := os.WriteFile(inject, []byte("context"), 0600); err != nil {
++				t.Fatal(err)
++			}
++			var recordAfter []byte
++			wantBranch := entry.GitBranch()
++			runner := commandTestRunner(func(string, []string) error {
++				switch change {
++				case "dirty":
++					return os.WriteFile(filepath.Join(repo, "README"), []byte("user changes"), 0644)
++				case "detached":
++					gitS(t, repo, "switch", "--detach")
++					wantBranch = ""
++				case "branch":
++					gitS(t, repo, "switch", "main")
++					wantBranch = "main"
++				case "original-head":
++					gitS(t, repo, "commit", "--allow-empty", "-m", "new")
++					gitS(t, repo, "branch", "-f", "main", "HEAD")
++				case "record":
++					state, err := LoadCheckoutAgentSession(ws)
++					if err != nil {
++						return err
++					}
++					state.OriginalBranch = "foreign"
++					if err := SaveCheckoutAgentSession(ws, state); err != nil {
++						return err
++					}
++					recordAfter, _ = os.ReadFile(sessionStatePath(ws))
++				case "lock":
++					return os.WriteFile(sessionLockOwnerPath(ws), []byte(`{"token":"foreign","pid":1}`), 0600)
++				case "link":
++					if err := os.Remove(filepath.Join(repo, "context")); err != nil {
++						return err
++					}
++					return os.Symlink("foreign", filepath.Join(repo, "context"))
++				case "tracked-link":
++					gitS(t, repo, "add", "-f", "context")
++					gitS(t, repo, "commit", "-m", "preserve context link")
++				}
++				return nil
++			})
++			err := OpenCheckoutCommand(ws, "feature", entry, []string{"/editor"}, runner, nil, "", nil)
++			if err == nil || !strings.Contains(err.Error(), "retained") {
++				t.Fatalf("unsafe cleanup err=%v", err)
++			}
++			assertCheckoutCommandRetained(t, ws, wantBranch)
++			if change != "link" {
++				if target, err := os.Readlink(filepath.Join(repo, "context")); err != nil || target != inject {
++					t.Fatalf("context was touched during unsafe cleanup: %q %v", target, err)
++				}
++			}
++			if recordAfter != nil {
++				got, _ := os.ReadFile(sessionStatePath(ws))
++				if !bytes.Equal(got, recordAfter) {
++					t.Fatal("foreign record changed")
++				}
++			}
++		})
++	}
++}
++
++func TestCheckoutCommandPreservesExistingExclusions(t *testing.T) {
++	repo, ws, entry := setupSessionRepo(t)
++	if err := os.WriteFile(filepath.Join(ws.FeaturePath("feature"), "inject", "context"), []byte("context"), 0600); err != nil {
++		t.Fatal(err)
++	}
++	exclude := filepath.Join(repo, ".git", "info", "exclude")
++	if err := os.WriteFile(exclude, []byte(".tws/\ncontext\n"), 0644); err != nil {
++		t.Fatal(err)
++	}
++	err := OpenCheckoutCommand(ws, "feature", entry, []string{"/editor"}, &testAgent{}, nil, "", nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	data, err := os.ReadFile(exclude)
++	if err != nil || !bytes.Contains(data, []byte("context\n")) {
++		t.Fatalf("preexisting exclude was removed: %q %v", data, err)
++	}
++}
++
++func TestCheckoutCommandTmuxDurabilityLiteralArgsAndDetach(t *testing.T) {
++	repo, ws, entry := setupSessionRepo(t)
++	tmux := newCommandTestTmux()
++	command := []string{"/editor path ;", "", "two words", "$(not evaluated)", "line\nbreak"}
++	tmux.onCreate = func(name, token string) error {
++		state, err := LoadCheckoutAgentSession(ws)
++		if err != nil {
++			return err
++		}
++		if state.Stage != DirectStageCommand || state.Mode != AgentSessionTmux || state.LockToken != token || state.TmuxSession != name {
++			t.Fatalf("state before tmux child=%+v", state)
++		}
++		_, err = loadCheckoutCommandOwnership(ws, state)
++		return err
++	}
++	if err := OpenCheckoutCommand(ws, "feature", entry, command, nil, tmux, "", nil); err != nil {
++		t.Fatal(err)
++	}
++	if !reflect.DeepEqual(tmux.args, command) || tmux.dir != repo || len(tmux.created) != 1 {
++		t.Fatalf("tmux argv=%q dir=%q creates=%v", tmux.args, tmux.dir, tmux.created)
++	}
++	assertCheckoutCommandRetained(t, ws, entry.GitBranch())
++	if err := CloseCheckoutSession(ws, "feature", entry.Name, tmux); err != nil {
++		t.Fatal(err)
++	}
++	if len(tmux.killed) != 1 {
++		t.Fatalf("killed=%v", tmux.killed)
++	}
++	assertCheckoutCommandCleaned(t, ws)
++}
++
++func TestCheckoutCommandTmuxEarlyExit(t *testing.T) {
++	for _, dirty := range []bool{false, true} {
++		t.Run(map[bool]string{false: "clean", true: "dirty"}[dirty], func(t *testing.T) {
++			repo, ws, entry := setupSessionRepo(t)
++			tmux := newCommandTestTmux()
++			tmux.onCreate = func(name, token string) error {
++				if !HasCheckoutAgentSession(ws) {
++					t.Fatal("early command ran without durable state")
++				}
++				delete(tmux.sessions, name)
++				if dirty {
++					return os.WriteFile(filepath.Join(repo, "README"), []byte("early child effects"), 0644)
++				}
++				return nil
++			}
++			err := OpenCheckoutCommand(ws, "feature", entry, []string{"/editor"}, nil, tmux, "", nil)
++			if dirty {
++				if err == nil || !strings.Contains(err.Error(), "dirty") {
++					t.Fatalf("dirty early exit=%v", err)
++				}
++				assertCheckoutCommandRetained(t, ws, entry.GitBranch())
++			} else {
++				if err != nil {
++					t.Fatal(err)
++				}
++				assertCheckoutCommandCleaned(t, ws)
++			}
++			if len(tmux.killed) != 0 {
++				t.Fatalf("early exit killed a session: %v", tmux.killed)
++			}
++		})
++	}
++}
++
++func TestCheckoutCommandTmuxAttachFailureAndCompletion(t *testing.T) {
++	for _, outcome := range []string{"live-failure", "ended-failure", "ended-success"} {
++		t.Run(outcome, func(t *testing.T) {
++			_, ws, entry := setupSessionRepo(t)
++			tmux := newCommandTestTmux()
++			tmux.onAttach = func(name string) error {
++				if strings.HasPrefix(outcome, "ended") {
++					delete(tmux.sessions, name)
++				}
++				if strings.HasSuffix(outcome, "failure") {
++					return errors.New("attach failed")
++				}
++				return nil
++			}
++			err := OpenCheckoutCommand(ws, "feature", entry, []string{"/editor"}, nil, tmux, "", nil)
++			if outcome == "ended-success" && err != nil || strings.HasSuffix(outcome, "failure") && err == nil {
++				t.Fatalf("%s: %v", outcome, err)
++			}
++			if outcome == "live-failure" {
++				assertCheckoutCommandRetained(t, ws, entry.GitBranch())
++			} else {
++				assertCheckoutCommandCleaned(t, ws)
++			}
++			if len(tmux.killed) != 0 {
++				t.Fatal("attach cleanup killed a session")
++			}
++		})
++	}
++}
++
++func TestCheckoutCommandTmuxCollisionAndUncertainty(t *testing.T) {
++	for _, when := range []string{"before", "admission", "creation"} {
++		t.Run(when, func(t *testing.T) {
++			_, ws, entry := setupSessionRepo(t)
++			tmux := newCommandTestTmux()
++			name := CheckoutAgentSessionName(ws.StableID, "feature", entry.Name)
++			switch when {
++			case "before":
++				tmux.sessions[name] = true
++			case "admission":
++				CheckoutSessionLaunchIntentHook = func() error {
++					tmux.sessions[name] = true
++					return nil
++				}
++				t.Cleanup(func() { CheckoutSessionLaunchIntentHook = nil })
++			default:
++				tmux.onCreate = func(name, token string) error {
++					tmux.tokens[name] = "foreign"
++					return errors.New("creation response lost")
++				}
++			}
++			if err := OpenCheckoutCommand(ws, "feature", entry, []string{"/editor"}, nil, tmux, "", nil); err == nil {
++				t.Fatal("collision/uncertainty accepted")
++			}
++			if len(tmux.killed) != 0 || !tmux.sessions[name] {
++				t.Fatal("preexisting/uncertain session was killed")
++			}
++			if when == "creation" {
++				assertCheckoutCommandRetained(t, ws, entry.GitBranch())
++				if err := CloseCheckoutSession(ws, "feature", entry.Name, tmux); err == nil {
++					t.Fatal("close accepted a foreign tmux session")
++				}
++			} else {
++				if len(tmux.created) != 0 {
++					t.Fatal("collision launched command")
++				}
++				assertCheckoutCommandCleaned(t, ws)
++			}
++		})
++	}
++}
++
++func TestCheckoutCommandCloseChecksOwnershipBeforeKill(t *testing.T) {
++	for _, which := range []string{"record", "lock", "missing-tmux", "wrong-tmux", "missing-pid"} {
++		t.Run(which, func(t *testing.T) {
++			_, ws, entry := setupSessionRepo(t)
++			tmux := newCommandTestTmux()
++			if err := OpenCheckoutCommand(ws, "feature", entry, []string{"/editor"}, nil, tmux, "", nil); err != nil {
++				t.Fatal(err)
++			}
++			state, err := LoadCheckoutAgentSession(ws)
++			if err != nil {
++				t.Fatal(err)
++			}
++			if which == "lock" {
++				if err := os.WriteFile(sessionLockOwnerPath(ws), []byte(`{"token":"foreign","pid":1}`), 0600); err != nil {
++					t.Fatal(err)
++				}
++			} else {
++				switch which {
++				case "record":
++					state.LockToken = "foreign"
++				case "missing-tmux":
++					state.TmuxSession = ""
++				case "wrong-tmux":
++					state.TmuxSession = "foreign"
++				case "missing-pid":
++					state.PID = 0
++				}
++				if err := SaveCheckoutAgentSession(ws, state); err != nil {
++					t.Fatal(err)
++				}
++			}
++			if err := CloseCheckoutSession(ws, "feature", entry.Name, tmux); err == nil {
++				t.Fatal("foreign state accepted by close")
++			}
++			if len(tmux.killed) != 0 {
++				t.Fatal("close killed before checking ownership")
++			}
++			assertCheckoutCommandRetained(t, ws, entry.GitBranch())
++		})
++	}
++}
++
++func TestCheckoutCommandLateFinalGuard(t *testing.T) {
++	_, ws, entry := setupSessionRepo(t)
++	runner := &testAgent{}
++	checks := 0
++	guard := func() error {
++		checks++
++		if checks == 3 {
++			return errors.New("late guard refusal")
++		}
++		return nil
++	}
++	err := OpenCheckoutCommand(ws, "feature", entry, []string{"/editor"}, runner, nil, "", guard)
++	if err == nil || !strings.Contains(err.Error(), "late guard") || runner.calls != 0 {
++		t.Fatalf("err=%v calls=%d checks=%d", err, runner.calls, checks)
++	}
++	assertCheckoutCommandCleaned(t, ws)
++}
++
++func TestCheckoutCommandFeatureDirForeignIntentRefuses(t *testing.T) {
++	_, ws, _ := setupSessionRepo(t)
++	CheckoutSessionLaunchIntentHook = func() error {
++		return os.WriteFile(sessionLockOwnerPath(ws), []byte(`{"token":"foreign","pid":1}`), 0600)
++	}
++	t.Cleanup(func() { CheckoutSessionLaunchIntentHook = nil })
++	launched := false
++	err := WithCheckoutCommandLaunchIntent(ws, func() error {
++		return CheckoutFeatureDirSessionPreconditions(ws)
++	}, func() error {
++		launched = true
++		return nil
++	})
++	if err == nil || launched {
++		t.Fatalf("err=%v launched=%v", err, launched)
++	}
++	owner, err := os.ReadFile(sessionLockOwnerPath(ws))
++	if err != nil || !bytes.Contains(owner, []byte("foreign")) {
++		t.Fatalf("foreign intent was removed: %s %v", owner, err)
++	}
++}
++
++func TestCheckoutCommandInProgressFromOtherCWD(t *testing.T) {
++	repo, ws, entry := setupSessionRepo(t)
++	gitDir := filepath.Join(repo, ".git")
++	head := gitS(t, repo, "rev-parse", "HEAD")
++	if err := os.WriteFile(filepath.Join(gitDir, "CHERRY_PICK_HEAD"), []byte(head+"\n"), 0600); err != nil {
++		t.Fatal(err)
++	}
++	t.Chdir(t.TempDir())
++	runner := &testAgent{}
++	err := OpenCheckoutCommand(ws, "feature", entry, []string{"/editor"}, runner, nil, "", nil)
++	if err == nil || !strings.Contains(err.Error(), "Git operation") || runner.calls != 0 {
++		t.Fatalf("err=%v calls=%d", err, runner.calls)
++	}
++	assertCheckoutCommandCleaned(t, ws)
++}
++
++func TestCheckoutCommandUnsafeStateDirectory(t *testing.T) {
++	_, ws, entry := setupSessionRepo(t)
++	foreign := t.TempDir()
++	if err := os.Symlink(foreign, filepath.Join(ws.MetadataRoot, "state")); err != nil {
++		t.Fatal(err)
++	}
++	runner := &testAgent{}
++	if err := OpenCheckoutCommand(ws, "feature", entry, []string{"/editor"}, runner, nil, "", nil); err == nil || runner.calls != 0 {
++		t.Fatalf("err=%v calls=%d", err, runner.calls)
++	}
++	entries, err := os.ReadDir(foreign)
++	if err != nil || len(entries) != 0 {
++		t.Fatalf("foreign state directory changed: %v %v", entries, err)
++	}
++}
++
++func TestCheckoutCommandPrepublicationOwnershipRetained(t *testing.T) {
++	for _, branchless := range []bool{false, true} {
++		for _, failure := range []string{"late-pid", "late-error", "capture-pid", "capture-error", "capture-invalid"} {
++			t.Run(fmt.Sprintf("branchless=%t/%s", branchless, failure), func(t *testing.T) {
++				_, ws, entry := setupSessionRepo(t)
++				var expected checkoutSessionIntentSnapshot
++				var token string
++				changeOwner := func() error {
++					before, present, err := loadCheckoutSessionIntentSnapshot(ws)
++					if err != nil || !present {
++						t.Fatalf("initial intent unavailable: %t %v", present, err)
++					}
++					owner, err := before.decodeOwner()
++					if err != nil {
++						t.Fatal(err)
++					}
++					token = owner.Token
++					owner.PID = 1
++					data, err := json.Marshal(owner)
++					if err != nil {
++						t.Fatal(err)
++					}
++					if failure == "capture-invalid" {
++						data = append(data, []byte("invalid residue")...)
++					}
++					if err := os.WriteFile(sessionLockOwnerPath(ws), data, 0600); err != nil {
++						t.Fatal(err)
++					}
++					expected, present, err = loadCheckoutSessionIntentSnapshot(ws)
++					if err != nil || !present {
++						t.Fatalf("changed intent unavailable: %t %v", present, err)
++					}
++					if strings.HasSuffix(failure, "error") {
++						return errors.New("injected early failure")
++					}
++					return nil
++				}
++				if strings.HasPrefix(failure, "capture-") {
++					CheckoutCommandIntentCaptureHook = changeOwner
++				} else {
++					CheckoutSessionLaunchIntentHook = changeOwner
++				}
++				t.Cleanup(func() {
++					CheckoutCommandIntentCaptureHook = nil
++					CheckoutSessionLaunchIntentHook = nil
++				})
++				runner := &testAgent{}
++				var err error
++				if branchless {
++					err = WithCheckoutCommandLaunchIntent(ws, func() error {
++						return CheckoutFeatureDirSessionPreconditions(ws)
++					}, func() error {
++						return runner.Run(ws.RepoRoot, []string{"/editor"})
++					})
++				} else {
++					err = OpenCheckoutCommand(ws, "feature", entry, []string{"/editor"}, runner, nil, "", nil)
++				}
++				if err == nil || runner.calls != 0 {
++					t.Fatalf("err=%v child calls=%d", err, runner.calls)
++				}
++				after, present, readErr := loadCheckoutSessionIntentSnapshot(ws)
++				if readErr != nil || !present || !os.SameFile(expected.dirInfo, after.dirInfo) ||
++					!os.SameFile(expected.ownerInfo, after.ownerInfo) || !bytes.Equal(expected.ownerBytes, after.ownerBytes) {
++					t.Fatalf("changed ownership evidence was modified: present=%t err=%v", present, readErr)
++				}
++				if !bytes.Contains(after.ownerBytes, []byte(token)) {
++					t.Fatal("the regression must keep the original token")
++				}
++				if _, statErr := os.Lstat(sessionStatePath(ws)); !errors.Is(statErr, os.ErrNotExist) {
++					t.Fatalf("session state was published: %v", statErr)
++				}
++				if branch, branchErr := sessionCurrentBranch(ws.RepoRoot); branchErr != nil || branch != "main" {
++					t.Fatalf("checkout activated: %q %v", branch, branchErr)
++				}
++			})
++		}
++	}
++
++}
++
++func TestCheckoutCommandInitialCaptureFailureRetainsPaths(t *testing.T) {
++	for _, branchless := range []bool{false, true} {
++		t.Run(fmt.Sprint(branchless), func(t *testing.T) {
++			_, ws, entry := setupSessionRepo(t)
++			var dirInfo, ownerInfo os.FileInfo
++			var before []byte
++			kept := filepath.Join(sessionLockDir(ws), "retained-owner.json")
++			CheckoutCommandIntentCaptureHook = func() error {
++				var err error
++				before, err = os.ReadFile(sessionLockOwnerPath(ws))
++				if err != nil {
++					t.Fatal(err)
++				}
++				if err := os.Rename(sessionLockOwnerPath(ws), kept); err != nil {
++					t.Fatal(err)
++				}
++				dirInfo, err = os.Lstat(sessionLockDir(ws))
++				if err != nil {
++					t.Fatal(err)
++				}
++				ownerInfo, err = os.Lstat(kept)
++				if err != nil {
++					t.Fatal(err)
++				}
++				return nil
++			}
++			t.Cleanup(func() { CheckoutCommandIntentCaptureHook = nil })
++			runner := &testAgent{}
++			var err error
++			if branchless {
++				err = WithCheckoutCommandLaunchIntent(ws, nil, func() error {
++					return runner.Run(ws.RepoRoot, []string{"/editor"})
++				})
++			} else {
++				err = OpenCheckoutCommand(ws, "feature", entry, []string{"/editor"}, runner, nil, "", nil)
++			}
++			if err == nil || !strings.Contains(err.Error(), "could not be captured") || runner.calls != 0 {
++				t.Fatalf("err=%v child calls=%d", err, runner.calls)
++			}
++			afterDir, err := os.Lstat(sessionLockDir(ws))
++			if err != nil || !os.SameFile(dirInfo, afterDir) {
++				t.Fatalf("uncaptured intent directory changed: %v", err)
++			}
++			afterOwner, err := os.Lstat(kept)
++			if err != nil || !os.SameFile(ownerInfo, afterOwner) {
++				t.Fatalf("retained owner identity changed: %v", err)
++			}
++			after, err := os.ReadFile(kept)
++			if err != nil || !bytes.Equal(before, after) {
++				t.Fatalf("retained owner bytes changed: %v", err)
++			}
++			if _, err := os.Lstat(sessionLockOwnerPath(ws)); !errors.Is(err, os.ErrNotExist) {
++				t.Fatalf("owner path was recreated: %v", err)
++			}
++			if HasCheckoutAgentSession(ws) {
++				t.Fatal("command state was published without captured ownership")
++			}
++			if current, err := sessionCurrentBranch(ws.RepoRoot); err != nil || current != "main" {
++				t.Fatalf("checkout activated: %q %v", current, err)
++			}
++		})
++	}
++}
+diff --git a/internal/command_tmux.go b/internal/command_tmux.go
+new file mode 100644
+index 0000000..54009fc
+--- /dev/null
++++ b/internal/command_tmux.go
+@@ -0,0 +1,176 @@
++package internal
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"os/exec"
++	"path/filepath"
++	"strings"
++)
++
++// CommandTmuxRunner adds token verification to the existing transport. The
++// token is the existing launch/session owner, not a command history or schema.
++type CommandTmuxRunner interface {
++	SessionTmuxRunner
++	CommandSessionExists(name string) (bool, error)
++	NewCommandSession(name, dir string, command []string, token string) error
++	OwnedCommandSession(name, token string) (bool, error)
++	AttachCommandSession(name, token string) error
++	KillCommandSession(name, token string) error
++}
++
++func commandTmuxRunner(runner SessionTmuxRunner) (CommandTmuxRunner, error) {
++	tmux, ok := runner.(CommandTmuxRunner)
++	if !ok {
++		return nil, errors.New("tmux transport cannot verify command session ownership")
++	}
++	return tmux, nil
++}
++
++func RefuseCommandTmuxCollision(runner SessionTmuxRunner, name string) error {
++	tmux, err := commandTmuxRunner(runner)
++	if err != nil {
++		return err
++	}
++	present, err := tmux.CommandSessionExists(name)
++	if err != nil {
++		return err
++	}
++	if present {
++		return fmt.Errorf("tmux session %q already exists; close or inspect it first (the supplied command was not run)", name)
++	}
++	return nil
++}
++
++func (RealSessionTmuxRunner) CommandSessionExists(name string) (bool, error) {
++	if _, err := exec.LookPath("tmux"); err != nil {
++		return false, errors.New("tmux is unavailable; session state cannot be verified")
++	}
++	budget := NewStatusProbeBudget(context.Background())
++	defer budget.Close()
++	snapshot := (RealTmuxInventory{budget: budget}).Snapshot()
++	return snapshot.Sessions[name], snapshot.Err
++}
++
++func (r RealSessionTmuxRunner) NewCommandSession(name, dir string, command []string, token string) error {
++	if len(command) == 0 || !filepath.IsAbs(command[0]) || token == "" {
++		return errors.New("tmux command requires a bound absolute executable and an owner token")
++	}
++	// Multiple argv elements force tmux's exec route even for a zero-argument
++	// executable. Caller text appears only in positional args, never source.
++	// Only these option values are tmux formats. Do not format-escape the
++	// executable or child argv, which must reach exec byte-for-byte.
++	args := []string{"new-session", "-d", "-P", "-F", "#{session_id}",
++		"-s", strings.ReplaceAll(name, "#", "##"), "-c", strings.ReplaceAll(dir, "#", "##"),
++		"--", "/bin/sh", "-c", `exec "$@"`, "tws-command"}
++	args = append(args, command...)
++	// tmux parses trailing semicolons as command separators before exec.
++	// It removes exactly one backslash before a final semicolon, including
++	// when the value already contains backslashes. This is not shell quoting.
++	for i, arg := range args {
++		if strings.HasSuffix(arg, ";") {
++			args[i] = arg[:len(arg)-1] + `\;`
++		}
++	}
++	out, err := exec.Command("tmux", args...).Output()
++	if err != nil {
++		return fmt.Errorf("tmux command creation could not be confirmed: %w", err)
++	}
++	id := strings.TrimSpace(string(out))
++	if !validCommandTmuxID(id) {
++		return errors.New("tmux did not return a verifiable command session identity")
++	}
++	// Address the returned id, never a possibly reoccupied name. A command
++	// that already exited needs no marker; its checkout state predates spawn.
++	if err := exec.Command("tmux", "set-option", "-t", id, "@tws-command-owner", token).Run(); err != nil {
++		present, probeErr := r.CommandSessionExists(name)
++		if probeErr == nil && !present {
++			return nil
++		}
++		return errors.Join(errors.New("tmux command ownership could not be recorded; inspect the session"), err, probeErr)
++	}
++	return nil
++}
++
++func validCommandTmuxID(id string) bool {
++	if len(id) < 2 || id[0] != '$' {
++		return false
++	}
++	for _, c := range id[1:] {
++		if c < '0' || c > '9' {
++			return false
++		}
++	}
++	return true
++}
++
++func (r RealSessionTmuxRunner) ownedCommandSessionID(name, token string) (string, error) {
++	present, err := r.CommandSessionExists(name)
++	if err != nil || !present {
++		return "", err
++	}
++	out, err := exec.Command("tmux", "display-message", "-p", "-t", "="+name+":",
++		"#{session_id}\t#{@tws-command-owner}").Output()
++	if err != nil {
++		if present, probeErr := r.CommandSessionExists(name); probeErr == nil && !present {
++			return "", nil
++		}
++		return "", fmt.Errorf("tmux command session identity is unverifiable: %w", err)
++	}
++	parts := strings.Split(strings.TrimSpace(string(out)), "\t")
++	if len(parts) != 2 || !validCommandTmuxID(parts[0]) || token == "" || parts[1] != token {
++		return "", errors.New("tmux command session ownership changed or is uncertain; inspect it without killing it")
++	}
++	return parts[0], nil
++}
++
++func (r RealSessionTmuxRunner) OwnedCommandSession(name, token string) (bool, error) {
++	id, err := r.ownedCommandSessionID(name, token)
++	return id != "", err
++}
++
++func (r RealSessionTmuxRunner) AttachCommandSession(name, token string) error {
++	id, err := r.ownedCommandSessionID(name, token)
++	if err != nil || id == "" {
++		return err
++	}
++	return r.AttachSession(id)
++}
++
++func (r RealSessionTmuxRunner) KillCommandSession(name, token string) error {
++	id, err := r.ownedCommandSessionID(name, token)
++	if err != nil || id == "" {
++		return err
++	}
++	return r.KillSession(id)
++}
++
++func RunExternalTmuxCommand(runner SessionTmuxRunner, name, path string, command []string, token string) error {
++	tmux, err := commandTmuxRunner(runner)
++	if err != nil {
++		return err
++	}
++	if err := RefuseCommandTmuxCollision(runner, name); err != nil {
++		return err
++	}
++	if err := tmux.NewCommandSession(name, path, command, token); err != nil {
++		return fmt.Errorf("command startup is uncertain; inspect tmux session %q before retrying (nothing was killed): %w", name, err)
++	}
++	present, err := tmux.OwnedCommandSession(name, token)
++	if err != nil || !present {
++		return err
++	}
++	attachErr := tmux.AttachCommandSession(name, token)
++	present, probeErr := tmux.OwnedCommandSession(name, token)
++	if probeErr != nil {
++		return errors.Join(attachErr, probeErr)
++	}
++	if attachErr != nil {
++		if present {
++			return fmt.Errorf("tmux attach failed; command session %q remains active: %w", name, attachErr)
++		}
++		return fmt.Errorf("tmux attach failed and the command session ended; its exit status is unavailable: %w", attachErr)
++	}
++	return nil
++}
+diff --git a/internal/command_tmux_integration_test.go b/internal/command_tmux_integration_test.go
+new file mode 100644
+index 0000000..695d1c2
+--- /dev/null
++++ b/internal/command_tmux_integration_test.go
+@@ -0,0 +1,172 @@
++//go:build tmux_integration
++
++package internal
++
++import (
++	"encoding/json"
++	"errors"
++	"fmt"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"reflect"
++	"strings"
++	"testing"
++	"time"
++)
++
++type commandTmuxCapture struct {
++	Path       string   `json:"path"`
++	Executable string   `json:"executable"`
++	Args       []string `json:"args"`
++}
++
++// Intercept the isolated child before testing's flag parser, so even zero
++// arguments and option-like values reach the real executable unchanged.
++func init() {
++	if capture := os.Getenv("TWS_TEST_TMUX_ARGV_CAPTURE"); capture != "" {
++		path, err := os.Getwd()
++		if err != nil {
++			fmt.Fprintln(os.Stderr, err)
++			os.Exit(2)
++		}
++		data, err := json.Marshal(commandTmuxCapture{
++			Path: path, Executable: os.Args[0], Args: append([]string{}, os.Args[1:]...),
++		})
++		if err != nil {
++			fmt.Fprintln(os.Stderr, err)
++			os.Exit(2)
++		}
++		if err := os.WriteFile(capture, data, 0600); err != nil {
++			fmt.Fprintln(os.Stderr, err)
++			os.Exit(2)
++		}
++		time.Sleep(15 * time.Second)
++		os.Exit(0)
++	}
++}
++
++// Run with -tags=tmux_integration; this test requires the real optional tmux
++// binary and never substitutes a mock for its command parser.
++func TestCheckoutCommandTmuxLiteralTransport(t *testing.T) {
++	tmux, err := exec.LookPath("tmux")
++	if err != nil {
++		t.Fatal("tmux_integration requires tmux:", err)
++	}
++	tmux, err = filepath.Abs(tmux)
++	if err != nil {
++		t.Fatal(err)
++	}
++	executable, err := os.Executable()
++	if err != nil {
++		t.Fatal(err)
++	}
++	edges := []string{"", ";", "literal;", ";;", "literal;;", "-;", "; ", "middle;value", "line\n;", "*", "not-a-tmux-command"}
++	for n := 1; n <= 6; n++ {
++		backslashes := strings.Repeat(`\`, n)
++		edges = append(edges, backslashes+";", "prefix"+backslashes+";", ";"+backslashes, backslashes+";middle")
++	}
++	for _, tc := range []struct {
++		name, session, directory string
++		args                     []string
++	}{
++		{"control", "literal-command;", `cwd\;`, []string{"literal", "ordinary"}},
++		{"zero", "literal-command;", `cwd\;`, []string{}},
++		{"semicolons-and-backslashes", "literal-command;", `cwd\;`, edges},
++		{"format-variables", "feat#{pid}", "cwd#{pid}", []string{"#{pid}", "#", "##"}},
++		{"format-jobs", "feat#(tws-format-job)", "cwd#(tws-format-job)", []string{"#(tws-format-job)", "#{pid}"}},
++		{"literal-hashes", "feat###hash##", "cwd####hash#", []string{"#", "##", "###", "####"}},
++		{"formats-and-semicolons", "feat##{pid}#(tws-format-job);", `cwd#{pid}#(tws-format-job)\;`, []string{"#(tws-format-job);", `\#{pid};`, "##;"}},
++		{"formats-zero", "feat#{pid}#(tws-format-job);", "cwd#{pid}#(tws-format-job);", []string{}},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			root, err := filepath.EvalSymlinks(t.TempDir())
++			if err != nil {
++				t.Fatal(err)
++			}
++			t.Chdir(root)
++			bin := filepath.Join(root, "bin")
++			if err := os.Mkdir(bin, 0700); err != nil {
++				t.Fatal(err)
++			}
++			shim := "#!/bin/sh\nexec \"$TWS_TEST_REAL_TMUX\" -S \"$TWS_TEST_TMUX_SOCKET\" -f /dev/null \"$@\"\n"
++			if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(shim), 0700); err != nil {
++				t.Fatal(err)
++			}
++			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
++			t.Setenv("TWS_TEST_REAL_TMUX", tmux)
++			t.Setenv("TWS_TEST_TMUX_SOCKET", "literal.sock")
++			home := filepath.Join(root, "home")
++			if err := os.Mkdir(home, 0700); err != nil {
++				t.Fatal(err)
++			}
++			t.Setenv("HOME", home)
++			jobMarker := filepath.Join(root, "unexpected-format-job")
++			t.Setenv("TWS_TEST_FORMAT_JOB_MARKER", jobMarker)
++			if err := os.WriteFile(filepath.Join(bin, "tws-format-job"),
++				[]byte("#!/bin/sh\nprintf job > \"$TWS_TEST_FORMAT_JOB_MARKER\"\n"), 0700); err != nil {
++				t.Fatal(err)
++			}
++			capture := filepath.Join(root, "capture.json")
++			t.Setenv("TWS_TEST_TMUX_ARGV_CAPTURE", capture)
++			program := filepath.Join(root, "editor#{pid}#(tws-format-job) ' "+`\;`)
++			if err := os.Symlink(executable, program); err != nil {
++				t.Fatal(err)
++			}
++			dir := filepath.Join(root, tc.directory)
++			if err := os.Mkdir(dir, 0700); err != nil {
++				t.Fatal(err)
++			}
++			command := append([]string{program}, tc.args...)
++			runner := RealSessionTmuxRunner{}
++			name := tc.session
++			const token = "literal-command-test-owner"
++			if err := runner.NewCommandSession(name, dir, command, token); err != nil {
++				t.Fatal(err)
++			}
++			t.Cleanup(func() {
++				if err := runner.KillCommandSession(name, token); err != nil {
++					t.Error(err)
++				}
++			})
++			if present, err := runner.OwnedCommandSession(name, token); err != nil || !present {
++				t.Fatalf("command session ownership: present=%t err=%v", present, err)
++			}
++			names, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
++			if err != nil || string(names) != name+"\n" {
++				t.Fatalf("tmux changed the selected name: %q %v", names, err)
++			}
++			var got commandTmuxCapture
++			deadline := time.Now().Add(5 * time.Second)
++			for {
++				data, err := os.ReadFile(capture)
++				if err == nil && json.Unmarshal(data, &got) == nil {
++					break
++				}
++				if time.Now().After(deadline) {
++					t.Fatalf("child did not capture literal argv: %v", err)
++				}
++				time.Sleep(10 * time.Millisecond)
++			}
++			want := commandTmuxCapture{Path: dir, Executable: program, Args: tc.args}
++			if !reflect.DeepEqual(got, want) {
++				t.Fatalf("tmux changed literal values:\n got: %#v\nwant: %#v", got, want)
++			}
++			// Format jobs are asynchronous; inspect after the command is
++			// live as well as after ownership-verified cleanup.
++			time.Sleep(100 * time.Millisecond)
++			if _, err := os.Lstat(jobMarker); !errors.Is(err, os.ErrNotExist) {
++				t.Fatalf("a selected name/directory or child argv launched a format job: %v", err)
++			}
++			if err := runner.KillCommandSession(name, token); err != nil {
++				t.Fatal(err)
++			}
++			if present, err := runner.OwnedCommandSession(name, token); err != nil || present {
++				t.Fatalf("owned cleanup failed: present=%t err=%v", present, err)
++			}
++			if _, err := os.Lstat(jobMarker); !errors.Is(err, os.ErrNotExist) {
++				t.Fatalf("format job marker appeared during cleanup: %v", err)
++			}
++		})
++	}
++}
+diff --git a/internal/direct_session.go b/internal/direct_session.go
+index 8064147..c3cb308 100644
+--- a/internal/direct_session.go
++++ b/internal/direct_session.go
+@@ -20,12 +20,13 @@ import (
+ // than parsed.
+ const directSessionSchema = 1
+ 
+-// Direct session stages. "starting" exists only in external records: it marks
+-// the window between record creation and a successful agent spawn.
++// Direct session stages. "starting" exists only in external agent records.
++// Generic programs use "command" throughout their recorded lifetime.
+ const (
+ 	DirectStageStarting = "starting"
+ 	DirectStageAgent    = "agent"
+ 	DirectStageShell    = "shell"
++	DirectStageCommand  = "command"
+ )
+ 
+ // directSessionsDirName is the hidden per-feature directory holding
+@@ -35,11 +36,11 @@ const directSessionsDirName = ".sessions"
+ 
+ var directRecordFileRe = regexp.MustCompile(`^[0-9a-f]{32}\.json$`)
+ 
+-// DirectSessionRecord is one external `tws open` invocation running an agent
++// DirectSessionRecord is one external `tws open` invocation running a child
+ // directly (no tmux). It is advisory liveness data, never a lock.
+ //
+ // It deliberately stores no argv, no prompt, no transcript, and no
+-// environment: Agent holds the bare binary token only.
++// environment: Agent holds the bare agent token only and is omitted for commands.
+ type DirectSessionRecord struct {
+ 	SchemaVersion int    `json:"schema_version"`
+ 	Token         string `json:"token"`
+diff --git a/internal/session.go b/internal/session.go
+index e14dd34..882f941 100644
+--- a/internal/session.go
++++ b/internal/session.go
+@@ -595,21 +595,9 @@ func CheckoutSessionPreconditions(ws Workspace, feature string, entry StackEntry
+ 	if sessionGitOperation(ws.RepoRoot) {
+ 		return fmt.Errorf("another Git operation is in progress")
+ 	}
+-	active, err := anyCheckoutSyncActive(ws.MetadataRoot)
+-	if err != nil {
++	if err := CheckoutSessionMutationPreconditions(ws); err != nil {
+ 		return err
+ 	}
+-	if active {
+-		return fmt.Errorf("checkout sync is active in this repository")
+-	}
+-	// Checkout mode has one workspace-global physical checkout. Any checkout
+-	// reparent therefore blocks every feature launch, not only the feature
+-	// whose artifact names the run.
+-	if owner, active, err := anyCheckoutReparentActive(ws); err != nil {
+-		return fmt.Errorf("checkout reparent state could not be verified: %w", err)
+-	} else if active {
+-		return reparentLaunchRefusal(owner)
+-	}
+ 	dirty, err := sessionDirty(ws.RepoRoot)
+ 	if err != nil {
+ 		return err
+@@ -620,7 +608,9 @@ func CheckoutSessionPreconditions(ws Workspace, feature string, entry StackEntry
+ 	return nil
+ }
+ 
+-func CheckoutFeatureDirSessionPreconditions(ws Workspace) error {
++// CheckoutSessionMutationPreconditions is also used by path observations.
++// It deliberately imposes neither a clean checkout nor a session exclusion.
++func CheckoutSessionMutationPreconditions(ws Workspace) error {
+ 	active, err := anyCheckoutSyncActive(ws.MetadataRoot)
+ 	if err != nil {
+ 		return err
+@@ -628,11 +618,21 @@ func CheckoutFeatureDirSessionPreconditions(ws Workspace) error {
+ 	if active {
+ 		return fmt.Errorf("checkout sync is active in this repository")
+ 	}
++	// Checkout mode has one workspace-global physical checkout. Any checkout
++	// reparent therefore blocks every feature launch, not only the feature
++	// whose artifact names the run.
+ 	if owner, active, err := anyCheckoutReparentActive(ws); err != nil {
+ 		return fmt.Errorf("checkout reparent state could not be verified: %w", err)
+ 	} else if active {
+ 		return reparentLaunchRefusal(owner)
+ 	}
++	return nil
++}
++
++func CheckoutFeatureDirSessionPreconditions(ws Workspace) error {
++	if err := CheckoutSessionMutationPreconditions(ws); err != nil {
++		return err
++	}
+ 	if present, err := CheckoutAgentSessionPresence(ws); err != nil {
+ 		return fmt.Errorf("checkout session state could not be verified: %w", err)
+ 	} else if present {
+@@ -1080,6 +1080,9 @@ func CloseCheckoutSession(ws Workspace, feature, name string, tmux SessionTmuxRu
+ 	if tmux == nil {
+ 		tmux = RealSessionTmuxRunner{}
+ 	}
++	if state.Stage == DirectStageCommand {
++		return closeCheckoutCommandSession(ws, state, tmux)
++	}
+ 	if state.Mode == AgentSessionTmux && state.TmuxSession != "" && tmux.HasSession(state.TmuxSession) {
+ 		if err := tmux.KillSession(state.TmuxSession); err != nil {
+ 			return err

@@ -59,14 +59,53 @@ tws new auth main --force                         # force if already checked out
 ## Work in a worktree
 
 ```sh
-tws open auth auth-models              # cd + run agent (default)
+tws open auth auth-models              # run agent in target cwd (default)
 tws open auth auth-models --tmux       # wrap in tmux session
-tws open auth auth-models --no-agent   # just print the path
+tws open auth auth-models --no-agent   # legacy human guidance, not a machine query
+tws open auth auth-models --print-path # exactly one verified absolute path
+tws open auth --feature-dir --print-path
+tws open auth auth-models --command nvim -- .
+tws open auth --feature-dir --command code -- --wait .
+tws open --feature-dir --print-path -- -feature
+tws open --command nvim -- -feature -branch -- README.md
 tws open                               # interactive picker (fzf if available)
 tws open auth                          # pick branch within feature
 tws open auth --feature-dir            # feature orchestrator directory
 tws open auth --all                    # tmux: orchestrator + one window per worktree
 ```
+
+For leading-dash selectors, place all tws flags before an initial `--`.
+Fill the required feature/branch slots (a literal `--` is a selector there),
+then use another `--` immediately after them for child arguments. A child
+argument literally `--` stays literal; path queries accept no child arguments.
+The usual post-selector `--` remains the child delimiter.
+
+For parent-shell navigation:
+`path=$(tws open auth auth-models --print-path) && cd -- "$path"`.
+A child cannot change the parent shell's cwd. The query has no injection,
+writer locks, fetch, activation, or recovery, and no stdout on failure. Dirt
+and valid sessions are observable; pending mutation/recovery evidence refuses.
+Checkout branch queries require the current attached logical entry.
+
+`--command` takes one executable, resolved in the caller's environment before
+effects; arguments after the post-selector `--` are passed literally to it. No shell
+evaluation, configured agent, continuation flags, or trailing shell runs.
+Direct execution inherits stdio and returns failure for nonzero child exit.
+Branch commands support direct/tmux in both modes and honor tmux preferences.
+Feature-directory commands default direct in both modes; explicit tmux is
+external-only. Supplied commands refuse existing tmux sessions.
+Use tmux's own controls for an external feature-directory session; `tws close`
+still requires a logical branch there.
+
+Do not combine either mode with enabled `--all`/`--no-agent` or with each other.
+Path queries reject explicit tmux flags; commands reject enabled
+`--tmux` plus `--no-tmux`. Configured/saved injection renderers stay unchanged.
+Use GUI wait flags; daemonized descendants are not adopted. A detached live
+checkout tmux session stays owned until completion/close; its eventual exit
+code is not forwarded. Dirty/changed/foreign checkout state and uncertain
+cleanup retain evidence: inspect status, preserve work, then close safely,
+never delete guards. Generic commands remain semantic `agent_state: unknown`;
+there is no new process birth-identity guarantee.
 
 ## Decisions (cross-worktree communication)
 
@@ -99,7 +138,7 @@ tws decisions ack auth
 
 Decision types: `breaking` | `info` | `deprecation` | `review` | `question`
 
-When you `tws open`, unread decisions are shown automatically:
+When you use ordinary agent `tws open`, unread decisions are shown automatically:
 ```
   2 new decision(s) (1 for you) (run: tws decisions show auth)
 ```

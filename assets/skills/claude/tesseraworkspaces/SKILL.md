@@ -24,6 +24,8 @@ tws <command> [args]
 | `tws add <feature> [-n <branch>] [--open] [--tmux] [--template <dir-or-name>] [--worktree-template <ref>] [--orchestrator-template <ref>] [--agent claude\|copilot] [--resolve-conflicts]` | Create a legacy or managed feature |
 | `tws new <feature> <branch> [--base <parent>] [--force]` | Create a worktree branch |
 | `tws open [feature] [branch] [--tmux] [--no-agent]` | Open worktree and run agent |
+| `tws open <feature> <branch> --print-path` | Read-only verified path; also accepts `<feature> --feature-dir` |
+| `tws open <feature> <branch> --command <executable> -- <args...>` | One literal-argv program; also accepts `<feature> --feature-dir` |
 | `tws sync <feature> [--push] [--verbose] [--continue] [--abort] [--fetch\|--no-fetch] [--full\|--local-only] [--only <entry>\|--from <entry>]` | Rebase worktrees in dependency order, optionally scoped |
 | `tws push <feature> [--only <entry>\|--from <entry>] [--dry-run]` | Publish selected refs; no selector preserves legacy external push |
 | `tws push <feature> --continue [--dry-run]` / `--cancel` | Recover frozen standalone publication; never remote rollback |
@@ -55,6 +57,42 @@ tws <command> [args]
 | `tws template sync <feature> [--template <dir-or-name>] [--scope worktree\|orchestrator\|both] [--resolve-conflicts] [--allow-managed-removal]` | Backfill legacy templates or refresh managed roles |
 | `tws init [--agent claude\|copilot]` | Install agent skills |
 | `tws --version` | Print version |
+
+### Non-agent open
+
+Use `--print-path` for machine integration, not legacy `--no-agent` human
+guidance: `path=$(tws open auth api --print-path) && cd -- "$path"`.
+The query prints exactly one absolute verified path/newline, no stdout on
+failure, and never injects, locks, fetches, activates, or recovers. Checkout
+entry queries require the current attached logical branch. Dirt and valid
+sessions are observable; pending mutation/recovery evidence still refuses.
+A child cannot change the parent shell's cwd.
+
+`tws open auth api --command nvim -- .` runs one executable bound from the
+caller's PATH or relative path, with literal arguments after the post-selector
+`--`. No shell evaluation, agent continuation, or follow-up shell; configured/saved renderers
+stay unchanged and injection safeguards still apply. Direct execution inherits
+stdio and reports nonzero child exit as CLI failure. Both modes require explicit
+selectors, are exclusive, and reject enabled `--all`/`--no-agent`. Queries
+reject explicit tmux flags; commands reject contradictory enabled tmux flags.
+
+For leading-dash selectors, put all tws flags before an initial `--`:
+`tws open --feature-dir --print-path -- -feature` or
+`tws open --command nvim -- -feature -branch -- README.md`.
+Fill the required selector slots first (even a selector literally `--`), then
+use another `--` immediately after them for child argv. A later child argument
+literally `--` is preserved. Queries reject extra arguments; normal
+post-selector delimiters are unchanged.
+
+Branch commands support direct/tmux in both workspace modes and honor tmux
+preferences. Feature-directory commands default direct in both modes; explicit
+tmux is external-only. Supplied commands refuse existing tmux sessions.
+Detaching leaves a live checkout session owned, without eventual exit-code
+forwarding. Unsafe dirty/changed/foreign checkout state or uncertain cleanup
+retains evidence: inspect status, preserve work, then close safely; never erase
+guards. Use GUI wait flags (`--command code -- --wait .`); daemonized descendants
+are not adopted. Generic commands have semantic `agent_state: unknown`, and
+there is no new portable process birth-identity guarantee.
 
 ### Reparent vs sync
 

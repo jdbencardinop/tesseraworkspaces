@@ -595,6 +595,22 @@ func CheckoutSessionPreconditions(ws Workspace, feature string, entry StackEntry
 	if sessionGitOperation(ws.RepoRoot) {
 		return fmt.Errorf("another Git operation is in progress")
 	}
+	if err := CheckoutSessionMutationPreconditions(ws); err != nil {
+		return err
+	}
+	dirty, err := sessionDirty(ws.RepoRoot)
+	if err != nil {
+		return err
+	}
+	if dirty {
+		return fmt.Errorf("working tree is dirty; commit or stash changes first")
+	}
+	return nil
+}
+
+// CheckoutSessionMutationPreconditions is also used by path observations.
+// It deliberately imposes neither a clean checkout nor a session exclusion.
+func CheckoutSessionMutationPreconditions(ws Workspace) error {
 	active, err := anyCheckoutSyncActive(ws.MetadataRoot)
 	if err != nil {
 		return err
@@ -610,28 +626,12 @@ func CheckoutSessionPreconditions(ws Workspace, feature string, entry StackEntry
 	} else if active {
 		return reparentLaunchRefusal(owner)
 	}
-	dirty, err := sessionDirty(ws.RepoRoot)
-	if err != nil {
-		return err
-	}
-	if dirty {
-		return fmt.Errorf("working tree is dirty; commit or stash changes first")
-	}
 	return nil
 }
 
 func CheckoutFeatureDirSessionPreconditions(ws Workspace) error {
-	active, err := anyCheckoutSyncActive(ws.MetadataRoot)
-	if err != nil {
+	if err := CheckoutSessionMutationPreconditions(ws); err != nil {
 		return err
-	}
-	if active {
-		return fmt.Errorf("checkout sync is active in this repository")
-	}
-	if owner, active, err := anyCheckoutReparentActive(ws); err != nil {
-		return fmt.Errorf("checkout reparent state could not be verified: %w", err)
-	} else if active {
-		return reparentLaunchRefusal(owner)
 	}
 	if present, err := CheckoutAgentSessionPresence(ws); err != nil {
 		return fmt.Errorf("checkout session state could not be verified: %w", err)
@@ -1079,6 +1079,9 @@ func CloseCheckoutSession(ws Workspace, feature, name string, tmux SessionTmuxRu
 	}
 	if tmux == nil {
 		tmux = RealSessionTmuxRunner{}
+	}
+	if state.Stage == DirectStageCommand {
+		return closeCheckoutCommandSession(ws, state, tmux)
 	}
 	if state.Mode == AgentSessionTmux && state.TmuxSession != "" && tmux.HasSession(state.TmuxSession) {
 		if err := tmux.KillSession(state.TmuxSession); err != nil {

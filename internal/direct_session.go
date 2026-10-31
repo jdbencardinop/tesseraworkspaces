@@ -20,12 +20,13 @@ import (
 // than parsed.
 const directSessionSchema = 1
 
-// Direct session stages. "starting" exists only in external records: it marks
-// the window between record creation and a successful agent spawn.
+// Direct session stages. "starting" exists only in external agent records.
+// Generic programs use "command" throughout their recorded lifetime.
 const (
 	DirectStageStarting = "starting"
 	DirectStageAgent    = "agent"
 	DirectStageShell    = "shell"
+	DirectStageCommand  = "command"
 )
 
 // directSessionsDirName is the hidden per-feature directory holding
@@ -35,11 +36,11 @@ const directSessionsDirName = ".sessions"
 
 var directRecordFileRe = regexp.MustCompile(`^[0-9a-f]{32}\.json$`)
 
-// DirectSessionRecord is one external `tws open` invocation running an agent
+// DirectSessionRecord is one external `tws open` invocation running a child
 // directly (no tmux). It is advisory liveness data, never a lock.
 //
 // It deliberately stores no argv, no prompt, no transcript, and no
-// environment: Agent holds the bare binary token only.
+// environment: Agent holds the bare agent token only and is omitted for commands.
 type DirectSessionRecord struct {
 	SchemaVersion int    `json:"schema_version"`
 	Token         string `json:"token"`

@@ -663,6 +663,80 @@ skips missing worktrees; standalone checkout push still refuses.
 Issue #6 was **released in `v1.2.18-rc.8`** and is closed after verified
 Ubuntu/macOS main and tag/release CI and exact-tag version checks.
 
+## Open without an agent
+
+```sh
+# Machine-readable observation, not legacy --no-agent human guidance:
+path=$(tws open auth auth-models --print-path) && cd -- "$path"
+tws open auth --feature-dir --print-path
+
+# One executable, with literal child arguments after --:
+tws open auth auth-models --command nvim -- .
+tws open auth auth-models --command code -- --wait .
+tws open auth --feature-dir --command nvim -- FEATURE.md
+
+# Escape leading-dash selectors; put all tws flags before the first --:
+tws open --feature-dir --print-path -- -feature
+tws open --command nvim -- -feature -branch -- README.md
+```
+
+When `--` occurs before all required selectors are filled, it ends option
+parsing: consume the feature/branch slots first, even when a selector is
+literally `--`. Command arguments then require another `--` immediately after
+the selectors; a child argument literally `--` after that is preserved.
+Queries accept option-escaped selectors but no child arguments. A normal
+post-selector `--` keeps its child-argument meaning.
+
+Both modes require explicit selectors; neither opens a picker. `--print-path`
+writes exactly one verified absolute path and newline, or nothing on stdout
+on failure. It does not inject, fetch, refresh the index, acquire writer locks,
+activate a checkout, recover state, or launch anything. Ordinary dirt or a
+valid session does not prevent observation, but pending sync, reparent,
+rename, publication, or checkout metadata-movement evidence does. An external
+branch must already be a verified linked worktree (including supported legacy
+no-stack layouts). A checkout branch query requires the selected active logical
+entry to be the currently attached branch; it never silently activates it.
+Paths containing control characters refuse. A query is an observation, not a lease.
+
+| Command target | Direct | Tmux |
+|---|---|---|
+| External logical branch | Supported | Supported |
+| Checkout logical branch | Activate, run, safely restore | Recorded owner; restore after completion/close |
+| External feature directory | Default | Explicit `--tmux` |
+| Checkout feature directory | Default, no branch switch | Refused |
+
+Branch commands honor the configured tmux preference and `--tmux`/`--no-tmux`.
+Feature-directory commands default direct. The command executable is one
+PATH token or caller-relative path, resolved to an absolute executable before
+effects; quote paths containing spaces. Do not pass `"nvim file"` as the
+executable. Arguments after the post-selector `--` are literal, including empty
+strings and shell metacharacters: no shell evaluation, agent continuation, or
+follow-up shell.
+Direct mode inherits stdio and waits for exactly one child; a nonzero child
+exit is a normal CLI failure (usually exit 1). Neither mode rewrites
+`agent_command` or changes the saved template renderer. Commands still obey
+injection ownership and mutation/session admission.
+External feature-directory tmux sessions use tmux's own detach/kill controls;
+they have no logical branch for `tws close <feature> <branch>`.
+
+The two modes are exclusive and cannot be combined with enabled `--all` or
+`--no-agent`. Path queries reject explicit tmux flags; command mode rejects
+contradictory enabled tmux flags. A supplied command never silently attaches
+to an existing tmux session. Detaching leaves a live checkout command owned;
+tmux completion does not reliably forward the eventual child exit code.
+Checkout state is durable before command effects. Dirty work, changed branches,
+foreign ownership, or uncertain startup/cleanup retains evidence and returns an
+error: inspect `tws status --json`, preserve work, and use `tws close` only when
+the recorded ownership and checkout are safe. Do not delete evidence to bypass
+guards; unresolved metadata movement still needs manual reconciliation.
+
+Use GUI wait options, such as `code --wait`: tws does not adopt daemonized
+descendants. Runtime presence is visible, but a generic command is not semantic
+agent work (`agent_state` remains `unknown`). There is no new portable process
+birth-identity or arbitrary-writer isolation guarantee. A child cannot change
+the parent shell's cwd; the shell integration above changes it explicitly.
+Ordinary agent open, picker, `--all`, and legacy `--no-agent` output are unchanged.
+
 ## All Commands
 
 | Command | Description |
@@ -670,6 +744,8 @@ Ubuntu/macOS main and tag/release CI and exact-tag version checks.
 | `tws add <feature> [-n branch] [--open] [--tmux] [--template dir-or-name] [--worktree-template ref] [--orchestrator-template ref] [--agent claude\|copilot] [--resolve-conflicts]` | Create legacy or managed feature workspace |
 | `tws new <feature> <branch> [--base] [--repo] [--force]` | Create worktree branch |
 | `tws open [feature] [branch] [--tmux] [--no-agent]` | Open worktree (interactive picker if no args) |
+| `tws open <feature> <branch> --print-path` | Query one verified path; use `<feature> --feature-dir` for metadata |
+| `tws open <feature> <branch> --command <executable> [-- <args...>]` | Run one explicit program; feature-directory selectors also supported |
 | `tws sync <feature> [--push] [--continue] [--abort] [--verbose] [--fetch\|--no-fetch] [--full\|--local-only] [--only <entry>\|--from <entry>]` | Rebase in dependency order, optionally scoped |
 | `tws sync <feature> --plan [--json] [--max-replay-per-entry N] [--max-replay-total N]` | Preview the rebase; candidates are an upper bound, never applied |
 | `tws sync <feature> --approve-plan <fingerprint> [--max-replay-per-entry N \| --max-replay-total N]` | Execute a previewed, guarded plan |
@@ -898,7 +974,7 @@ tws space remove learning --workspace # drops the link; never deletes the target
 - [Go](https://go.dev/dl/) 1.26+
 - [git](https://git-scm.com/)
 - [tmux](https://github.com/tmux/tmux) (optional, for `tws open --tmux`)
-- A coding agent: [Claude Code](https://claude.ai/claude-code) (default), [OpenCode](https://opencode.ai), [Aider](https://aider.chat), or any CLI agent
+- For ordinary agent opens: [Claude Code](https://claude.ai/claude-code) (default), [OpenCode](https://opencode.ai), [Aider](https://aider.chat), or any CLI agent. Path queries and explicit commands do not require an installed agent.
 
 ## Configuration
 

@@ -15,6 +15,8 @@ You are working in a project that uses `tws` for feature-scoped workspaces with 
 - `tws add <feature> [-n <branch>] [--open] [--template <dir-or-name>] [--worktree-template <ref>] [--orchestrator-template <ref>] [--agent claude|copilot] [--resolve-conflicts]` — Create a legacy or managed feature
 - `tws new <feature> <branch> [--base <parent>] [--force]` — Create worktree branch
 - `tws open [feature] [branch] [--tmux] [--no-agent]` — Open worktree and run agent
+- `tws open <feature> <branch> --print-path` — Query one verified path; also accepts `<feature> --feature-dir`
+- `tws open <feature> <branch> --command <executable> -- <args...>` — Run one program; feature-directory selectors also supported
 - `tws sync <feature> [--push] [--verbose] [--continue] [--abort] [--fetch|--no-fetch] [--full|--local-only] [--only <entry>|--from <entry>]` — Rebase worktrees in dependency order, optionally scoped
 - `tws sync <feature> --plan [--json] [--max-replay-per-entry N] [--max-replay-total N]` — Preview the rebase and guard limits; candidates are an upper bound, never applied
 - `tws sync <feature> --approve-plan <fingerprint> [--max-replay-per-entry N | --max-replay-total N]` — Execute a previewed, guarded plan
@@ -44,6 +46,44 @@ You are working in a project that uses `tws` for feature-scoped workspaces with 
 - `tws close <feature> <branch>` — Close a session: refuses while a direct record is live, then kills tmux
 - `tws template add/list/show/remove` — Manage global/per-repository named template packages
 - `tws template sync <feature> [--template <dir-or-name>] [--scope worktree|orchestrator|both] [--resolve-conflicts] [--allow-managed-removal]` — Backfill legacy templates or refresh managed roles
+
+## Non-agent open
+
+`--print-path` is a machine query, not legacy `--no-agent` human guidance.
+Use `path=$(tws open auth api --print-path) && cd -- "$path"` for parent-shell
+navigation; a child cannot change its parent's cwd. Success prints exactly one
+verified absolute path/newline, errors no stdout. No injection, fetch, writer
+lock, activation, or recovery occurs. Checkout entry queries require the current
+attached logical branch. Dirt and valid sessions are observable, but pending
+mutation/recovery evidence still blocks.
+
+`tws open auth api --command nvim -- .` runs one executable bound from the
+caller's PATH or relative path, not a shell command line. Child arguments after
+the post-selector `--` are literal, with no evaluation, agent continuation, or
+follow-up shell.
+Direct execution inherits stdio and reports nonzero exit as CLI failure.
+Configured/saved renderers stay unchanged; injection safeguards still apply.
+Both modes require explicit selectors, are exclusive, and reject enabled
+`--all`/`--no-agent`. Queries reject explicit tmux flags; commands reject
+contradictory enabled tmux flags.
+
+Escape leading-dash selectors with an initial `--`, placing all tws flags
+before it: `tws open --feature-dir --print-path -- -feature` or
+`tws open --command nvim -- -feature -branch -- README.md`.
+Fill the required selector slots first, including a selector literally named
+`--`; child argv then needs another `--` immediately after them. A child
+argument literally `--` stays literal. Queries reject extra arguments, while
+normal post-selector delimiters retain their existing meaning.
+
+Branch commands support direct/tmux in both modes and honor tmux preferences.
+Feature-directory commands default direct; explicit tmux is external-only.
+Supplied commands refuse existing tmux sessions. Detaching retains a live
+checkout owner, without eventual tmux exit-code forwarding. Dirty/changed/
+foreign checkout state and uncertain cleanup preserve evidence: inspect
+status, keep work, then close safely; never erase guards. Use GUI wait flags
+(`--command code -- --wait .`); daemonized descendants are not adopted. Generic
+commands remain semantic `agent_state: unknown`; no new portable process
+birth-identity guarantee is added.
 
 ## Selected standalone publication (released in v1.2.18-rc.8)
 

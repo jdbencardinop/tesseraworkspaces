@@ -1,0 +1,143 @@
+{
+  "base_commit": "034126331db73522bb98d1f1a1fc08e146a68fe5",
+  "feature": "open-worktree-command",
+  "planning_files": {
+    ".tpatch/features/open-worktree-command/analysis.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "cb07e079cab768185095e89e8e6f0df40c140d543c442cbeb02a33936378172f"
+    },
+    ".tpatch/features/open-worktree-command/exploration.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "878f20331b7f29a0d543390cfa124fd8d0a44e31d3e4277335d0068cc3dc126f"
+    },
+    ".tpatch/features/open-worktree-command/request.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "c53d20399ffb35c87a1af73df2b340aad21a540066f7f94a441a6333568b45f5"
+    },
+    ".tpatch/features/open-worktree-command/spec.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "7bb152046f6133246149ec05611c3a8c1042bdb2b2bc490535d5b221247f8830"
+    }
+  },
+  "product_files": {
+    "CHANGELOG.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "ece44f83dec6934245c871b011aabfb055add3942fa9d79b7da7eef0de72eb62"
+    },
+    "README.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "de90e0107566b7bf1cea2150f903a73774efa53a3d5581ba49944b6edd983c94"
+    },
+    "assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "4687aad051c772390942800943f313bf4d1aa31e666c70ac5e927a7e4844a904"
+    },
+    "assets/skills/claude/tesseraworkspaces/SKILL.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "eb8e2a4c795e71ee0ab84f73cc89c273a0c12fe16727a3658d8b6aa4a42b35e7"
+    },
+    "assets/skills/copilot/tws.prompt.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "28c9911c4ec1482b3bf4458b269c41606a65ab8f2e1adec6f333008773cee92f"
+    },
+    "docs/cheatsheet.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "15ac14f49d6f620cc74034741a7f59a445ea2bcb709f42a8d78316020fe682db"
+    },
+    "docs/configuration.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "7229ded8dc799b0e9256befe6bc74e2823df4dff24c8617e1bea67b9dfce3724"
+    },
+    "docs/engineering-workflow.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "35ea350c468d19d594f7f75db798d85bf3f9d431c678d5939ec6ad312aceef28"
+    },
+    "docs/roadmap.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "7ce894062f6cb5eb8860691eea2a7d1feed93b252e84dfa74e779c3690602f56"
+    },
+    "internal/agent_status.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "2fd95fa7c886482743fa3913c819d93f07dd2bdfe4588972c98d38360c85b37c"
+    },
+    "internal/cli/direct_command.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "501a9261e9956e0410e3be7db205e1b24090d116d07c55f79c99b82f64180bbe"
+    },
+    "internal/cli/direct_command_test.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "fa71812c1911192c2e8dc9e13c9e0a4c4781a420a10d4d4888a6fa071e02bd6e"
+    },
+    "internal/cli/open.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "9a0ed37eec0ba81bff6d90d7cbb6d85f427d52eddeda0ed12f827e6e899740f9"
+    },
+    "internal/cli/open_explicit.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "9312f37aeb7573f99e22acac3863543aea40385879c3424682185881574fd4f1"
+    },
+    "internal/cli/open_explicit_test.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "a7d97123ea287e10dfa103a0199f3f268e60d8a5b6bb46fc844f3dd695e2b1a8"
+    },
+    "internal/cli/open_selectors_test.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "080705a11d50b53a74fd72bbca38d2df02bf8867f4ee25e7a1afe1e2f1355a4e"
+    },
+    "internal/cli/sync_plan_docs_test.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "939d67f4e201724f2a33c7fd4e8f7f3296ee6e81b4346742b10ab4ef5abadf31"
+    },
+    "internal/command_session.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "f2fd5e04eacaf8a2b1ba8cabcd0fe21bd7047d601753505d24db729b5ae6a6c2"
+    },
+    "internal/command_session_test.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "8cf8e3c08c2b19317b173177ace9ef129330415144da80b91a76eab46ab8977d"
+    },
+    "internal/command_tmux.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "32c4c99eca900ba918a3ce715f356458d7da09b6eb227731d53554e170aa0f02"
+    },
+    "internal/command_tmux_integration_test.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "71b5de6510db36aff3f894527e3921c4fe3624ef4367dfbccc49fb4beac06e60"
+    },
+    "internal/direct_session.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "9f31ba7d5668e8f43533e5847f61d21876598dc3cc9fbfeaed01a4c9e8198038"
+    },
+    "internal/session.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "3a05eed3a266c693bb4bc7137542aa64d1e23af68c8be60b760718847ce5ca45"
+    }
+  }
+}

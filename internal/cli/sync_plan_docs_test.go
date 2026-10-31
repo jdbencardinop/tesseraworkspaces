@@ -156,8 +156,8 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 		}
 
 		targetTail := ci[targetIdx : targetIdx+min(120, len(ci)-targetIdx)]
-		if !strings.Contains(targetTail, "node 24 ci maintenance") {
-			t.Fatalf(`docs/roadmap.md's "Current target:" sentence must name Node 24 CI maintenance, got: %q`, targetTail)
+		if !strings.Contains(targetTail, "open-worktree-command") {
+			t.Fatalf(`docs/roadmap.md's "Current target:" sentence must name open-worktree-command, got: %q`, targetTail)
 		}
 		if !strings.Contains(content, "fix-reparent-completion-context") {
 			t.Fatal("docs/roadmap.md must name the separate issue-seven feature boundary")
@@ -245,8 +245,8 @@ func TestSyncPlanDocs_PlanningProseSurfacesCarryShippedTargetAndNoFlagLiteral(t 
 		}
 
 		nextTail := ci[nextFeatureIdx : nextFeatureIdx+min(120, len(ci)-nextFeatureIdx)]
-		if !strings.Contains(nextTail, "node 24 ci maintenance") {
-			t.Fatalf(`docs/engineering-workflow.md's "Next roadmap work:" sentence must name Node 24 CI maintenance, got: %q`, nextTail)
+		if !strings.Contains(nextTail, "open-worktree-command") {
+			t.Fatalf(`docs/engineering-workflow.md's "Next roadmap work:" sentence must name open-worktree-command, got: %q`, nextTail)
 		}
 		if !strings.Contains(content, "fix-reparent-completion-context") {
 			t.Fatal("docs/engineering-workflow.md must name the separate issue-seven feature boundary")
@@ -303,6 +303,33 @@ func TestReleaseDocs_StableHandoff(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestOpenCommandDocsMaintenanceHandoff(t *testing.T) {
+	for _, path := range []string{"CHANGELOG.md", "docs/roadmap.md", "docs/engineering-workflow.md"} {
+		content := readRepoDoc(t, path)
+		for _, required := range []string{
+			"v1.2.19-rc.2", "034126331db73522bb98d1f1a1fc08e146a68fe5",
+			"41204870523", "41207441379", "429986003", "v1.2.18",
+		} {
+			if !strings.Contains(content, required) {
+				t.Errorf("%s lacks completed maintenance evidence %q", path, required)
+			}
+		}
+	}
+	for _, path := range []string{
+		"README.md", "docs/cheatsheet.md", "docs/configuration.md",
+		"assets/skills/claude/tesseraworkspaces/SKILL.md",
+		"assets/skills/claude/tesseraworkspaces-orchestrator/SKILL.md",
+		"assets/skills/copilot/tws.prompt.md",
+	} {
+		content := readRepoDoc(t, path)
+		for _, required := range []string{"--print-path", "--command", "--feature-dir", "--wait", "literal"} {
+			if !strings.Contains(content, required) {
+				t.Errorf("%s lacks explicit command/query guidance %q", path, required)
+			}
+		}
 	}
 }
 

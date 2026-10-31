@@ -32,6 +32,48 @@ Resolve learning, ticket, patching, research, and documentation locations with
 A bare `tws space list` is scoped to the current directory; pass `--all` when
 you need the complete registry regardless of where the command runs.
 
+### Query paths or run a non-agent program
+
+```sh
+tws open <feature> <logical-branch> --print-path
+tws open <feature> --feature-dir --print-path
+tws open <feature> <logical-branch> --command nvim -- .
+tws open <feature> --feature-dir --command code -- --wait FEATURE.md
+tws open --feature-dir --print-path -- -feature
+tws open --command nvim -- -feature -branch -- README.md
+```
+
+An initial `--` before all required selectors are filled escapes option
+parsing; put all tws flags before it. Consume the selector slots first, even
+for a selector literally `--`, then use another `--` immediately after them
+for child argv. A child argument literally `--` is preserved. Queries reject
+extra arguments; an ordinary post-selector `--` still delimits child argv.
+
+These explicit-selector modes never open a picker. `--print-path` is exactly
+one verified absolute path/newline or no stdout on failure, unlike legacy
+`--no-agent` human guidance. It has no injection, writer locks, fetch, activation,
+or recovery; checkout entry queries require the current attached logical
+branch. Dirt and valid sessions alone are observable; pending mutation or
+retained metadata-movement evidence refuses. Parent-shell navigation must use
+an explicit shell `cd`; a child cannot change the parent's cwd.
+
+`--command` binds one executable in the caller's environment before effects.
+Only literal child arguments after the post-selector `--` are forwarded; no
+shell evaluation, agent resume, or trailing shell. Direct mode inherits stdio and reports child
+failures. Configured/saved renderers and injection safeguards remain intact.
+Branch commands support direct/tmux in both modes and honor tmux preferences;
+feature-directory commands default direct, with explicit tmux external-only.
+Never replace or attach a supplied command to an existing tmux session.
+
+The modes are exclusive and reject enabled `--all`/`--no-agent`. Queries reject
+explicit tmux flags; commands reject contradictory enabled tmux flags. A
+detached live checkout command remains owned and eventual tmux exit codes are
+not forwarded. Dirty/changed/foreign checkout state and uncertain cleanup retain
+evidence: inspect status, preserve work, then close safely; do not delete guards.
+Use GUI wait flags. Daemonized descendants are not adopted; no new portable
+process birth-identity guarantee exists. Generic runtime presence is not
+semantic agent activity (`agent_state` stays `unknown`).
+
 ### Manage role-aware templates
 
 ```sh

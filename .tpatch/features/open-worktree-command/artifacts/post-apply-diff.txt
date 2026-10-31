@@ -1,0 +1,15 @@
+ CHANGELOG.md                                       | 29 +++++++-
+ README.md                                          | 78 +++++++++++++++++++++-
+ .../claude/tesseraworkspaces-orchestrator/SKILL.md | 42 ++++++++++++
+ assets/skills/claude/tesseraworkspaces/SKILL.md    | 38 +++++++++++
+ assets/skills/copilot/tws.prompt.md                | 40 +++++++++++
+ docs/cheatsheet.md                                 | 45 ++++++++++++-
+ docs/configuration.md                              | 54 ++++++++++++++-
+ docs/engineering-workflow.md                       | 20 ++++--
+ docs/roadmap.md                                    | 22 ++++--
+ internal/agent_status.go                           |  1 +
+ internal/cli/open.go                               | 63 +++++++++++++++--
+ internal/cli/sync_plan_docs_test.go                | 35 ++++++++--
+ internal/direct_session.go                         |  9 +--
+ internal/session.go                                | 31 +++++----
+ 14 files changed, 461 insertions(+), 46 deletions(-)

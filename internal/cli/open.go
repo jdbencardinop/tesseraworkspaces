@@ -18,16 +18,53 @@ func openCmd() *cobra.Command {
 	var noAgent bool
 	var featureDir bool
 	var all bool
+	var printPath bool
+	var command string
 
 	cmd := &cobra.Command{
 		Use:   "open [feature] [branch]",
-		Short: "Open worktree and run agent",
+		Short: "Open a worktree with an agent, command, or path query",
 		Long: `Open a worktree and run the configured agent. With no args, shows an interactive picker.
 
 Use --feature-dir to open the feature directory itself (orchestrator mode).
-Use --all to create a tmux session with windows for every worktree in the feature.`,
-		Args: cobra.RangeArgs(0, 2),
+Use --all to create a tmux session with windows for every worktree in the feature.
+
+Explicit non-agent modes (no picker):
+  tws open <feature> <branch> --print-path
+  tws open <feature> --feature-dir --print-path
+  tws open <feature> <branch> --command nvim -- .
+  tws open <feature> --feature-dir --command code -- --wait .
+
+For leading-dash selectors, put all tws flags before an initial --:
+  tws open --feature-dir --print-path -- -feature
+  tws open --command nvim -- -feature -branch -- README.md
+The initial -- escapes options while selector slots remain. Consume those
+slots (even a selector literally named --) before another -- for child argv.
+
+--print-path is a read-only query: exactly one verified absolute path.
+In checkout mode a branch query requires that branch to be currently attached.
+--command runs one executable with literal arguments after the post-selector --.
+It never evaluates a shell command line or starts a follow-up shell, and does
+not change agent_command.
+Branch commands honor tmux preferences; feature-directory commands default
+direct (explicit tmux is external-only). Use GUI wait flags to track lifetime.
+A child cannot change your parent shell's directory.`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if printPath || cmd.Flags().Changed("command") {
+				_, err := parseExplicitOpen(cmd, args, printPath, command, featureDir, useTmux, noTmux, noAgent, all)
+				return err
+			}
+			return cobra.RangeArgs(0, 2)(cmd, args)
+		},
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			if printPath || cmd.Flags().Changed("command") {
+				want := explicitOpenSelectorCount(featureDir)
+				selectors, _, childMarker, err := splitExplicitOpenArgs(args, cmd.ArgsLenAtDash(), want)
+				if err != nil || childMarker || len(selectors) >= want {
+					return nil, cobra.ShellCompDirectiveNoFileComp
+				}
+				args = selectors
+			}
 			switch len(args) {
 			case 0:
 				ws, err := internal.RequireWorkspace()
@@ -350,11 +387,25 @@ Use --all to create a tmux session with windows for every worktree in the featur
 
 	cmd.Flags().BoolVar(&useTmux, "tmux", false, "Wrap in tmux session")
 	cmd.Flags().BoolVar(&noTmux, "no-tmux", false, "Skip tmux even if configured")
-	cmd.Flags().BoolVar(&noAgent, "no-agent", false, "Just print the worktree path")
+	cmd.Flags().BoolVar(&noAgent, "no-agent", false, "Legacy human path guidance without launching an agent")
 	cmd.Flags().BoolVar(&featureDir, "feature-dir", false, "Open the feature directory (orchestrator mode)")
 	cmd.Flags().BoolVar(&all, "all", false, "Create tmux session with windows for all worktrees")
+	cmd.Flags().BoolVar(&printPath, "print-path", false, "Print one verified absolute path without launching or changing state")
+	cmd.Flags().StringVar(&command, "command", "", "Run one executable; literal child arguments follow a post-selector --")
 
-	return featureRenameAdmittedCommand(cmd)
+	cmd = featureRenameAdmittedCommand(cmd)
+	legacyRun := cmd.RunE
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if !printPath && !cmd.Flags().Changed("command") {
+			return legacyRun(cmd, args)
+		}
+		opts, err := parseExplicitOpen(cmd, args, printPath, command, featureDir, useTmux, noTmux, noAgent, all)
+		if err != nil {
+			return err
+		}
+		return runExplicitOpen(cmd, opts)
+	}
+	return cmd
 }
 
 func resolveOpenArgs(ws internal.Workspace, args []string) (resolvedFeatureContext, string, error) {

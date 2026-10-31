@@ -55,7 +55,8 @@ orchestrator_template: orchestrator-base
 
 ### Agent command
 
-The `agent_command` field controls what `tws open` runs in the worktree. Defaults to `claude`.
+The `agent_command` field controls what ordinary agent `tws open` runs in the
+worktree. Defaults to `claude`.
 
 Examples:
 
@@ -76,6 +77,57 @@ execute the command to identify it. An explicit renderer records the current
 `agent_command` as decision provenance: ordinary sync and checkout context
 continue to honor that renderer while the launch command is unchanged, and
 require explicit reselection after a later launch-command change.
+
+### Per-invocation paths and commands
+
+Use `tws open <feature> <logical-branch> --print-path` for shell integration,
+not the legacy `--no-agent` human output. Use `<feature> --feature-dir` to query
+the feature metadata directory. Successful queries print only an absolute
+verified path and newline; failures print no stdout. They do not inject, fetch,
+lock, recover, or switch branches. A checkout entry must already be the current
+attached logical branch. Dirt and valid sessions alone do not block queries;
+pending mutation and retained metadata-movement evidence still do.
+
+`tws open <feature> <logical-branch> --command nvim -- .` overrides the program
+for one invocation without changing config bytes, saved renderers, or the next
+agent launch. The executable is a single PATH token or caller-relative path
+bound before effects; whitespace is not split. Literal arguments after the
+post-selector `--` belong to the child. There is no shell evaluation, agent
+resume flag, or follow-up shell. Direct mode inherits stdio, waits, and reports child failures
+using the ordinary CLI failure convention.
+
+Leading-dash selectors use `--` before the required selector slots, with all
+tws flags before that marker:
+
+```sh
+tws open --feature-dir --print-path -- -feature
+tws open --command nvim -- -feature -branch -- README.md
+```
+
+Consume those selector slots first, even for a selector literally named `--`.
+Command arguments then need another `--` immediately after the selectors;
+an argument literally `--` after that is preserved. Queries reject child
+arguments. The ordinary post-selector delimiter is unchanged.
+
+Both workspace modes support branch commands directly or in tmux, honoring
+`use_tmux` and explicit `--tmux`/`--no-tmux`. Feature-directory commands default
+direct and do not activate a branch; explicit tmux is external-only. No global
+editor setting or command history is introduced. The modes are exclusive,
+require explicit selectors, and reject enabled `--all`/`--no-agent`. Queries
+reject explicit tmux flags; commands reject both enabled tmux flags.
+External feature-directory tmux sessions use tmux's own controls, not
+branch-oriented `tws close`.
+
+GUI programs need their wait option, e.g. `--command code -- --wait .`.
+Daemonized descendants are not adopted and no new portable process-birth
+identity guarantee is made. A child cannot change the parent shell's cwd;
+use `path=$(tws open auth api --print-path) && cd -- "$path"` explicitly.
+An existing tmux session is never substituted for a supplied command.
+Detachment retains a live checkout session; eventual tmux exit codes are not
+forwarded. Checkout command state predates child effects and safe completion
+restores the caller. Dirty/changed/foreign or uncertain state is retained for
+inspection and safe `tws close`; never erase evidence to bypass recovery.
+Generic command presence is observable, but `agent_state` stays `unknown`.
 
 ### Managed template defaults
 

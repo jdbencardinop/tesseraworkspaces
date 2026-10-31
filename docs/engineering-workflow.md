@@ -64,12 +64,20 @@ Current shipped checkout slices:
 The opt-in global workspace registry is also shipped for stable cross-repository
 discovery, health checks, and moved-target repair.
 
-Next roadmap work: **Node 24 CI maintenance**.
-Complete `update-github-actions-node24`, then implement `open-worktree-command`
-as a separate Path B boundary. Preserve the existing CI matrix, Go version-file
-and cache behavior, tag-version checks, and release semantics while upgrading
-action runtimes. Preserve existing agent launch behavior when adding explicit
-non-agent open surfaces.
+Next roadmap work: **open-worktree-command (#10)**.
+Its Path B intent artifacts are defined; implement, review, validate, and
+release this independent boundary without changing legacy agent launches.
+Verified path queries and literal per-invocation programs are the candidate,
+not a claim that a future open-command RC has passed.
+
+Node 24 CI maintenance and the separate inode-fixture repair are released and
+verified in `v1.2.19-rc.2` at `034126331db73522bb98d1f1a1fc08e146a68fe5`.
+Main CI `41204870523` and tag/release CI `41207441379` passed on Ubuntu/macOS.
+Both exact tag-version checks, native action-gh-release v3 execution, and
+non-draft prerelease release `429986003` are verified; issues #8 and #9 are
+closed. The failed `v1.2.19-rc.1` tag is immutable and has no release.
+Stable `v1.2.18` remains latest. Preserve the completed maintenance's CI matrix,
+Go version-file/cache inputs, tag checks, and release semantics.
 
 Stable `v1.2.18` is released and verified at `fb113b8`, with successful
 Ubuntu/macOS main and tag/release CI, exact-tag version checks, and published
