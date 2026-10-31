@@ -10,6 +10,7 @@ import (
 
 	"github.com/jdbencardinop/tesseraworkspaces/internal"
 	"github.com/spf13/cobra"
+	"golang.org/x/sys/unix"
 )
 
 func copyManagedTreeForTest(t *testing.T, source, destination string) {
@@ -832,6 +833,23 @@ func TestManagedTemplateArchiveReactivateRefreshesLinkIdentity(t *testing.T) {
 	}
 	if oldInode == 0 {
 		t.Fatal("initial managed link identity was not recorded")
+	}
+	linkPath := filepath.Join(worktree, "CLAUDE.local.md")
+	originalInfo, err := os.Lstat(linkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Retain the symlink itself; linkat with zero flags does not follow it.
+	retainedPath := filepath.Join(f.root, "retained-archived-link")
+	if err := unix.Linkat(unix.AT_FDCWD, linkPath, unix.AT_FDCWD, retainedPath, 0); err != nil {
+		t.Fatal(err)
+	}
+	retainedInfo, err := os.Lstat(retainedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retainedInfo.Mode()&os.ModeSymlink == 0 || !os.SameFile(originalInfo, retainedInfo) {
+		t.Fatal("fixture did not retain the original symlink inode")
 	}
 	if _, _, err := runManagedCobra(t, archiveCmd(), []string{f.feature, "entry"}, nil); err != nil {
 		t.Fatal(err)

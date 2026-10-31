@@ -1,0 +1,2 @@
+ internal/cli/named_template_final_regression_test.go | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)

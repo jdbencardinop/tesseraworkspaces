@@ -1,0 +1,27 @@
+{
+  "id": "fix-managed-archive-inode-fixture",
+  "slug": "fix-managed-archive-inode-fixture",
+  "title": "Stabilize the managed archive/reactivation identity regression fixture by retaining the original symlink inode across removal and recreation. Preserve the strict freshness assertion and all production behavior; do not rely on filesystem inode non-reuse to validate link refresh.",
+  "state": "applied",
+  "compatibility": "unknown",
+  "requested_at": "2026-10-31T12:08:06Z",
+  "updated_at": "2026-10-31T12:47:44Z",
+  "last_command": "record",
+  "notes": "landed at 2026-10-31T12:50:25Z",
+  "apply": {
+    "completed_at": "2026-10-31T12:20:11Z",
+    "base_commit": "caee4aa4aaec7154d35c3e5ffe29faf6de3a146a",
+    "has_patch": true
+  },
+  "reconcile": {},
+  "depends_on": [
+    {
+      "slug": "named-feature-templates",
+      "kind": "hard"
+    },
+    {
+      "slug": "update-github-actions-node24",
+      "kind": "soft"
+    }
+  ]
+}

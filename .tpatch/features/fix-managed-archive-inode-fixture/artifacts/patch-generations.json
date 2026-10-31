@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "feature": "fix-managed-archive-inode-fixture",
+  "current_generation": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "generation_id": "pg_63e015db8a11",
+      "kind": "record",
+      "patch_sha256": "cba120fe1c0d79ff5c7c98f4180fc78faafb47fc689121d30389c9830b3d0904",
+      "git_patch_id": "2695437286df97faedb1b5b1a35e9671c3a77fce",
+      "git_patch_id_algorithm": "git-patch-id-stable",
+      "recipe_sha256": "edf4b2ad6e4788b7c1b9c16b58da609f9148df376894454360d056948d9d46c5",
+      "canonical_patch": "artifacts/post-apply.patch",
+      "audit_patch": "",
+      "base_commit": "caee4aa4aaec7154d35c3e5ffe29faf6de3a146a",
+      "upper": {
+        "kind": "working-tree",
+        "ref": "working-tree",
+        "commit": ""
+      },
+      "capture": {
+        "mode": "working-tree-all",
+        "pathspecs": [
+          "internal/cli/named_template_final_regression_test.go"
+        ],
+        "claim_ids": []
+      },
+      "touched_paths": [
+        "internal/cli/named_template_final_regression_test.go"
+      ],
+      "dependencies": [
+        {
+          "slug": "named-feature-templates",
+          "kind": "hard",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "23aac2724ac59b4ebcc3fa50c9c20c1a02be11857e42c1ab8d60b5b89a076212",
+          "parent_recipe_sha256": "997bd1273f33537ca90e3fcfcae43eddcb342d8db664dd8a2f3c7ae7316c2370"
+        },
+        {
+          "slug": "update-github-actions-node24",
+          "kind": "soft",
+          "satisfied_by": "",
+          "parent_generation": 1,
+          "parent_patch_sha256": "e9ccbeb105001b6d13f280bba78ca4602ed9c10e53ea470bedc6af572ed44196",
+          "parent_recipe_sha256": "6a23e1aeccd2552328bca7f4373b665827128cf28d2b834bec5dbfba4cb46a98"
+        }
+      ],
+      "refs": {
+        "anchors": "",
+        "fingerprints": "",
+        "relations": "",
+        "vector_manifest": ""
+      }
+    }
+  ]
+}

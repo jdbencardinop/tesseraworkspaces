@@ -1,0 +1,6 @@
+{
+  "slug": "fix-managed-archive-inode-fixture",
+  "completed_at": "2026-10-31T12:20:11Z",
+  "base_commit": "caee4aa4aaec7154d35c3e5ffe29faf6de3a146a",
+  "has_patch": true
+}

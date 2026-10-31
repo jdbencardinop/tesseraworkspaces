@@ -1,0 +1,33 @@
+{
+  "base_commit": "caee4aa4aaec7154d35c3e5ffe29faf6de3a146a",
+  "feature": "fix-managed-archive-inode-fixture",
+  "planning_files": {
+    ".tpatch/features/fix-managed-archive-inode-fixture/analysis.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "ab8dea22f893d578fe17d907c4ae126b1033941298269f4fa082a7f59a156271"
+    },
+    ".tpatch/features/fix-managed-archive-inode-fixture/exploration.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "b494de2fb24ac973dc03da21edc79bd3e8562054c48589181c654dc67a81b25a"
+    },
+    ".tpatch/features/fix-managed-archive-inode-fixture/request.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "db13a0edbea2fdeb531dd02017414724591fd13e44f7fb167452bfcebee9775b"
+    },
+    ".tpatch/features/fix-managed-archive-inode-fixture/spec.md": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "63275b79d9cc372b00f698455e3fe063d8ab8c8f7f3cf04bb13f063510249568"
+    }
+  },
+  "product_files": {
+    "internal/cli/named_template_final_regression_test.go": {
+      "kind": "file",
+      "mode": 420,
+      "sha256": "6ab4401fa4bbecf251bbeed7873159d7a4f9533bff9492bfa12bc791960a29cb"
+    }
+  }
+}

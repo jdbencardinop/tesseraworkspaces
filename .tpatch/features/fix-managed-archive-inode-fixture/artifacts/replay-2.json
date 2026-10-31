@@ -1,0 +1,10 @@
+{
+  "feature": "fix-managed-archive-inode-fixture",
+  "base_commit": "caee4aa4aaec7154d35c3e5ffe29faf6de3a146a",
+  "manifest_sha256": "bd5784ff5415c21885c2675ef1c5176e891c87ef5471cefdb776a9c2c43d76d7",
+  "recipe_sha256": "6756cc195a29d12dd1bf69ee02896a3da3de4e1f9e0c5d7ac01f065808f2b40e",
+  "existing_preimages_verified": 1,
+  "new_paths_proven_absent": 0,
+  "postimages_verified": 1,
+  "passed": true
+}
